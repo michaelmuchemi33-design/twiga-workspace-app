@@ -52,6 +52,7 @@ const groups: { title: string; items: TabDef[] }[] = [
     items: [
       { id: "analytics", label: "Stats", icon: IconChart },
       { id: "alerts", label: "Alerts", icon: IconBell },
+      { id: "profile", label: "Profile", icon: IconUsers },
       { id: "settings", label: "Settings", icon: IconGear },
     ],
   },
