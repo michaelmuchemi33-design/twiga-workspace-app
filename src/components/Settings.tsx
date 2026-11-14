@@ -107,8 +107,10 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
     if (!supabase || !businessId) { setApiStatus("Select a live business workspace first."); return; }
     setApiStatus("Testing Supabase and Cloudflare…");
     try {
-      const token = await getAccessToken();
-      const { data: membership, error: membershipError } = await supabase.from("business_members").select("business_id").eq("business_id", businessId).maybeSingle();
+      await getAccessToken();
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData.user) throw new Error("Supabase authentication check failed.");
+      const { data: membership, error: membershipError } = await supabase.from("business_members").select("business_id").eq("business_id", businessId).eq("user_id", userData.user.id).maybeSingle();
       if (membershipError || !membership) throw new Error("Supabase business access check failed.");
       const response = await fetch(filesApi + "/health");
       const health = await response.json().catch(() => ({}));
