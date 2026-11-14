@@ -37,7 +37,7 @@ function loadGoogle() {
   });
 }
 
-export default function Profile({ userId, businessId, businesses, onBusinessChange, onRefreshBusinesses }: {
+export default function Profile({ userId, businessId, businesses, onBusinessChange, onRefreshBusinesses, onCreateBusiness }: {
   userId?: string; businessId?: string; businesses: Business[];
   onBusinessChange: (id: string) => void; onRefreshBusinesses: () => Promise<void>; onCreateBusiness: () => void;
 }) {
