@@ -89,6 +89,24 @@ export interface LiveCall {
   sentiment: "positive" | "neutral" | "negative";
 }
 
+export interface CallRecord {
+  id: string;
+  provider: string;
+  provider_call_id: string;
+  channel: string;
+  direction: string;
+  from_number: string | null;
+  to_number: string | null;
+  status: string;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_seconds: number;
+  summary: string | null;
+  structured_data: Record<string, unknown>;
+  cost_usd: number | null;
+  created_at: string;
+}
+
 export interface Settings {
   business: {
     name: string;
@@ -147,6 +165,7 @@ interface StoreValue {
   messages: Message[];
   customers: Customer[];
   liveCalls: LiveCall[];
+  callRecords: CallRecord[];
   settings: Settings;
   catalogSource: string;
   sellMode: SellMode;
@@ -307,6 +326,7 @@ export function StoreProvider({
   const [payments, setPayments] = useState<Payment[]>(demo ? seedPayments : []);
   const [messages, setMessages] = useState<Message[]>(demo ? seedMessages : []);
   const [customers, setCustomers] = useState<Customer[]>(demo ? seedCustomers : []);
+  const [callRecords, setCallRecords] = useState<CallRecord[]>([]);
   const [settings, setSettings] = useState<Settings>(demo ? defaultSettings : emptySettings);
   const [catalogSource, setCatalogSource] = useState(demo ? "Manual entry" : "Not configured");
   const [sellMode, setSellMode] = useState<SellMode>("seller");
@@ -328,6 +348,7 @@ export function StoreProvider({
       setPayments([]);
       setMessages([]);
       setCustomers([]);
+      setCallRecords([]);
       setSettings(emptySettings);
       setCatalogSource("Not configured");
       setSellMode("seller");
@@ -343,6 +364,7 @@ export function StoreProvider({
     setPayments([]);
     setMessages([]);
     setCustomers([]);
+    setCallRecords([]);
     setSettings(emptySettings);
     setCatalogSource("Manual entry");
     setSellMode("seller");
@@ -372,6 +394,8 @@ export function StoreProvider({
       setSettings(saved?.settings ? { ...emptySettings, ...saved.settings } : emptySettings);
       setCatalogSource(saved?.catalogSource ?? "Manual entry");
       setSellMode(saved?.sellMode ?? "seller");
+      const { data: calls, error: callsError } = await supabase.from("twiga_call_records").select("id,provider,provider_call_id,channel,direction,from_number,to_number,status,started_at,ended_at,duration_seconds,summary,structured_data,cost_usd,created_at").eq("business_id", businessId).order("created_at", { ascending: false }).limit(30);
+      if (!callsError) setCallRecords((calls || []) as CallRecord[]);
       hydrated.current = true;
       setWorkspaceReady(true);
     };
@@ -402,6 +426,7 @@ export function StoreProvider({
       messages,
       customers,
       liveCalls: demo ? seedLiveCalls : [],
+      callRecords,
       settings,
       catalogSource,
       sellMode,
@@ -425,7 +450,7 @@ export function StoreProvider({
         setCatalogSource(source);
       },
     }),
-    [demo, businessId, tasks, products, sales, payments, messages, customers, settings, catalogSource, sellMode, palplusKey]
+    [demo, businessId, tasks, products, sales, payments, messages, customers, callRecords, settings, catalogSource, sellMode, palplusKey]
   );
 
   if (!workspaceReady && !demo) {
