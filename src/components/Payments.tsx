@@ -18,6 +18,7 @@ type Transaction = {
 
 type Tab = "collect" | "keys";
 type Channel = { id: string; provider_channel_id: string; name: string; type: "PAYBILL" | "TILL_NUMBER" | "SEND_MONEY"; shortcode: string; account_number?: string | null; is_default: boolean };
+type PendingOrder = { id: string; order_number: string; customer_name: string; customer_phone: string | null; total_amount: number; description: string; status: string; payment_status: string; created_at: string };
 
 export default function Payments() {
   const { businessId } = useStore();
@@ -27,6 +28,7 @@ export default function Payments() {
   const [keyDraft, setKeyDraft] = useState("");
   const [balance, setBalance] = useState<any>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [channelName, setChannelName] = useState("");
   const [channelType, setChannelType] = useState<"PAYBILL" | "TILL_NUMBER">("PAYBILL");
@@ -56,6 +58,20 @@ export default function Payments() {
     setChannels(rows);
     setSelectedChannelId((current) => current && rows.some((x) => x.provider_channel_id === current) ? current : (rows.find((x) => x.is_default)?.provider_channel_id || rows[0]?.provider_channel_id || ""));
   }, [businessId, invoke]);
+
+  const loadPendingOrders = useCallback(async () => {
+    if (!supabase || !businessId) { setPendingOrders([]); return; }
+    const { data, error } = await supabase.from("twiga_orders").select("id,order_number,customer_name,customer_phone,total_amount,description,status,payment_status,created_at").eq("business_id", businessId).eq("status", "pending_confirmation").eq("payment_status", "unpaid").order("created_at", { ascending: false }).limit(20);
+    if (error) throw error;
+    setPendingOrders((data || []) as PendingOrder[]);
+  }, [businessId]);
+
+  useEffect(() => {
+    if (!businessId || !supabase) return;
+    void loadPendingOrders();
+    const channel = supabase.channel("twiga-payment-orders-" + businessId).on("postgres_changes", { event: "*", schema: "public", table: "twiga_orders", filter: "business_id=eq." + businessId }, () => { void loadPendingOrders(); }).subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [businessId, loadPendingOrders]);
 
   const loadTransactions = useCallback(async () => {
     if (!supabase || !businessId) { setTransactions([]); return; }
@@ -138,6 +154,25 @@ export default function Payments() {
     } finally { setBusy(false); }
   };
 
+  const requestOrderPayment = async (order: PendingOrder) => {
+    if (!order.customer_phone || Number(order.total_amount) < 1) { setMessage("This call order needs a customer phone number and a confirmed amount before requesting payment."); return; }
+    if (!selectedChannelId) { setMessage("Add or select this business's Till or Paybill first."); return; }
+    const phone = order.customer_phone;
+    if (!window.confirm("Send an M-Pesa payment prompt for KES " + Number(order.total_amount).toLocaleString() + " to " + phone + " from this business's selected Till / Paybill?")) return;
+    setBusy(true);
+    setMessage("Starting payment request for " + order.order_number + "…");
+    try {
+      const result = await invoke("stk", { phone, amount: Number(order.total_amount), channelId: selectedChannelId, accountReference: order.order_number || ("TWIGA-" + order.id.slice(0, 8)), transactionDesc: ("Order " + order.order_number + " · " + order.customer_name).slice(0, 255) });
+      const { error } = await supabase!.from("twiga_orders").update({ status: "payment_requested", payment_status: "pending", payment_method: "MPESA_STK" }).eq("business_id", businessId).eq("id", order.id);
+      if (error) throw error;
+      setMessage("Payment prompt sent to " + phone + ". It is pending until PalPluss confirms SUCCESS. Transaction: " + (result.transaction?.transactionId || "created"));
+      await loadPendingOrders();
+      await loadTransactions();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not request payment for this order.");
+    } finally { setBusy(false); }
+  };
+
   const checkPending = async () => {
     setBusy(true);
     setMessage("Checking pending transactions…");
@@ -159,6 +194,11 @@ export default function Payments() {
       <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-500">Collections · M-Pesa</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Payments</h1><p className="mt-1 text-sm text-neutral-500">Real PalPluss STK Push requests and confirmed transaction records.</p></div>
       <div className="flex gap-3"><div className="rounded-xl bg-neutral-950 px-4 py-3 text-white"><p className="text-[10px] uppercase tracking-widest text-neutral-400">Collected</p><p className="mt-1 text-xl font-bold">KES {collected.toLocaleString()}</p></div><div className="rounded-xl bg-neutral-950 px-4 py-3 text-white"><p className="text-[10px] uppercase tracking-widest text-neutral-400">Pending</p><p className="mt-1 text-xl font-bold">KES {pending.toLocaleString()}</p></div></div>
     </header>
+
+    {pendingOrders.length > 0 && <section className="rounded-2xl border border-orange-200 bg-orange-50/50 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-widest text-orange-700">Completed AI calls</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">Orders awaiting payment request</h2><p className="mt-1 text-sm text-neutral-600">These orders were captured after the receptionist finished a call. Review the amount and customer, then approve the M-Pesa prompt to this business's selected Till or Paybill.</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-700">{pendingOrders.length} awaiting review</span></div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">{pendingOrders.map((order) => <div key={order.id} className="rounded-xl border border-neutral-200 bg-white p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-semibold text-neutral-950">{order.customer_name || "Customer"}</p><p className="mt-1 text-xs text-neutral-500">{order.customer_phone || "No phone captured"} · {order.order_number}</p></div><strong className="whitespace-nowrap text-sm text-neutral-950">KES {Number(order.total_amount).toLocaleString()}</strong></div><p className="mt-2 line-clamp-2 text-xs text-neutral-600">{order.description || "Order captured during AI receptionist call."}</p><button onClick={() => void requestOrderPayment(order)} disabled={!connected || !selectedChannelId || busy || !order.customer_phone || Number(order.total_amount) < 1} className="mt-3 w-full rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Working…" : "Approve & send M-Pesa prompt"}</button></div>)}</div>
+    </section>}
 
     <div className="flex rounded-xl border border-neutral-200 bg-white p-1 shadow-sm"><button onClick={() => setTab("collect")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "collect" ? "bg-neutral-950 text-white" : "text-neutral-500")}>Collect</button><button onClick={() => setTab("keys")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "keys" ? "bg-neutral-950 text-white" : "text-neutral-500")}>API & connection</button></div>
 
