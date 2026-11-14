@@ -139,6 +139,7 @@ export interface Settings {
 
 interface StoreValue {
   demoMode: boolean;
+  businessId?: string;
   tasks: Task[];
   products: Product[];
   sales: Sale[];
@@ -384,6 +385,7 @@ export function StoreProvider({
   const value = useMemo<StoreValue>(
     () => ({
       demoMode: demo,
+      businessId,
       tasks,
       products,
       sales,
