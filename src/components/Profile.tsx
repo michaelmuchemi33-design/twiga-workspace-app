@@ -68,7 +68,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const callSession = useRef<any>(null);
 
   const current = businesses.find((b) => b.id === businessId);
-  const clientId = user?.id ? "TWG-" + String(user.created_at || "").slice(0, 10).replaceAll("-", "") + "-" + String(user.id).replaceAll("-", "").slice(0, 6).toUpperCase() : "";
+  const clientId = user?.id ? "TWG-" + String(user.created_at || "").slice(0, 10).replaceAll("-", "") + "-" + String(user.id).replaceAll("-", "").slice(0, 8).toUpperCase() : "";
 
   const googleAction = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
     if (!supabase || !businessId) throw new Error("Create or select a business workspace first.");
