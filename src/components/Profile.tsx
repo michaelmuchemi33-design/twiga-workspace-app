@@ -50,6 +50,8 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [google, setGoogle] = useState<any>({ connected: false });
   const [googleTest, setGoogleTest] = useState("");
   const [retell, setRetell] = useState<any>({});
+  const [recordingEnabled, setRecordingEnabled] = useState(false);
+  const [recordingNotice, setRecordingNotice] = useState("This call may be recorded to help us serve you.");
   const [retellKey, setRetellKey] = useState("");
   const [agents, setAgents] = useState<any[]>([]);
   const [agentId, setAgentId] = useState("");
