@@ -122,6 +122,10 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
         setApiStatus("Supabase authentication and business access: OK · Cloudflare storage API: OK · Retell: API key still needs to be saved in Profile");
         return;
       }
+      if (!retellConfig.canManage) {
+        setApiStatus("Supabase: OK · Cloudflare storage: OK · Retell key is configured; owner/admin permission is required to test agent access");
+        return;
+      }
       const { data: retellAgents, error: retellAgentsError } = await supabase.functions.invoke("twiga-retell", { body: { action: "list_agents", businessId } });
       if (retellAgentsError) throw new Error("Retell API test failed: " + retellAgentsError.message);
       if (retellAgents?.error) throw new Error(String(retellAgents.error));
