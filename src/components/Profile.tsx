@@ -261,13 +261,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       client.on("call_ended", () => { callSession.current = null; setCallStatus("Ended"); });
       client.on("error", (error: any) => { callSession.current = null; setCallStatus(error?.message || "Call error"); });
       callSession.current = client;
-      await client.startCall({
-        accessToken: data.access_token,
-        callId: data.call_id,
-        transport: data.transport,
-        iceServers: data.ice_servers,
-        url: data.url,
-      });
+      await client.startCall({ accessToken: data.access_token });
     } catch (e) {
       callSession.current = null;
       setCallStatus(e instanceof Error ? e.message : "Could not start browser call.");
