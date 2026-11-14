@@ -60,6 +60,9 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [palPhone, setPalPhone] = useState("");
   const [palAmount, setPalAmount] = useState("");
   const [palResult, setPalResult] = useState("");
+  const [xaiConfig, setXaiConfig] = useState<any>({ isAdmin: false });
+  const [xaiKey, setXaiKey] = useState("");
+  const [xaiMessage, setXaiMessage] = useState("");
   const [inboundPrompt, setInboundPrompt] = useState("Greet callers warmly, understand what they need, and use only verified business information. Capture appointment and order requests for staff confirmation.");
   const [outboundPrompt, setOutboundPrompt] = useState("Only call people when the business has authorised the follow-up. Identify the business, explain the reason, ask if it is a convenient time, and respect requests not to be contacted.");
   const callSession = useRef<any>(null);
@@ -96,6 +99,12 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     return data;
   }, [businessId]);
 
+  const loadXaiConfig = useCallback(async () => {
+    if (!supabase) return;
+    const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "get_config" } });
+    if (!error && data?.isAdmin) setXaiConfig(data);
+  }, []);
+
   const loadGoogleStatus = useCallback(async () => {
     if (!businessId) return;
     try { setGoogle(await googleAction("status")); } catch (e) { setMessage(e instanceof Error ? e.message : "Google status unavailable."); }
@@ -131,6 +140,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   }, [userId]);
 
   useEffect(() => { void loadGoogleStatus(); }, [loadGoogleStatus]);
+  useEffect(() => { void loadXaiConfig(); }, [loadXaiConfig]);
   useEffect(() => { void loadRetell(); }, [loadRetell]);
   useEffect(() => { void loadPal(); }, [loadPal]);
 
@@ -303,6 +313,13 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       <div className="mt-3 flex flex-wrap gap-3"><button onClick={onRefreshBusinesses} className="text-xs font-semibold underline">Refresh workspaces</button><button onClick={onCreateBusiness} className="text-xs font-semibold text-orange-700 underline">Create another business</button></div>
     </section>
 
+
+    {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Grok business setup helper</h2><p className="mt-1 text-sm text-neutral-500">One shared Grok API key powers account onboarding only. It is not sent to Retell or exposed to customers.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{xaiConfig.keyConfigured ? "Key saved · •••• " + xaiConfig.keyLast4 : "Key not configured"}</span></div>
+      {!xaiConfig.keyConfigured && <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={xaiKey} onChange={(e) => setXaiKey(e.target.value)} placeholder="xAI API key" className="h-11 min-w-0 flex-1 rounded-xl border px-3 text-sm" /><button onClick={async () => { setBusy(true); setXaiMessage(""); try { const { data, error } = await supabase!.functions.invoke("twiga-platform-secrets", { body: { action: "save_xai_key", apiKey: xaiKey } }); if (error) throw new Error(error.message); if (data?.error) throw new Error(data.error); setXaiKey(""); setXaiConfig(data); setXaiMessage(data.message || "Grok key saved."); } catch (e) { setXaiMessage(e instanceof Error ? e.message : "Grok key could not be saved."); } finally { setBusy(false); } }} disabled={busy || xaiKey.length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save Grok key</button></div>}
+      {xaiConfig.keyConfigured && <p className="mt-3 text-sm text-neutral-600">Grok is ready for the business setup assistant. Replace the key here after rotating it.</p>}
+      {xaiMessage && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{xaiMessage}</p>}
+    </section>}
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">AI Front Desk</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Google Workspace</h2><p className="mt-1 text-sm text-neutral-500">Calendar, Contacts, Sheets and Drive permissions are separate from Google sign-in.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{google.connected ? "Connected" : "Not connected"}</span></div>
       {google.connected && <p className="mt-3 text-sm text-neutral-700">Connected as <strong>{google.googleEmail || "Google account"}</strong></p>}
