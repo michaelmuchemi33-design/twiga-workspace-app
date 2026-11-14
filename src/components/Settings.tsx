@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { RetellWebClient } from "retell-client-js-sdk";
+import { supabase } from "@/lib/supabase";
 import {
   Card,
   CardContent,
@@ -40,8 +42,18 @@ import {
 
 type Tab = "basic" | "advanced";
 
-export default function Settings() {
+export default function Settings({ businessId, demo = false, onOpenProfile }: { businessId?: string; demo?: boolean; onOpenProfile: () => void }) {
   const { settings, updateSettings } = useStore();
+  const [retellAgentId, setRetellAgentId] = useState("");
+  const [callStatus, setCallStatus] = useState("Not started");
+  const [callBusy, setCallBusy] = useState(false);
+  const callSession = useRef<any>(null);
+  const [storageUsed, setStorageUsed] = useState(0);
+  const [storageFiles, setStorageFiles] = useState<any[]>([]);
+  const [storageBusy, setStorageBusy] = useState(false);
+  const [storageError, setStorageError] = useState("");
+  const fileInput = useRef<HTMLInputElement>(null);
+  const filesApi = String(import.meta.env.VITE_TWIGA_FILES_API_URL || "https://twiga-business-files.twiga-ke.workers.dev").replace(/\\/$/, "");
   const [tab, setTab] = useState<Tab>("basic");
   const [saved, setSaved] = useState(false);
 
@@ -50,6 +62,130 @@ export default function Settings() {
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1600);
   };
+
+  const getAccessToken = async () => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { data, error } = await supabase.auth.getSession();
+    if (error || !data.session?.access_token) throw new Error("Please sign in again.");
+    return data.session.access_token;
+  };
+
+  const refreshStorage = async () => {
+    if (!businessId || demo || !supabase) return;
+    setStorageBusy(true);
+    setStorageError("");
+    try {
+      const token = await getAccessToken();
+      const response = await fetch(filesApi + "/v1/files/" + encodeURIComponent(businessId), { headers: { Authorization: "Bearer " + token } });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Business file storage could not be loaded.");
+      setStorageFiles(Array.isArray(data.files) ? data.files : []);
+      setStorageUsed(Number(data.usedBytes || 0));
+    } catch (e) {
+      setStorageError(e instanceof Error ? e.message : "Business file storage could not be loaded.");
+    } finally {
+      setStorageBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!businessId || demo || !supabase) { setRetellAgentId(""); return; }
+    let active = true;
+    void supabase.from("twiga_business_voice_configs").select("retell_agent_id").eq("business_id", businessId).maybeSingle().then(({ data }) => {
+      if (active) setRetellAgentId(String(data?.retell_agent_id || ""));
+    });
+    return () => { active = false; };
+  }, [businessId, demo]);
+
+  useEffect(() => {
+    void refreshStorage();
+  }, [businessId, demo]);
+
+  const testReceptionist = async () => {
+    if (callSession.current) {
+      try { callSession.current.stopCall(); } catch {}
+      callSession.current = null;
+      setCallStatus("Ended");
+      return;
+    }
+    if (!supabase || !businessId || !retellAgentId || demo) return;
+    setCallBusy(true);
+    setCallStatus("Connecting…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-retell-webcall", { body: { action: "create", businessId } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      if (!data?.access_token) throw new Error("Retell did not return a browser call token.");
+      const client = new RetellWebClient();
+      client.on("call_started", () => setCallStatus("Live"));
+      client.on("call_ended", () => { callSession.current = null; setCallStatus("Ended"); });
+      client.on("error", (error: any) => { callSession.current = null; setCallStatus(error?.message || "Call error"); });
+      callSession.current = client;
+      await client.startCall({ accessToken: data.access_token });
+    } catch (e) {
+      callSession.current = null;
+      setCallStatus(e instanceof Error ? e.message : "Could not start the browser call.");
+    } finally {
+      setCallBusy(false);
+    }
+  };
+
+  const uploadBusinessFile = async (file?: File) => {
+    if (!file || !businessId || demo || !supabase) return;
+    setStorageBusy(true);
+    setStorageError("");
+    try {
+      const token = await getAccessToken();
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch(filesApi + "/v1/files/" + encodeURIComponent(businessId), { method: "POST", headers: { Authorization: "Bearer " + token }, body: form });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "File upload failed.");
+      await refreshStorage();
+    } catch (e) {
+      setStorageError(e instanceof Error ? e.message : "File upload failed.");
+    } finally {
+      setStorageBusy(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
+
+  const downloadBusinessFile = async (file: any) => {
+    if (!businessId || !supabase) return;
+    try {
+      const token = await getAccessToken();
+      const response = await fetch(filesApi + "/v1/files/" + encodeURIComponent(businessId) + "/" + encodeURIComponent(file.file_id), { headers: { Authorization: "Bearer " + token } });
+      if (!response.ok) throw new Error("File download failed.");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = String(file.name || "business-file");
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setStorageError(e instanceof Error ? e.message : "File download failed.");
+    }
+  };
+
+  const deleteBusinessFile = async (fileId: string) => {
+    if (!businessId || !supabase) return;
+    setStorageBusy(true);
+    setStorageError("");
+    try {
+      const token = await getAccessToken();
+      const response = await fetch(filesApi + "/v1/files/" + encodeURIComponent(businessId) + "/" + encodeURIComponent(fileId), { method: "DELETE", headers: { Authorization: "Bearer " + token } });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "File could not be deleted.");
+      await refreshStorage();
+    } catch (e) {
+      setStorageError(e instanceof Error ? e.message : "File could not be deleted.");
+    } finally {
+      setStorageBusy(false);
+    }
+  };
+
+  const formatBytes = (bytes: number) => bytes >= 1024 * 1024 ? (bytes / (1024 * 1024)).toFixed(1) + " MB" : (bytes / 1024).toFixed(0) + " KB";
 
   const b = settings.business;
   const p = settings.persona;
@@ -85,6 +221,26 @@ export default function Settings() {
             </TabButton>
           </div>
         </div>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Live voice test</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Test AI receptionist</h2><p className="mt-1 text-sm leading-6 text-neutral-500">Start a real browser microphone call with this business's published Retell agent. This does not use a phone number or SautiKit routing.</p></div>
+            <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{demo ? "Demo mode" : retellAgentId ? "Agent linked" : "Not connected"}</span>
+          </div>
+          {demo ? <p className="mt-4 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">Browser voice tests are available in your signed-in live workspace, not the sample demo.</p> : !businessId || !retellAgentId ? <div className="mt-4 rounded-xl bg-neutral-50 p-3"><p className="text-sm text-neutral-700">Connect a Retell account and publish a business receptionist in Profile → AI Front Desk first.</p><button onClick={onOpenProfile} className="mt-3 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Open AI Front Desk profile</button></div> : <div className="mt-4 flex flex-wrap items-center gap-3"><button onClick={testReceptionist} disabled={callBusy} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{callBusy ? "Connecting…" : callSession.current ? "End test call" : "Start browser call"}</button><span className="text-sm text-neutral-600">Call status: {callStatus}</span></div>}
+          <p className="mt-3 text-xs text-neutral-500">The browser call is billed by Retell while connected. The current test agent configuration targets approximately $0.0828/min for the AI stack, excluding carrier charges.</p>
+        </section>
+
+        <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Cloudflare R2 + D1</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Business file storage</h2><p className="mt-1 text-sm leading-6 text-neutral-500">Private files are stored under this business only. The allowance is 500 MB per business.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{demo ? "Sample" : formatBytes(storageUsed) + " / 500 MB"}</span></div>
+          {!demo && <><div className="mt-4 h-2 overflow-hidden rounded-full bg-neutral-100"><div className="h-full rounded-full bg-orange-500 transition-all" style={{ width: Math.min(100, storageUsed / (500 * 1024 * 1024) * 100) + "%" }} /></div>
+          <div className="mt-4 flex flex-wrap items-center gap-2"><input ref={fileInput} type="file" accept="image/*,.pdf,.csv,.txt,.docx,.xlsx,.pptx" onChange={(e) => void uploadBusinessFile(e.target.files?.[0])} className="min-w-0 flex-1 text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-neutral-100 file:px-3 file:py-2 file:text-xs file:font-semibold" /><span className="text-xs text-neutral-500">25 MB max per file</span></div>
+          <div className="mt-4 space-y-2">{storageFiles.length ? storageFiles.map((file) => <div key={file.file_id} className="flex items-center justify-between gap-3 rounded-xl border border-neutral-100 px-3 py-2"><button onClick={() => void downloadBusinessFile(file)} className="min-w-0 flex-1 text-left"><span className="block truncate text-sm font-medium text-neutral-800">{file.name}</span><span className="text-xs text-neutral-500">{formatBytes(Number(file.size_bytes || 0))} · {file.content_type}</span></button><button onClick={() => void deleteBusinessFile(file.file_id)} disabled={storageBusy} className="rounded-lg px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-40">Delete</button></div>) : <p className="rounded-xl bg-neutral-50 p-3 text-sm text-neutral-500">{storageBusy ? "Loading business files…" : "No files uploaded for this business yet."}</p>}</div></>}
+          {storageError && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">{storageError}</p>}
+          {demo && <p className="mt-4 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">Sign in to upload private files to your business workspace.</p>}
+        </section>
       </div>
 
       {tab === "basic" ? (
