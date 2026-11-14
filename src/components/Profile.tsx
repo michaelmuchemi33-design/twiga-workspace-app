@@ -55,6 +55,11 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [agentId, setAgentId] = useState("");
   const [model, setModel] = useState("gpt-6-luna");
   const [callStatus, setCallStatus] = useState("Not started");
+  const [palKey, setPalKey] = useState("");
+  const [palStatus, setPalStatus] = useState<any>({ keyConfigured: false });
+  const [palPhone, setPalPhone] = useState("");
+  const [palAmount, setPalAmount] = useState("");
+  const [palResult, setPalResult] = useState("");
   const [inboundPrompt, setInboundPrompt] = useState("Greet callers warmly, understand what they need, and use only verified business information. Capture appointment and order requests for staff confirmation.");
   const [outboundPrompt, setOutboundPrompt] = useState("Only call people when the business has authorised the follow-up. Identify the business, explain the reason, ask if it is a convenient time, and respect requests not to be contacted.");
   const callSession = useRef<any>(null);
@@ -69,6 +74,19 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     if (data?.error) throw new Error(String(data.error));
     return data;
   }, [businessId]);
+
+  const palAction = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
+    if (!supabase || !businessId) throw new Error("Create or select a business workspace first.");
+    const { data, error } = await supabase.functions.invoke("twiga-palpluss", { body: { action, businessId, ...extra } });
+    if (error) throw new Error(error.message);
+    if (data?.error) throw new Error(String(data.error));
+    return data;
+  }, [businessId]);
+
+  const loadPal = useCallback(async () => {
+    if (!businessId) return;
+    try { setPalStatus(await palAction("get_config")); } catch (e) { setPalResult(e instanceof Error ? e.message : "PalPluss status unavailable."); }
+  }, [businessId, palAction]);
 
   const retellAction = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
     if (!supabase || !businessId) throw new Error("Create or select a business workspace first.");
@@ -114,6 +132,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
 
   useEffect(() => { void loadGoogleStatus(); }, [loadGoogleStatus]);
   useEffect(() => { void loadRetell(); }, [loadRetell]);
+  useEffect(() => { void loadPal(); }, [loadPal]);
 
   const saveProfile = async () => {
     if (!supabase) return;
@@ -285,6 +304,17 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       <div className="mt-4 flex flex-wrap gap-2"><button onClick={connectGoogle} disabled={busy || !businessId} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{google.connected ? "Reconnect Google" : "Connect Google"}</button>{google.connected && <><button onClick={() => testGoogle("calendar.list")} disabled={busy} className="rounded-xl border px-3 py-2.5 text-sm">Test Calendar</button><button onClick={() => testGoogle("contacts.list")} disabled={busy} className="rounded-xl border px-3 py-2.5 text-sm">Test Contacts</button><button onClick={() => testGoogle("sheets.ensure")} disabled={busy} className="rounded-xl border px-3 py-2.5 text-sm">Create Sheets</button><button onClick={() => testGoogle("drive.list")} disabled={busy} className="rounded-xl border px-3 py-2.5 text-sm">Test Drive</button></>}</div>
       {google.spreadsheetUrl && <a href={google.spreadsheetUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block text-sm font-semibold text-orange-700 underline">Open business spreadsheet</a>}
       {googleTest && <p className="mt-3 rounded-xl bg-orange-50 p-3 text-sm text-orange-900">{googleTest}</p>}
+    </section>
+
+
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Payments</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">PalPluss · M-Pesa</h2><p className="mt-1 text-sm text-neutral-500">Connect this business's PalPluss account. Its API key is encrypted in Supabase Vault and never sent back to the browser.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{palStatus.keyConfigured ? "Connected · •••• " + (palStatus.keyLast4 || "") : "Not connected"}</span></div>
+      {!palStatus.keyConfigured ? <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={palKey} onChange={(e) => setPalKey(e.target.value)} placeholder="PalPluss API key" className="h-11 min-w-0 flex-1 rounded-xl border px-3 text-sm" /><button onClick={async () => { setBusy(true); try { const result = await palAction("save_key", { apiKey: palKey }); setPalKey(""); setPalStatus({ keyConfigured: true, keyLast4: result.keyLast4, balance: result.balance }); setPalResult(result.message || "PalPluss connected."); } catch (e) { setPalResult(e instanceof Error ? e.message : "PalPluss connection failed."); } finally { setBusy(false); } }} disabled={busy || palKey.length < 20 || !businessId} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Connect PalPluss</button></div> : <>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-neutral-50 p-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Service wallet balance</p><p className="mt-1 text-xl font-bold text-neutral-950">{palStatus.balance?.availableBalance != null ? "KES " + Number(palStatus.balance.availableBalance).toLocaleString() : "Check balance"}</p><p className="mt-1 text-xs text-neutral-500">PalPluss deducts its service fee when a payment request is initiated.</p></div><button onClick={async () => { setBusy(true); try { const result = await palAction("balance"); setPalStatus((s: any) => ({ ...s, ...result })); setPalResult("PalPluss wallet balance refreshed."); } catch (e) { setPalResult(e instanceof Error ? e.message : "Balance check failed."); } finally { setBusy(false); } }} disabled={busy} className="rounded-xl border bg-white px-4 py-2.5 text-sm font-semibold">Refresh balance</button></div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]"><input value={palPhone} onChange={(e) => setPalPhone(e.target.value)} placeholder="Customer M-Pesa number" className="h-11 rounded-xl border px-3 text-sm" /><input value={palAmount} onChange={(e) => setPalAmount(e.target.value)} type="number" min="1" step="1" placeholder="Amount (KES)" className="h-11 rounded-xl border px-3 text-sm" /><button onClick={async () => { if (!window.confirm("Send an M-Pesa STK prompt to " + palPhone + " for KES " + palAmount + "?")) return; setBusy(true); try { const result = await palAction("stk", { phone: palPhone, amount: Number(palAmount), accountReference: "TWIGA-" + Date.now(), transactionDesc: "TWIGA payment test" }); setPalResult("STK prompt initiated. Status: " + (result.transaction?.status || "PENDING") + " · Transaction: " + (result.transaction?.transactionId || "created")); } catch (e) { setPalResult(e instanceof Error ? e.message : "STK request failed."); } finally { setBusy(false); } }} disabled={busy || !palPhone.trim() || Number(palAmount) < 1} className="h-11 rounded-xl bg-orange-500 px-4 text-sm font-semibold text-white disabled:opacity-40">Send STK prompt</button></div>
+      </>}
+      {palResult && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{palResult}</p>}
+      <p className="mt-3 text-[11px] leading-5 text-neutral-400">PalPluss uses HTTP Basic authentication with your API key as the username and an empty password. TWIGA derives this server-side; the separate Base64 token is not needed here. STK prompts are sent only when you press the button and confirm.</p>
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
