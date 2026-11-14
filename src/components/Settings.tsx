@@ -105,7 +105,7 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
   const testApiConnections = async () => {
     if (demo) { setApiStatus("Sign in to test live API connections."); return; }
     if (!supabase || !businessId) { setApiStatus("Select a live business workspace first."); return; }
-    setApiStatus("Testing Supabase and Cloudflare…");
+    setApiStatus("Testing Supabase, Cloudflare and Retell…");
     try {
       await getAccessToken();
       const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -115,7 +115,19 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
       const response = await fetch(filesApi + "/health");
       const health = await response.json().catch(() => ({}));
       if (!response.ok || health.ok !== true) throw new Error("Cloudflare file API health check failed.");
-      setApiStatus("Supabase authentication and business access: OK · Cloudflare storage API: OK");
+      const { data: retellConfig, error: retellConfigError } = await supabase.functions.invoke("twiga-retell", { body: { action: "get_config", businessId } });
+      if (retellConfigError) throw new Error("Retell configuration check failed: " + retellConfigError.message);
+      if (retellConfig?.error) throw new Error(String(retellConfig.error));
+      if (!retellConfig?.keyConfigured) {
+        setApiStatus("Supabase authentication and business access: OK · Cloudflare storage API: OK · Retell: API key still needs to be saved in Profile");
+        return;
+      }
+      const { data: retellAgents, error: retellAgentsError } = await supabase.functions.invoke("twiga-retell", { body: { action: "list_agents", businessId } });
+      if (retellAgentsError) throw new Error("Retell API test failed: " + retellAgentsError.message);
+      if (retellAgents?.error) throw new Error(String(retellAgents.error));
+      const agentCount = Array.isArray(retellAgents?.agents) ? retellAgents.agents.length : 0;
+      const linked = !!retellAgentId && (retellAgents?.agents || []).some((agent: any) => agent.agent_id === retellAgentId);
+      setApiStatus("Supabase: OK · Cloudflare storage: OK · Retell API: OK (" + agentCount + " voice agents" + (linked ? ", this business linked" : "") + ")");
     } catch (e) {
       setApiStatus(e instanceof Error ? e.message : "API connection test failed.");
     }
