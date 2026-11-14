@@ -217,7 +217,7 @@ export default function Payments() {
 
       <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-semibold text-neutral-950">New M-Pesa STK Push</h2><p className="mt-1 text-sm text-neutral-500">The customer receives a payment prompt on their phone.</p>
-        {!connected && <div className="mt-4 rounded-xl bg-orange-50 p-3 text-sm text-orange-900">Connect your PalPluss API key in the API & connection tab first.</div>}
+        {!connected && <div className="mt-4 rounded-xl bg-orange-50 p-3 text-sm text-orange-900">Ask the TWIGA administrator to connect the central PalPluss account in Profile, or add a business-specific key in API & connection.</div>}
         <div className="mt-4 space-y-3">
           {channels.length > 0 && <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">Collect into business Till / Paybill<select value={selectedChannelId} onChange={(e) => setSelectedChannelId(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-normal normal-case">{channels.map((x) => <option key={x.provider_channel_id} value={x.provider_channel_id}>{x.name} · {x.type === "TILL_NUMBER" ? "Till" : "Paybill"} {x.shortcode}{x.is_default ? " · Default" : ""}</option>)}</select></label>}
           {channels.length === 0 && connected && <p className="rounded-xl bg-orange-50 p-3 text-xs text-orange-900">Add this business's Till or Paybill below before sending a routed payment request.</p>}
@@ -246,7 +246,7 @@ export default function Payments() {
       </section>
     </div> : <div className="grid gap-6 lg:grid-cols-3">
       <section className="rounded-2xl border border-neutral-200 bg-neutral-950 p-5 text-white shadow-lg lg:col-span-2">
-        <h2 className="text-lg font-semibold">PalPluss API key</h2><p className="mt-1 text-sm text-neutral-400">Paste the API key from the PalPluss dashboard. TWIGA validates it and stores it encrypted per business.</p>
+        <h2 className="text-lg font-semibold">Optional business-specific PalPluss key</h2><p className="mt-1 text-sm text-neutral-400">TWIGA normally uses the central PalPluss account configured by the platform administrator. Add a separate business key only if this business has its own PalPluss account.</p>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} placeholder="pp_live_…" className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-700 bg-neutral-900 px-3 font-mono text-sm text-white placeholder:text-neutral-500" /><button onClick={saveKey} disabled={busy || keyDraft.trim().length < 20} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Checking…" : "Validate & save"}</button></div>
         <p className="mt-3 text-xs leading-5 text-neutral-400">The API uses HTTP Basic authentication with the API key as username and an empty password. TWIGA creates the Base64 header server-side; you do not need to paste the separate Base64 token.</p>
       </section>
