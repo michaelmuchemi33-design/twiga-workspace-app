@@ -68,7 +68,7 @@ export default function Settings() {
           </h1>
           <p className="mt-1 text-sm text-neutral-500">
             Tune how your AI receptionist runs the front desk
-          </p>
+          </p>\n          <p className="mt-3 max-w-3xl text-xs leading-5 text-neutral-500">Live Retell voice, model and receptionist instructions are configured under Profile → AI Front Desk. The settings below are saved as workspace defaults; they do not silently change a published Retell agent.</p>
         </div>
         <div className="flex items-center gap-3">
           {saved && (
@@ -161,38 +161,8 @@ export default function Settings() {
             </Field>
           </Section>
 
-          <Section icon={IconMic} title="Voice Selection & Accent" desc="How your AI sounds on the phone">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Voice">
-                <Select value={p.voice} onValueChange={(v) => patch("persona", { voice: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {["Female — Aria", "Female — Luna", "Male — Kai", "Male — Owen"].map((c) => (
-                      <SelectItem key={c} value={c}>{c}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Accent">
-                <Select value={p.accent} onValueChange={(v) => patch("persona", { accent: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {["Kenyan English", "British English", "American English", "Neutral"].map((c) => (
-                      <SelectItem key={c} value={c}>{c}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            </div>
-            <Field label={`Speaking speed — ${p.speed.toFixed(1)}x`}>
-              <Slider
-                value={[p.speed]}
-                min={0.5}
-                max={1.5}
-                step={0.1}
-                onValueChange={([v]) => patch("persona", { speed: v })}
-              />
-            </Field>
+          <Section icon={IconMic} title="Live Retell voice" desc="Manage the published phone receptionist in Profile → AI Front Desk">
+            <p className="text-sm leading-6 text-neutral-600">Choose one of the British test voices, publish a separate receptionist for this business, and test it in the browser from your Profile. TWIGA applies a calm tone where supported and a slightly slower 0.9× speaking speed. These workspace preferences below do not overwrite the published Retell agent.</p>
           </Section>
 
           <Section icon={IconChat} title="Greeting & Closing Scripts" desc="The first and last thing callers hear">
