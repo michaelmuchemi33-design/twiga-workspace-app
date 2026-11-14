@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RetellClient } from "retell-client-js-sdk";
+import { RetellWebClient } from "retell-client-js-sdk";
 import { supabase } from "@/lib/supabase";
 
 type Business = { id: string; name: string; business_type?: string; status?: string; role?: string };
@@ -235,30 +235,35 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
 
   const testVoice = async () => {
     if (!supabase || !businessId || !retell.config?.retell_agent_id) return;
-    if (callSession.current) { await callSession.current.end(); callSession.current = null; setCallStatus("Ended"); return; }
+    if (callSession.current) {
+      try { callSession.current.stopCall(); } catch {}
+      callSession.current = null;
+      setCallStatus("Ended");
+      return;
+    }
     setCallStatus("Connecting…");
-    const proxyFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = new URL(String(input)).pathname;
-      const payload = init?.body ? JSON.parse(String(init.body)) : {};
-      const stop = path.includes("/v3/stop-call/");
-      const callId = stop ? path.split("/").pop() || "" : "";
-      const { data, error } = await supabase!.functions.invoke("twiga-retell-webcall", { body: { ...payload, action: stop ? "stop" : "create", businessId, callId } });
-      return new Response(JSON.stringify(error ? { error: error.message } : data || {}), { status: error ? 502 : 200, headers: { "Content-Type": "application/json" } });
-    };
     try {
-      const client = new RetellClient({ key: "twiga-session-proxy", baseURL: "https://api.retellai.com", fetch: proxyFetch as typeof fetch });
-      callSession.current = client.createWebCall({
-        agent_id: retell.config.retell_agent_id,
-        hooks: {
-          onStatus: (status: string) => setCallStatus(status),
-          onEnd: () => { callSession.current = null; setCallStatus("Ended"); },
-          onError: (error: any) => { callSession.current = null; setCallStatus(error?.message || "Call error"); },
-        },
+      const { data, error } = await supabase.functions.invoke("twiga-retell-webcall", { body: { action: "create", businessId } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      const client = new RetellWebClient();
+      client.on("call_started", () => setCallStatus("Live"));
+      client.on("call_ended", () => { callSession.current = null; setCallStatus("Ended"); });
+      client.on("error", (error: any) => { callSession.current = null; setCallStatus(error?.message || "Call error"); });
+      callSession.current = client;
+      await client.startCall({
+        accessToken: data.access_token,
+        callId: data.call_id,
+        transport: data.transport,
+        iceServers: data.ice_servers,
+        url: data.url,
       });
-    } catch (e) { setCallStatus(e instanceof Error ? e.message : "Could not start call."); callSession.current = null; }
+    } catch (e) {
+      callSession.current = null;
+      setCallStatus(e instanceof Error ? e.message : "Could not start browser call.");
+    }
   };
 
-  const selected = agents.find((a) => a.agent_id === agentId);
   const signOut = async () => { if (supabase) await supabase.auth.signOut(); };
 
   return <div className="space-y-6">
