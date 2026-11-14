@@ -233,13 +233,15 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   };
 
   const publishSelected = async () => {
-    if (!agentId) { setMessage("Choose a Retell agent first."); return; }
+    if (!agentId) { setMessage("Choose a voice template first."); return; }
     setBusy(true);
     try {
       await retellAction("save_settings", { provider: "retell", voiceId: "retell-Willa", model, ambientVolume: 0.08, inboundPrompt, outboundPrompt, recordingEnabled, recordingNotice });
-      const { data: selectedVoice, error: selectionError } = await supabase!.functions.invoke("twiga-retell-select-voice", { body: { businessId, sourceAgentId: agentId } });
-      if (selectionError) throw new Error(selectionError.message);
-      if (selectedVoice?.error) throw new Error(String(selectedVoice.error));
+      if (agentId !== retell.config?.retell_agent_id) {
+        const { data: selectedVoice, error: selectionError } = await supabase!.functions.invoke("twiga-retell-select-voice", { body: { businessId, sourceAgentId: agentId } });
+        if (selectionError) throw new Error(selectionError.message);
+        if (selectedVoice?.error) throw new Error(String(selectedVoice.error));
+      }
       const result = await retellAction("provision_agent");
       const { data: style, error: styleError } = await supabase!.functions.invoke("twiga-retell-voice-style", { body: { businessId } });
       if (styleError) throw new Error(styleError.message);
