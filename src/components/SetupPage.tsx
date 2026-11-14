@@ -10,7 +10,8 @@ const prompts = [
   "I run a repair business. Customers call to request quotes and appointments.",
 ];
 
-export default function SetupPage({ onDone, onBusinessCreated }: {
+export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
+  demo?: boolean;
   onDone: () => void;
   onBusinessCreated: (id: string) => void;
 }) {
@@ -18,6 +19,8 @@ export default function SetupPage({ onDone, onBusinessCreated }: {
     { id: "welcome", role: "ai", text: "Hello! I'm your TWIGA business setup helper. I help you describe your business and build its private workspace. Start with your business name, what you sell or do, and where you operate. I'll ask a few questions and organise the details. This is the account setup assistant, not your phone receptionist." },
   ]);
   const [input, setInput] = useState("");
+  const [ownerName, setOwnerName] = useState("");
+  const [ownerEmail, setOwnerEmail] = useState("");
   const [profile, setProfile] = useState<any>({});
   const [missing, setMissing] = useState<string[]>(["business name", "business type", "what your business does or sells"]);
   const [ready, setReady] = useState(false);
@@ -30,17 +33,36 @@ export default function SetupPage({ onDone, onBusinessCreated }: {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, thinking]);
 
+  useEffect(() => {
+    if (demo || !supabase) return;
+    void supabase.auth.getUser().then(({ data }) => {
+      setOwnerName(String(data.user?.user_metadata?.full_name || data.user?.user_metadata?.name || ""));
+      setOwnerEmail(String(data.user?.email || ""));
+    });
+  }, [demo]);
+
   const send = async (value?: string) => {
     const text = (value ?? input).trim();
-    if (!text || thinking || !supabase) return;
+    if (!text || thinking) return;
+    if (!demo && (!supabase || !ownerName.trim() || !ownerEmail.trim())) {
+      setError("Add the business owner name and contact email before starting setup.");
+      return;
+    }
     const next = [...messages, { id: String(Date.now()), role: "user" as const, text }];
     setMessages(next);
     setInput("");
     setThinking(true);
     setError("");
     try {
-      const { data, error: invokeError } = await supabase.functions.invoke("twiga-setup-assistant", {
-        body: { messages: next.map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text })) },
+      if (demo) {
+        setProfile({ business_name: "Nairobi Style Studio", business_type: "salon", business_summary: "A sample Nairobi salon offering haircuts, styling and beauty services.", owner_name: ownerName || "Demo owner", owner_email: ownerEmail || "demo@example.com" });
+        setMissing(["Add your real business details after signing in"]);
+        setReady(false);
+        setMessages((m) => [...m, { id: String(Date.now() + 1), role: "ai", text: "This is the interactive demo of the Grok setup flow. In your live workspace, Grok collects your business information and saves it to your private business profile. The demo does not create a real workspace or call the paid Grok API. Sign in to configure your own business." }]);
+        return;
+      }
+      const { data, error: invokeError } = await supabase!.functions.invoke("twiga-setup-assistant", {
+        body: { messages: next.map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text })), ownerProfile: { name: ownerName.trim(), email: ownerEmail.trim() } },
       });
       if (invokeError) throw new Error(invokeError.message);
       if (data?.error) throw new Error(String(data.error));
@@ -50,14 +72,15 @@ export default function SetupPage({ onDone, onBusinessCreated }: {
       setReady(data.readyToBuild === true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "The setup assistant could not reply.");
-      setMessages((m) => [...m, { id: String(Date.now() + 2), role: "ai", text: "I couldn't reach the setup assistant just now. Check the Grok setup key in Supabase and try again." }]);
+      setMessages((m) => [...m, { id: String(Date.now() + 2), role: "ai", text: "I couldn't reach the setup assistant. " + (e instanceof Error ? e.message : "Please try again.") }]);
     } finally {
       setThinking(false);
     }
   };
 
   const buildWorkspace = async () => {
-    if (!supabase || !ready || !profile.business_name) return;
+    if (demo) { setError("This is a demo preview. Sign in to create a real business workspace."); return; }
+    if (!supabase || !ready || !profile.business_name || !ownerName.trim() || !ownerEmail.trim()) return;
     setBuilding(true);
     setError("");
     try {
@@ -66,7 +89,7 @@ export default function SetupPage({ onDone, onBusinessCreated }: {
           action: "create",
           name: profile.business_name,
           businessType: profile.business_type || "general",
-          profile,
+          profile: { ...profile, owner_name: ownerName.trim(), owner_email: ownerEmail.trim() },
         },
       });
       if (createError) throw new Error(createError.message);
@@ -88,6 +111,10 @@ export default function SetupPage({ onDone, onBusinessCreated }: {
       <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-500">Grok · Business setup assistant</p>
       <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-950">Build your business workspace</h1>
       <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Describe your business in plain language. The helper organises your information, then creates a separate workspace for that business. Grok is only used here for setup; Retell runs the receptionist.</p>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <label className="block text-sm font-medium text-neutral-700">Business owner name<input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} autoComplete="name" placeholder="Your full name" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
+        <label className="block text-sm font-medium text-neutral-700">Business contact email<input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} autoComplete="email" placeholder="you@business.co.ke" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
+      </div>
     </header>
 
     <div className="grid gap-5 lg:grid-cols-[1fr_300px]">

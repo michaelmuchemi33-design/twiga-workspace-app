@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Capacitor } from "@capacitor/core";
 import { supabase } from "@/lib/supabase";
 import InstallApp from "@/components/InstallApp";
 import DemoInterest from "@/components/DemoInterest";
@@ -63,6 +64,7 @@ export default function App({ demo = false, userId, onSignOut }: { demo?: boolea
   const [menuOpen, setMenuOpen] = useState(false);
   const [businesses, setBusinesses] = useState<any[]>([]);
   const [businessId, setBusinessId] = useState("");
+  const isNativeApp = Capacitor.isNativePlatform();
 
   const refreshBusinesses = useCallback(async () => {
     if (demo || !userId || !supabase) return;
@@ -112,24 +114,27 @@ export default function App({ demo = false, userId, onSignOut }: { demo?: boolea
       <div
         className={cn(
           "min-h-screen bg-neutral-50 text-neutral-900 transition-all duration-500",
-          isSetup ? "pb-10" : "pb-32"
+          isSetup ? "pb-10" : isNativeApp ? "pb-32" : "pb-8"
         )}
       >
-        <ControlDock />
-        <SideRail tab={tab} onSelect={go} />
+        {!isNativeApp && <ControlDock />}
+        {!isNativeApp && <SideRail tab={tab} onSelect={go} />}
 
-        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:pl-24">
+        <main className={cn("mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8", !isNativeApp && "lg:pl-24")}>
           <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500 text-lg font-black text-white">T</div>
               <div><p className="font-bold tracking-tight text-neutral-950">TWIGA</p><p className="text-xs text-neutral-500">{demo ? "Interactive product preview · sample data" : "Your private business workspace"}</p></div>
               {demo && <span className="rounded-full bg-orange-50 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-700">Demo</span>}
             </div>
-            <div className="flex flex-wrap items-center gap-2"><InstallApp />{demo && <DemoInterest />}{!demo && onSignOut && <button onClick={onSignOut} className="h-10 rounded-xl border border-neutral-200 px-4 text-sm font-semibold text-neutral-600 hover:bg-neutral-50">Sign out</button>}</div>
+            <div className="flex flex-wrap items-center gap-2">
+              {!isNativeApp && <select aria-label="Navigate workspace" value={tab} onChange={(e) => go(e.target.value)} className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 outline-none focus:border-orange-400 lg:hidden"><option value="dashboard">Home</option><option value="setup">AI setup</option><option value="organizer">Organize</option><option value="functions">Functions</option><option value="pos">Sell</option><option value="payments">Payments</option><option value="customers">People</option><option value="whatsapp">Inbox</option><option value="analytics">Stats</option><option value="products">Products</option><option value="reports">Reports</option><option value="alerts">Alerts</option><option value="profile">Profile</option><option value="settings">Settings</option></select>}
+              <InstallApp />{demo && <DemoInterest />}{!demo && onSignOut && <button onClick={onSignOut} className="h-10 rounded-xl border border-neutral-200 px-4 text-sm font-semibold text-neutral-600 hover:bg-neutral-50">Sign out</button>}
+            </div>
           </div>
           {demo && <div className="mb-6 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-900"><strong>This is a sample workspace.</strong> Explore the screens and test the controls. Demo changes are temporary and are not connected to a real customer's business account.</div>}
           {tab === "dashboard" && <Dashboard onSetup={() => go("setup")} />}
-          {tab === "setup" && <SetupPage onDone={() => go("dashboard")} onBusinessCreated={businessCreated} />}
+          {tab === "setup" && <SetupPage demo={demo} onDone={() => go("dashboard")} onBusinessCreated={businessCreated} />}
           {tab === "organizer" && <Organizer />}
           {tab === "functions" && <Functions />}
           {tab === "pos" && <PointOfSale />}
@@ -141,7 +146,7 @@ export default function App({ demo = false, userId, onSignOut }: { demo?: boolea
           {tab === "reports" && <Reports />}
           {tab === "alerts" && <Alerts />}
           {tab === "profile" && <Profile userId={userId} businessId={businessId} businesses={businesses} onBusinessChange={setBusinessId} onRefreshBusinesses={refreshBusinesses} onCreateBusiness={() => go("setup")} />}
-          {tab === "settings" && <Settings />}
+          {tab === "settings" && <Settings businessId={businessId} demo={demo} onOpenProfile={() => go("profile")} />}
           {tab === "logout" && <Logout onCancel={() => setTab("dashboard")} />}
         </main>
 
@@ -152,7 +157,7 @@ export default function App({ demo = false, userId, onSignOut }: { demo?: boolea
           />
         )}
 
-        <nav
+        {isNativeApp && <nav
           className={cn(
             "fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-5 transition-all duration-500",
             isSetup
@@ -239,7 +244,7 @@ export default function App({ demo = false, userId, onSignOut }: { demo?: boolea
               </button>
             </div>
           </div>
-        </nav>
+        </nav>}
       </div>
     </StoreProvider>
   );

@@ -7,6 +7,8 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
 import { useStore, type TaskStatus } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import AnimatedNumber from "@/components/AnimatedNumber";
@@ -72,6 +74,16 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
     demoMode,
     settings,
   } = useStore();
+  const [ownerName, setOwnerName] = useState("");
+
+  useEffect(() => {
+    if (demoMode || !supabase) return;
+    let active = true;
+    void supabase.auth.getUser().then(({ data }) => {
+      if (active) setOwnerName(String(data.user?.user_metadata?.full_name || data.user?.user_metadata?.name || ""));
+    });
+    return () => { active = false; };
+  }, [demoMode]);
 
   const revenue = sales.reduce((s, x) => s + x.total, 0);
   const dueFollowUps = customers.filter((c) => c.followUpIn === 0).length;
@@ -113,10 +125,10 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
             AI Front Desk
           </p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-900">
-            {settings.business.name ? `Welcome, ${settings.business.name}` : "Your workspace"}
+            {ownerName ? `Welcome, ${ownerName}` : settings.business.name ? `Welcome, ${settings.business.name}` : "Your workspace"}
           </h1>
           <p className="mt-1 text-sm text-neutral-500">
-            Your receptionist handled {doneTasks} tasks today · {pendingTasks} pending · {failedTasks} failed
+            {settings.business.name ? `${settings.business.name} · ` : ""}Your receptionist handled {doneTasks} tasks today · {pendingTasks} pending · {failedTasks} failed
           </p>
         </div>
 

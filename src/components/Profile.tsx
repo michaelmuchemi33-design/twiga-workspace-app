@@ -43,6 +43,9 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
 }) {
   const [user, setUser] = useState<any>(null);
   const [name, setName] = useState("");
+  const [ownerName, setOwnerName] = useState("");
+  const [ownerEmail, setOwnerEmail] = useState("");
+  const [ownerSaving, setOwnerSaving] = useState(false);
   const [avatar, setAvatar] = useState("");
   const [sessionStart, setSessionStart] = useState("");
   const [busy, setBusy] = useState(false);
@@ -55,7 +58,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [retellKey, setRetellKey] = useState("");
   const [agents, setAgents] = useState<any[]>([]);
   const [agentId, setAgentId] = useState("");
-  const [model, setModel] = useState("gpt-6-luna");
+  const [model, setModel] = useState("gpt-4.1-mini");
   const [callStatus, setCallStatus] = useState("Not started");
   const [palKey, setPalKey] = useState("");
   const [palStatus, setPalStatus] = useState<any>({ keyConfigured: false });
@@ -65,6 +68,13 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [xaiConfig, setXaiConfig] = useState<any>({ isAdmin: false });
   const [xaiKey, setXaiKey] = useState("");
   const [xaiMessage, setXaiMessage] = useState("");
+  const [googleOAuthConfig, setGoogleOAuthConfig] = useState<any>({ clientIdConfigured: false, clientSecretConfigured: false, encryptionReady: false });
+  const [googleClientId, setGoogleClientId] = useState("");
+  const [googleClientSecret, setGoogleClientSecret] = useState("");
+  const [googleOAuthMessage, setGoogleOAuthMessage] = useState("");
+  const [retellPlatformConfig, setRetellPlatformConfig] = useState<any>({ keyConfigured: false });
+  const [retellPlatformKey, setRetellPlatformKey] = useState("");
+  const [retellPlatformMessage, setRetellPlatformMessage] = useState("");
   const [inboundPrompt, setInboundPrompt] = useState("Greet callers warmly, understand what they need, and use only verified business information. Capture appointment and order requests for staff confirmation.");
   const [outboundPrompt, setOutboundPrompt] = useState("Only call people when the business has authorised the follow-up. Identify the business, explain the reason, ask if it is a convenient time, and respect requests not to be contacted.");
   const callSession = useRef<any>(null);
@@ -104,8 +114,54 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const loadXaiConfig = useCallback(async () => {
     if (!supabase) return;
     const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "get_config" } });
-    if (!error && data?.isAdmin) setXaiConfig(data);
+    if (!error && data?.isAdmin) {
+      setXaiConfig(data);
+      const { data: googleData, error: googleError } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "google.oauth.status" } });
+      if (!googleError && googleData?.isAdmin) {
+        setGoogleOAuthConfig(googleData);
+        setGoogleClientId(String(googleData.clientId || ""));
+      }
+      const { data: retellPlatformData, error: retellPlatformError } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "retell.platform.status" } });
+      if (!retellPlatformError && retellPlatformData?.isAdmin) setRetellPlatformConfig(retellPlatformData);
+    }
   }, []);
+
+  const saveRetellPlatformKey = async () => {
+    if (!supabase || retellPlatformKey.trim().length < 20) return;
+    setBusy(true);
+    setRetellPlatformMessage("");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "retell.platform.save", apiKey: retellPlatformKey.trim() } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setRetellPlatformKey("");
+      setRetellPlatformConfig((current: any) => ({ ...current, ...data, keyConfigured: true }));
+      setRetellPlatformMessage(data.message || "Retell platform key saved.");
+      await loadRetell();
+    } catch (e) {
+      setRetellPlatformMessage(e instanceof Error ? e.message : "Retell platform key could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveGoogleOAuth = async () => {
+    if (!supabase) return;
+    setBusy(true);
+    setGoogleOAuthMessage("");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "google.oauth.save", clientId: googleClientId.trim(), clientSecret: googleClientSecret } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setGoogleClientSecret("");
+      setGoogleOAuthConfig((current: any) => ({ ...current, ...data, clientId: googleClientId.trim(), clientIdConfigured: true, clientSecretConfigured: true }));
+      setGoogleOAuthMessage(data.message || "Google OAuth credentials saved.");
+    } catch (e) {
+      setGoogleOAuthMessage(e instanceof Error ? e.message : "Google OAuth credentials could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const loadGoogleStatus = useCallback(async () => {
     if (!businessId) return;
@@ -142,6 +198,42 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     void load();
     return () => { active = false; };
   }, [userId]);
+
+  useEffect(() => {
+    if (!supabase || !businessId) {
+      setOwnerName(name);
+      setOwnerEmail(String(user?.email || ""));
+      return;
+    }
+    let active = true;
+    void supabase.from("twiga_business_profiles").select("owner_name,owner_email").eq("business_id", businessId).maybeSingle().then(({ data, error }) => {
+      if (!active || error) return;
+      setOwnerName(String(data?.owner_name || name || ""));
+      setOwnerEmail(String(data?.owner_email || user?.email || ""));
+    });
+    return () => { active = false; };
+  }, [businessId, user?.email, name]);
+
+  const saveOwnerProfile = async () => {
+    if (!supabase || !businessId || !ownerName.trim() || !ownerEmail.trim()) {
+      setMessage("Choose a business and enter the owner's name and contact email.");
+      return;
+    }
+    setOwnerSaving(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-business-workspaces", { body: { action: "update_owner_profile", businessId, ownerName: ownerName.trim(), ownerEmail: ownerEmail.trim() } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      const { error: profileError } = await supabase.auth.updateUser({ data: { full_name: ownerName.trim() } });
+      if (profileError) throw profileError;
+      setName(ownerName.trim());
+      setMessage("AI Front Desk owner profile saved for this business.");
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Owner profile could not be saved.");
+    } finally {
+      setOwnerSaving(false);
+    }
+  };
 
   useEffect(() => { void loadGoogleStatus(); }, [loadGoogleStatus]);
   useEffect(() => { void loadXaiConfig(); }, [loadXaiConfig]);
@@ -321,9 +413,24 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
 
     {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Grok business setup helper</h2><p className="mt-1 text-sm text-neutral-500">One shared Grok API key powers account onboarding only. It is not sent to Retell or exposed to customers.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{xaiConfig.keyConfigured ? "Key saved · •••• " + xaiConfig.keyLast4 : "Key not configured"}</span></div>
-      {!xaiConfig.keyConfigured && <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={xaiKey} onChange={(e) => setXaiKey(e.target.value)} placeholder="xAI API key" className="h-11 min-w-0 flex-1 rounded-xl border px-3 text-sm" /><button onClick={async () => { setBusy(true); setXaiMessage(""); try { const { data, error } = await supabase!.functions.invoke("twiga-platform-secrets", { body: { action: "save_xai_key", apiKey: xaiKey } }); if (error) throw new Error(error.message); if (data?.error) throw new Error(data.error); setXaiKey(""); setXaiConfig(data); setXaiMessage(data.message || "Grok key saved."); } catch (e) { setXaiMessage(e instanceof Error ? e.message : "Grok key could not be saved."); } finally { setBusy(false); } }} disabled={busy || xaiKey.length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save Grok key</button></div>}
-      {xaiConfig.keyConfigured && <p className="mt-3 text-sm text-neutral-600">Grok is ready for the business setup assistant. Replace the key here after rotating it.</p>}
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={xaiKey} onChange={(e) => setXaiKey(e.target.value)} placeholder={xaiConfig.keyConfigured ? "Enter rotated xAI API key to replace current key" : "xAI API key"} className="h-11 min-w-0 flex-1 rounded-xl border px-3 text-sm" /><button onClick={async () => { setBusy(true); setXaiMessage(""); try { const { data, error } = await supabase!.functions.invoke("twiga-platform-secrets", { body: { action: "save_xai_key", apiKey: xaiKey } }); if (error) throw new Error(error.message); if (data?.error) throw new Error(data.error); setXaiKey(""); setXaiConfig(data); setXaiMessage(data.message || "Grok key saved."); } catch (e) { setXaiMessage(e instanceof Error ? e.message : "Grok key could not be saved."); } finally { setBusy(false); } }} disabled={busy || xaiKey.length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save Grok key</button></div>
+      {xaiConfig.keyConfigured && <p className="mt-3 text-sm text-neutral-600">Grok key is stored in encrypted Vault (•••• {xaiConfig.keyLast4}). Enter a newly rotated key above to replace it.</p>}
       {xaiMessage && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{xaiMessage}</p>}
+    </section>}
+    {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Retell platform connection</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">Use the API key from the same Retell account connected in Composio. TWIGA uses this server-side key to provision separate agents for each business and start browser test calls.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{retellPlatformConfig.keyConfigured ? "Connected" : "Needs API key"}</span></div>
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="new-password" value={retellPlatformKey} onChange={(e) => setRetellPlatformKey(e.target.value)} placeholder={retellPlatformConfig.keyConfigured ? "Enter a rotated Retell API key to replace it" : "Retell API key from your connected workspace"} className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-200 px-3 text-sm" /><button onClick={saveRetellPlatformKey} disabled={busy || retellPlatformKey.trim().length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save Retell key</button></div>
+      {retellPlatformConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Stored in encrypted Vault · •••• {retellPlatformConfig.keyLast4}</p>}
+      {retellPlatformMessage && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{retellPlatformMessage}</p>}
+    </section>}
+    {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Google Workspace OAuth</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">These are TWIGA's shared OAuth application credentials. Each business owner still authorizes their own Calendar, Contacts, Drive and Sheets account separately.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{googleOAuthConfig.clientIdConfigured && googleOAuthConfig.clientSecretConfigured && googleOAuthConfig.encryptionReady ? "Server ready" : "Needs credentials"}</span></div>
+      <div className="mt-4 grid gap-3">
+        <label className="block text-xs font-semibold uppercase text-neutral-500">Google OAuth web client ID<input value={googleClientId} onChange={(e) => setGoogleClientId(e.target.value)} autoComplete="off" placeholder="xxxx.apps.googleusercontent.com" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" /></label>
+        <label className="block text-xs font-semibold uppercase text-neutral-500">New Google OAuth client secret<input type="password" value={googleClientSecret} onChange={(e) => setGoogleClientSecret(e.target.value)} autoComplete="new-password" placeholder="Paste the newly rotated Google OAuth client secret" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" /></label>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-neutral-500">Encryption key: {googleOAuthConfig.encryptionReady ? "ready" : "not configured"} · Client ID: {googleOAuthConfig.clientIdConfigured ? "saved" : "missing"} · Client secret: {googleOAuthConfig.clientSecretConfigured ? "saved" : "missing"}</p><button onClick={saveGoogleOAuth} disabled={busy || googleClientId.length < 40 || googleClientSecret.length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Save Google OAuth credentials</button></div>
+      {googleOAuthMessage && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{googleOAuthMessage}</p>}
     </section>}
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">AI Front Desk</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Google Workspace</h2><p className="mt-1 text-sm text-neutral-500">Calendar, Contacts, Sheets and Drive permissions are separate from Google sign-in.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{google.connected ? "Connected" : "Not connected"}</span></div>
@@ -345,9 +452,21 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Voice & receptionist</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Retell AI</h2><p className="mt-1 text-sm text-neutral-500">Each business can connect its own Retell account. API keys are stored in Supabase Vault.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{retell.keyConfigured ? "Key saved · •••• " + (retell.keyLast4 || "") : "Not connected"}</span></div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">AI Front Desk profile</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Business owner details</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">These details appear in your workspace and are saved separately for the selected business. Your sign-in email is not changed.</p></div>
+        {avatar && <img src={avatar} alt="Owner profile" className="h-12 w-12 rounded-xl object-cover" />}
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="block text-xs font-semibold uppercase text-neutral-500">Owner full name<input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} autoComplete="name" placeholder="Business owner's full name" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" /></label>
+        <label className="block text-xs font-semibold uppercase text-neutral-500">Business contact email<input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} autoComplete="email" placeholder="owner@business.co.ke" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" /></label>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-neutral-500">Used for the business profile and AI receptionist setup context.</p><button onClick={saveOwnerProfile} disabled={ownerSaving || !businessId || !ownerName.trim() || !ownerEmail.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{ownerSaving ? "Saving…" : "Save owner profile"}</button></div>
+    </section>
+
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Voice & receptionist</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Retell AI</h2><p className="mt-1 text-sm text-neutral-500">A shared TWIGA Retell account can power separate business agents. Platform and optional business keys are stored in Supabase Vault.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{retell.keyConfigured ? (retell.keySource === "platform" ? "TWIGA platform key · •••• " : "Business key · •••• ") + (retell.keyLast4 || "") : "Not connected"}</span></div>
       {!retell.keyConfigured ? <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={retellKey} onChange={(e) => setRetellKey(e.target.value)} placeholder="Retell API key for this business" className="h-11 min-w-0 flex-1 rounded-xl border px-3 text-sm" /><button onClick={saveRetellKey} disabled={busy || retellKey.length < 20 || !businessId} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Connect Retell</button></div> : <>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Retell model</label><select value={model} onChange={(e) => setModel(e.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm"><option value="gpt-6-luna">Retell GPT 6 Luna</option><option value="gpt-5.6-luna">Retell GPT 5.6 Luna</option></select></div><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Choose a voice template</label><select value={agentId} onChange={(e) => setAgentId(e.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm"><option value="">Select voice template from Retell…</option>{agents.map((a) => <option key={a.agent_id} value={a.agent_id}>{a.agent_name} · {a.agent_id.slice(0, 10)}</option>)}</select></div></div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Retell model</label><select value={model} onChange={(e) => setModel(e.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm"><option value="gpt-4.1-mini">GPT-4.1 mini · low-cost test</option></select></div><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Choose a voice template</label><select value={agentId} onChange={(e) => setAgentId(e.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm"><option value="">Select voice template from Retell…</option>{agents.map((a) => <option key={a.agent_id} value={a.agent_id}>{a.agent_name} · {a.agent_id.slice(0, 10)}</option>)}</select></div></div>
         <div className="mt-4 rounded-xl bg-neutral-50 p-4"><p className="text-sm font-semibold">10 voice candidates</p><p className="mt-1 text-xs text-neutral-500">The test agents will appear above if you connected the same Retell account. Five female and five male British-style candidates are listed here for comparison.</p><div className="mt-3 grid gap-2 sm:grid-cols-2">{voiceNotes.map((v) => <div key={v[2]} className="rounded-lg border bg-white px-3 py-2"><p className="text-xs font-semibold">{v[0]}</p><p className="text-[11px] text-neutral-500">{v[1]} · {v[2]}</p></div>)}</div></div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Inbound instructions</label><textarea rows={3} value={inboundPrompt} onChange={(e) => setInboundPrompt(e.target.value)} className="w-full rounded-xl border p-3 text-sm" /></div><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Outbound instructions</label><textarea rows={3} value={outboundPrompt} onChange={(e) => setOutboundPrompt(e.target.value)} className="w-full rounded-xl border p-3 text-sm" /></div></div>
         <div className="mt-4 rounded-xl border border-neutral-200 p-4">
