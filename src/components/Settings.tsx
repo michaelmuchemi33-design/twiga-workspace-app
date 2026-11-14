@@ -47,6 +47,7 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
   const [retellAgentId, setRetellAgentId] = useState("");
   const [callStatus, setCallStatus] = useState("Not started");
   const [callBusy, setCallBusy] = useState(false);
+  const [apiStatus, setApiStatus] = useState("");
   const callSession = useRef<any>(null);
   const [storageUsed, setStorageUsed] = useState(0);
   const [storageFiles, setStorageFiles] = useState<any[]>([]);
@@ -100,6 +101,23 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
   useEffect(() => {
     void refreshStorage();
   }, [businessId, demo]);
+
+  const testApiConnections = async () => {
+    if (demo) { setApiStatus("Sign in to test live API connections."); return; }
+    if (!supabase || !businessId) { setApiStatus("Select a live business workspace first."); return; }
+    setApiStatus("Testing Supabase and Cloudflare…");
+    try {
+      const token = await getAccessToken();
+      const { data: membership, error: membershipError } = await supabase.from("business_members").select("business_id").eq("business_id", businessId).maybeSingle();
+      if (membershipError || !membership) throw new Error("Supabase business access check failed.");
+      const response = await fetch(filesApi + "/health");
+      const health = await response.json().catch(() => ({}));
+      if (!response.ok || health.ok !== true) throw new Error("Cloudflare file API health check failed.");
+      setApiStatus("Supabase authentication and business access: OK · Cloudflare storage API: OK");
+    } catch (e) {
+      setApiStatus(e instanceof Error ? e.message : "API connection test failed.");
+    }
+  };
 
   const testReceptionist = async () => {
     if (callSession.current) {
@@ -230,6 +248,7 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
             <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{demo ? "Demo mode" : retellAgentId ? "Agent linked" : "Not connected"}</span>
           </div>
           {demo ? <p className="mt-4 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">Browser voice tests are available in your signed-in live workspace, not the sample demo.</p> : !businessId || !retellAgentId ? <div className="mt-4 rounded-xl bg-neutral-50 p-3"><p className="text-sm text-neutral-700">Connect a Retell account and publish a business receptionist in Profile → AI Front Desk first.</p><button onClick={onOpenProfile} className="mt-3 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Open AI Front Desk profile</button></div> : <div className="mt-4 flex flex-wrap items-center gap-3"><button onClick={testReceptionist} disabled={callBusy} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{callBusy ? "Connecting…" : callSession.current ? "End test call" : "Start browser call"}</button><span className="text-sm text-neutral-600">Call status: {callStatus}</span></div>}
+          <div className="mt-4 flex flex-wrap items-center gap-2"><button onClick={testApiConnections} disabled={callBusy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700">Test API connections</button>{apiStatus && <span className="text-xs text-neutral-500">{apiStatus}</span>}</div>
           <p className="mt-3 text-xs text-neutral-500">The browser call is billed by Retell while connected. The current test agent configuration targets approximately $0.0828/min for the AI stack, excluding carrier charges.</p>
         </section>
 
