@@ -62,7 +62,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
         return;
       }
       const { data, error: invokeError } = await supabase!.functions.invoke("twiga-setup-assistant", {
-        body: { messages: next.map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text })) },
+        body: { messages: next.map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text })), ownerProfile: { name: ownerName.trim(), email: ownerEmail.trim() } },
       });
       if (invokeError) throw new Error(invokeError.message);
       if (data?.error) throw new Error(String(data.error));
