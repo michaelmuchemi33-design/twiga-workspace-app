@@ -416,7 +416,7 @@ export function StoreProvider({
         setCatalogSource(source);
       },
     }),
-    [demo, tasks, products, sales, payments, messages, customers, settings, catalogSource, sellMode, palplusKey]
+    [demo, businessId, tasks, products, sales, payments, messages, customers, settings, catalogSource, sellMode, palplusKey]
   );
 
   if (!workspaceReady && !demo) {
