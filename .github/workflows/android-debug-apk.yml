@@ -4,7 +4,7 @@ on:
   push:
     tags: ["android-v*"]
 permissions:
-  contents: read
+  contents: write
 jobs:
   build-debug-apk:
     runs-on: ubuntu-latest
@@ -29,6 +29,15 @@ jobs:
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug
+      - name: Publish public beta release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "android-beta-2026-11-14" "android/app/build/outputs/apk/debug/app-debug.apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "TWIGA Android Beta — 14 November 2026" \
+            --notes "Public beta test build. This APK is debug-signed for testing and is not the production-signed release. A production update must use the final TWIGA signing key." \
+            --prerelease
       - uses: actions/upload-artifact@v4
         with:
           name: twiga-android-debug-apk
