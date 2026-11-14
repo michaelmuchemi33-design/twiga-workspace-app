@@ -75,6 +75,24 @@ export default function App({ demo = false, userId, onSignOut }: { demo?: boolea
 
   useEffect(() => { void refreshBusinesses(); }, [refreshBusinesses]);
 
+  useEffect(() => {
+    if (!supabase) return;
+    void supabase.auth.getSession().then(({ data }) => {
+      if (data.session && !localStorage.getItem("twiga_session_started_at")) {
+        localStorage.setItem("twiga_session_started_at", String(Date.now()));
+      }
+    });
+    const timer = window.setInterval(() => {
+      const started = Number(localStorage.getItem("twiga_session_started_at") || 0);
+      if (started && Date.now() - started >= 7 * 24 * 60 * 60 * 1000) {
+        void supabase.auth.signOut();
+      }
+    }, 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+
+
   const businessCreated = async (id: string) => {
     await refreshBusinesses();
     setBusinessId(id);
