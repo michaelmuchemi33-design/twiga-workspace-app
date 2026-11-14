@@ -43,6 +43,9 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
 }) {
   const [user, setUser] = useState<any>(null);
   const [name, setName] = useState("");
+  const [ownerName, setOwnerName] = useState("");
+  const [ownerEmail, setOwnerEmail] = useState("");
+  const [ownerSaving, setOwnerSaving] = useState(false);
   const [avatar, setAvatar] = useState("");
   const [sessionStart, setSessionStart] = useState("");
   const [busy, setBusy] = useState(false);
@@ -142,6 +145,42 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     void load();
     return () => { active = false; };
   }, [userId]);
+
+  useEffect(() => {
+    if (!supabase || !businessId) {
+      setOwnerName(name);
+      setOwnerEmail(String(user?.email || ""));
+      return;
+    }
+    let active = true;
+    void supabase.from("twiga_business_profiles").select("owner_name,owner_email").eq("business_id", businessId).maybeSingle().then(({ data, error }) => {
+      if (!active || error) return;
+      setOwnerName(String(data?.owner_name || name || ""));
+      setOwnerEmail(String(data?.owner_email || user?.email || ""));
+    });
+    return () => { active = false; };
+  }, [businessId, user?.email, name]);
+
+  const saveOwnerProfile = async () => {
+    if (!supabase || !businessId || !ownerName.trim() || !ownerEmail.trim()) {
+      setMessage("Choose a business and enter the owner's name and contact email.");
+      return;
+    }
+    setOwnerSaving(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-business-workspaces", { body: { action: "update_owner_profile", businessId, ownerName: ownerName.trim(), ownerEmail: ownerEmail.trim() } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      const { error: profileError } = await supabase.auth.updateUser({ data: { full_name: ownerName.trim() } });
+      if (profileError) throw profileError;
+      setName(ownerName.trim());
+      setMessage("AI Front Desk owner profile saved for this business.");
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Owner profile could not be saved.");
+    } finally {
+      setOwnerSaving(false);
+    }
+  };
 
   useEffect(() => { void loadGoogleStatus(); }, [loadGoogleStatus]);
   useEffect(() => { void loadXaiConfig(); }, [loadXaiConfig]);
@@ -342,6 +381,18 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       </>}
       {palResult && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{palResult}</p>}
       <p className="mt-3 text-[11px] leading-5 text-neutral-400">PalPluss uses HTTP Basic authentication with your API key as the username and an empty password. TWIGA derives this server-side; the separate Base64 token is not needed here. STK prompts are sent only when you press the button and confirm.</p>
+    </section>
+
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">AI Front Desk profile</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Business owner details</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">These details appear in your workspace and are saved separately for the selected business. Your sign-in email is not changed.</p></div>
+        {avatar && <img src={avatar} alt="Owner profile" className="h-12 w-12 rounded-xl object-cover" />}
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="block text-xs font-semibold uppercase text-neutral-500">Owner full name<input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} autoComplete="name" placeholder="Business owner's full name" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" /></label>
+        <label className="block text-xs font-semibold uppercase text-neutral-500">Business contact email<input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} autoComplete="email" placeholder="owner@business.co.ke" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" /></label>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-neutral-500">Used for the business profile and AI receptionist setup context.</p><button onClick={saveOwnerProfile} disabled={ownerSaving || !businessId || !ownerName.trim() || !ownerEmail.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{ownerSaving ? "Saving…" : "Save owner profile"}</button></div>
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
