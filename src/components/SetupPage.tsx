@@ -61,7 +61,7 @@ export default function SetupPage({ onDone, onBusinessCreated }: {
     setBuilding(true);
     setError("");
     try {
-      const { data, error: createError } = await supabase.functions.invoke("twiga-businesses", {
+      const { data, error: createError } = await supabase.functions.invoke("twiga-business-workspaces", {
         body: {
           action: "create",
           name: profile.business_name,
