@@ -236,7 +236,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     if (!agentId) { setMessage("Choose a voice template first."); return; }
     setBusy(true);
     try {
-      await retellAction("save_settings", { provider: "retell", voiceId: "retell-Willa", model, ambientVolume: 0.08, inboundPrompt, outboundPrompt, recordingEnabled, recordingNotice });
+      await retellAction("save_settings", { provider: "retell", voiceId: agentId === retell.config?.retell_agent_id ? (retell.config?.retell_voice_id || "retell-Willa") : "retell-Willa", model, ambientVolume: 0.08, inboundPrompt, outboundPrompt, recordingEnabled, recordingNotice });
       if (agentId !== retell.config?.retell_agent_id) {
         const { data: selectedVoice, error: selectionError } = await supabase!.functions.invoke("twiga-retell-select-voice", { body: { businessId, sourceAgentId: agentId } });
         if (selectionError) throw new Error(selectionError.message);
