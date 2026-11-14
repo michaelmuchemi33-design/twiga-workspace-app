@@ -50,12 +50,12 @@ export default function Payments() {
   }, [businessId]);
 
   const loadChannels = useCallback(async () => {
-    if (!businessId || !connected) { setChannels([]); setSelectedChannelId(""); return; }
+    if (!businessId) { setChannels([]); setSelectedChannelId(""); return; }
     const data = await invoke("channel.list");
     const rows = Array.isArray(data.channels) ? data.channels as Channel[] : [];
     setChannels(rows);
     setSelectedChannelId((current) => current && rows.some((x) => x.provider_channel_id === current) ? current : (rows.find((x) => x.is_default)?.provider_channel_id || rows[0]?.provider_channel_id || ""));
-  }, [businessId, connected, invoke]);
+  }, [businessId, invoke]);
 
   const loadTransactions = useCallback(async () => {
     if (!supabase || !businessId) { setTransactions([]); return; }
