@@ -68,6 +68,10 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [xaiConfig, setXaiConfig] = useState<any>({ isAdmin: false });
   const [xaiKey, setXaiKey] = useState("");
   const [xaiMessage, setXaiMessage] = useState("");
+  const [googleOAuthConfig, setGoogleOAuthConfig] = useState<any>({ clientIdConfigured: false, clientSecretConfigured: false, encryptionReady: false });
+  const [googleClientId, setGoogleClientId] = useState("");
+  const [googleClientSecret, setGoogleClientSecret] = useState("");
+  const [googleOAuthMessage, setGoogleOAuthMessage] = useState("");
   const [inboundPrompt, setInboundPrompt] = useState("Greet callers warmly, understand what they need, and use only verified business information. Capture appointment and order requests for staff confirmation.");
   const [outboundPrompt, setOutboundPrompt] = useState("Only call people when the business has authorised the follow-up. Identify the business, explain the reason, ask if it is a convenient time, and respect requests not to be contacted.");
   const callSession = useRef<any>(null);
@@ -107,8 +111,33 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const loadXaiConfig = useCallback(async () => {
     if (!supabase) return;
     const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "get_config" } });
-    if (!error && data?.isAdmin) setXaiConfig(data);
+    if (!error && data?.isAdmin) {
+      setXaiConfig(data);
+      const { data: googleData, error: googleError } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "google.oauth.status" } });
+      if (!googleError && googleData?.isAdmin) {
+        setGoogleOAuthConfig(googleData);
+        setGoogleClientId(String(googleData.clientId || ""));
+      }
+    }
   }, []);
+
+  const saveGoogleOAuth = async () => {
+    if (!supabase) return;
+    setBusy(true);
+    setGoogleOAuthMessage("");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "google.oauth.save", clientId: googleClientId.trim(), clientSecret: googleClientSecret } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setGoogleClientSecret("");
+      setGoogleOAuthConfig((current: any) => ({ ...current, ...data, clientId: googleClientId.trim(), clientIdConfigured: true, clientSecretConfigured: true }));
+      setGoogleOAuthMessage(data.message || "Google OAuth credentials saved.");
+    } catch (e) {
+      setGoogleOAuthMessage(e instanceof Error ? e.message : "Google OAuth credentials could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const loadGoogleStatus = useCallback(async () => {
     if (!businessId) return;
@@ -360,9 +389,18 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
 
     {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Grok business setup helper</h2><p className="mt-1 text-sm text-neutral-500">One shared Grok API key powers account onboarding only. It is not sent to Retell or exposed to customers.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{xaiConfig.keyConfigured ? "Key saved · •••• " + xaiConfig.keyLast4 : "Key not configured"}</span></div>
-      {!xaiConfig.keyConfigured && <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={xaiKey} onChange={(e) => setXaiKey(e.target.value)} placeholder="xAI API key" className="h-11 min-w-0 flex-1 rounded-xl border px-3 text-sm" /><button onClick={async () => { setBusy(true); setXaiMessage(""); try { const { data, error } = await supabase!.functions.invoke("twiga-platform-secrets", { body: { action: "save_xai_key", apiKey: xaiKey } }); if (error) throw new Error(error.message); if (data?.error) throw new Error(data.error); setXaiKey(""); setXaiConfig(data); setXaiMessage(data.message || "Grok key saved."); } catch (e) { setXaiMessage(e instanceof Error ? e.message : "Grok key could not be saved."); } finally { setBusy(false); } }} disabled={busy || xaiKey.length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save Grok key</button></div>}
-      {xaiConfig.keyConfigured && <p className="mt-3 text-sm text-neutral-600">Grok is ready for the business setup assistant. Replace the key here after rotating it.</p>}
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={xaiKey} onChange={(e) => setXaiKey(e.target.value)} placeholder={xaiConfig.keyConfigured ? "Enter rotated xAI API key to replace current key" : "xAI API key"} className="h-11 min-w-0 flex-1 rounded-xl border px-3 text-sm" /><button onClick={async () => { setBusy(true); setXaiMessage(""); try { const { data, error } = await supabase!.functions.invoke("twiga-platform-secrets", { body: { action: "save_xai_key", apiKey: xaiKey } }); if (error) throw new Error(error.message); if (data?.error) throw new Error(data.error); setXaiKey(""); setXaiConfig(data); setXaiMessage(data.message || "Grok key saved."); } catch (e) { setXaiMessage(e instanceof Error ? e.message : "Grok key could not be saved."); } finally { setBusy(false); } }} disabled={busy || xaiKey.length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save Grok key</button></div>
+      {xaiConfig.keyConfigured && <p className="mt-3 text-sm text-neutral-600">Grok key is stored in encrypted Vault (•••• {xaiConfig.keyLast4}). Enter a newly rotated key above to replace it.</p>}
       {xaiMessage && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{xaiMessage}</p>}
+    </section>}
+    {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Google Workspace OAuth</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">These are TWIGA's shared OAuth application credentials. Each business owner still authorizes their own Calendar, Contacts, Drive and Sheets account separately.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{googleOAuthConfig.clientIdConfigured && googleOAuthConfig.clientSecretConfigured && googleOAuthConfig.encryptionReady ? "Server ready" : "Needs credentials"}</span></div>
+      <div className="mt-4 grid gap-3">
+        <label className="block text-xs font-semibold uppercase text-neutral-500">Google OAuth web client ID<input value={googleClientId} onChange={(e) => setGoogleClientId(e.target.value)} autoComplete="off" placeholder="xxxx.apps.googleusercontent.com" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" /></label>
+        <label className="block text-xs font-semibold uppercase text-neutral-500">New Google OAuth client secret<input type="password" value={googleClientSecret} onChange={(e) => setGoogleClientSecret(e.target.value)} autoComplete="new-password" placeholder="Paste the newly rotated Google OAuth client secret" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" /></label>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-neutral-500">Encryption key: {googleOAuthConfig.encryptionReady ? "ready" : "not configured"} · Client ID: {googleOAuthConfig.clientIdConfigured ? "saved" : "missing"} · Client secret: {googleOAuthConfig.clientSecretConfigured ? "saved" : "missing"}</p><button onClick={saveGoogleOAuth} disabled={busy || googleClientId.length < 40 || googleClientSecret.length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Save Google OAuth credentials</button></div>
+      {googleOAuthMessage && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{googleOAuthMessage}</p>}
     </section>}
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">AI Front Desk</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Google Workspace</h2><p className="mt-1 text-sm text-neutral-500">Calendar, Contacts, Sheets and Drive permissions are separate from Google sign-in.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{google.connected ? "Connected" : "Not connected"}</span></div>
