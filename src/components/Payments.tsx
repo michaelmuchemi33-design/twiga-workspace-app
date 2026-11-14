@@ -5,6 +5,7 @@ import { useStore } from "@/lib/store";
 type Transaction = {
   id: string;
   transaction_id: string;
+  customer_name?: string;
   status: string;
   amount: number;
   currency: string;
