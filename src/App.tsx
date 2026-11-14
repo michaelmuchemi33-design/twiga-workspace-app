@@ -122,7 +122,7 @@ export default function App({ demo = false, userId, onSignOut }: { demo?: boolea
           {tab === "products" && <Products />}
           {tab === "reports" && <Reports />}
           {tab === "alerts" && <Alerts />}
-          {tab === "profile" && <Profile userId={userId} businessId={businessId} businesses={businesses} onBusinessChange={setBusinessId} onRefreshBusinesses={refreshBusinesses} />}
+          {tab === "profile" && <Profile userId={userId} businessId={businessId} businesses={businesses} onBusinessChange={setBusinessId} onRefreshBusinesses={refreshBusinesses} onCreateBusiness={() => go("setup")} />}
           {tab === "settings" && <Settings />}
           {tab === "logout" && <Logout onCancel={() => setTab("dashboard")} />}
         </main>
