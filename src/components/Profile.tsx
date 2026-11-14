@@ -237,7 +237,10 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       await retellAction("save_settings", { provider: "retell", voiceId: "retell-Willa", model, ambientVolume: 0.08, inboundPrompt, outboundPrompt, recordingEnabled: false, recordingNotice: "This call may be recorded to help us serve you." });
       await retellAction("link_existing_agent", { agentId });
       const result = await retellAction("provision_agent");
-      setMessage(result.message || "Business-specific Retell agent published.");
+      const { data: style, error: styleError } = await supabase!.functions.invoke("twiga-retell-voice-style", { body: { businessId } });
+      if (styleError) throw new Error(styleError.message);
+      if (style?.error) throw new Error(String(style.error));
+      setMessage(style?.message || result.message || "Business-specific Retell agent published.");
       await loadRetell();
     } catch (e) { setMessage(e instanceof Error ? e.message : "Retell setup failed."); }
     finally { setBusy(false); }
