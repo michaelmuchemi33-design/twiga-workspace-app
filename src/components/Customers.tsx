@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { supabase } from "@/lib/supabase";
 import {
   Card,
   CardContent,
@@ -30,7 +32,25 @@ const stageMeta: Record<
 };
 
 export default function Customers() {
-  const { customers, advanceCustomer } = useStore();
+  const { customers, advanceCustomer, businessId } = useStore();
+  const [draftCustomerId, setDraftCustomerId] = useState("");
+  const [draftCustomerName, setDraftCustomerName] = useState("");
+  const [draftText, setDraftText] = useState("");
+  const [draftError, setDraftError] = useState("");
+  const [draftBusy, setDraftBusy] = useState(false);
+
+  const draftFollowup = async (customer: Customer) => {
+    if (!supabase || !businessId) { setDraftError("Choose a signed-in business workspace first."); return; }
+    setDraftBusy(true); setDraftError(""); setDraftText(""); setDraftCustomerId(customer.id); setDraftCustomerName(customer.name);
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-customer-followup", { body: { businessId, customerId: customer.id } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setDraftText(String(data?.draft || ""));
+    } catch (error) {
+      setDraftError(error instanceof Error ? error.message : "Grok could not draft this follow-up.");
+    } finally { setDraftBusy(false); }
+  };
 
   const due = customers.filter((c) => c.followUpIn === 0).length;
 
@@ -58,6 +78,13 @@ export default function Customers() {
           </div>
         </div>
       </div>
+
+      {(draftText || draftError || draftBusy) && <section className="rounded-2xl border border-orange-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Grok · Customer follow-up</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">{draftCustomerName || "Customer message"}</h2><p className="mt-1 text-xs text-neutral-500">Drafted from this business's profile, instructions and recent call context. Review before sending.</p></div><Badge className="border-neutral-200 bg-neutral-50 text-neutral-700">Draft only</Badge></div>
+        {draftBusy && <p className="mt-4 text-sm text-neutral-500">Grok is reviewing this business's customer context…</p>}
+        {draftText && <><textarea value={draftText} onChange={(e) => setDraftText(e.target.value)} rows={4} className="mt-4 w-full rounded-xl border border-neutral-200 p-3 text-sm leading-6 outline-none focus:border-orange-400" /><div className="mt-3 flex flex-wrap gap-2"><Button onClick={() => void navigator.clipboard.writeText(draftText)} className="bg-neutral-950 text-white">Copy message</Button><Button variant="outline" onClick={() => { setDraftText(""); setDraftCustomerId(""); setDraftCustomerName(""); }}>Close draft</Button></div></>}
+        {draftError && <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{draftError}</p>}
+      </section>}
 
       <Card className="rounded-2xl border-neutral-200 shadow-sm">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -119,6 +146,7 @@ export default function Customers() {
                     <IconClock className="h-3 w-3" />
                     {isDue ? "Due now" : `in ${c.followUpIn}d`}
                   </span>
+                  <Button size="sm" variant="outline" disabled={draftBusy} onClick={() => void draftFollowup(c)} className="border-orange-200 text-orange-700 hover:bg-orange-50"><IconSparkle className="mr-1 h-3.5 w-3.5" /> {draftBusy && draftCustomerId === c.id ? "Drafting…" : "Grok draft"}</Button>
                   <Button
                     size="sm"
                     onClick={() => advanceCustomer(c.id)}
