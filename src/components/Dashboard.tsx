@@ -91,8 +91,14 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
   const pendingTasks = tasks.filter((t) => t.status === "pending").length;
   const failedTasks = tasks.filter((t) => t.status === "failed").length;
 
-  const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: settings.business.timezone || "Africa/Nairobi" });
-  const callsToday = demoMode ? 23 : callRecords.filter((c) => new Date(c.started_at || c.created_at).toLocaleDateString("en-CA", { timeZone: settings.business.timezone || "Africa/Nairobi" }) === todayKey).length;
+  const resolveBusinessTimeZone = (value: string) => {
+    const candidate = String(value || "Africa/Nairobi").split(/\\s+\\(/)[0].trim();
+    try { new Intl.DateTimeFormat("en", { timeZone: candidate }).format(new Date()); return candidate; }
+    catch { return "Africa/Nairobi"; }
+  };
+  const businessTimeZone = resolveBusinessTimeZone(settings.business.timezone);
+  const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: businessTimeZone });
+  const callsToday = demoMode ? 23 : callRecords.filter((c) => new Date(c.started_at || c.created_at).toLocaleDateString("en-CA", { timeZone: businessTimeZone }) === todayKey).length;
   const callsHandled = demoMode ? 149 : callRecords.filter((c) => Date.now() - new Date(c.started_at || c.created_at).getTime() <= 7 * 24 * 60 * 60 * 1000).length;
   const bookings = demoMode ? 8 : callRecords.filter((c) => Boolean(c.structured_data?.appointment_request || c.structured_data?.appointment_start_iso)).length;
   const ongoingCalls = callRecords.filter((c) => ["in_progress", "ringing", "ongoing"].includes(String(c.status).toLowerCase()));
