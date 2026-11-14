@@ -64,18 +64,24 @@ export default function App({ demo = false, userId, onSignOut }: { demo?: boolea
   const [menuOpen, setMenuOpen] = useState(false);
   const [businesses, setBusinesses] = useState<any[]>([]);
   const [businessId, setBusinessId] = useState("");
+  const [businessesLoaded, setBusinessesLoaded] = useState(false);
   const isNativeApp = Capacitor.isNativePlatform();
 
   const refreshBusinesses = useCallback(async () => {
     if (demo || !userId || !supabase) return;
+    setBusinessesLoaded(false);
     const { data, error } = await supabase.functions.invoke("twiga-business-workspaces", { body: { action: "list" } });
-    if (error) { console.error("Could not load TWIGA businesses", error.message); return; }
+    if (error) { console.error("Could not load TWIGA businesses", error.message); setBusinessesLoaded(true); return; }
     const next = Array.isArray(data?.businesses) ? data.businesses : [];
     setBusinesses(next);
     setBusinessId((current) => current && next.some((b: any) => b.id === current) ? current : (next[0]?.id || ""));
+    setBusinessesLoaded(true);
   }, [demo, userId]);
 
   useEffect(() => { void refreshBusinesses(); }, [refreshBusinesses]);
+  useEffect(() => {
+    if (!demo && userId && businessesLoaded && businesses.length === 0) setTab("setup");
+  }, [demo, userId, businessesLoaded, businesses.length]);
 
   useEffect(() => {
     if (!supabase) return;
