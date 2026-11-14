@@ -66,7 +66,7 @@ export default function App({ demo = false, userId, onSignOut }: { demo?: boolea
 
   const refreshBusinesses = useCallback(async () => {
     if (demo || !userId || !supabase) return;
-    const { data, error } = await supabase.functions.invoke("twiga-businesses", { body: { action: "list" } });
+    const { data, error } = await supabase.functions.invoke("twiga-business-workspaces", { body: { action: "list" } });
     if (error) { console.error("Could not load TWIGA businesses", error.message); return; }
     const next = Array.isArray(data?.businesses) ? data.businesses : [];
     setBusinesses(next);
