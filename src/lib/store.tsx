@@ -356,6 +356,15 @@ export function StoreProvider({
       return;
     }
     let cancelled = false;
+    const callChannel = supabase.channel(`twiga-call-records-${businessId}`).on("postgres_changes", { event: "*", schema: "public", table: "twiga_call_records", filter: `business_id=eq.${businessId}` }, (payload) => {
+      if (payload.eventType === "DELETE") {
+        const old = payload.old as Partial<CallRecord>;
+        setCallRecords((current) => current.filter((call) => call.id !== old.id));
+        return;
+      }
+      const next = payload.new as CallRecord;
+      setCallRecords((current) => [next, ...current.filter((call) => call.id !== next.id)].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).slice(0, 30));
+    }).subscribe();
     hydrated.current = false;
     setWorkspaceReady(false);
     setTasks([]);
@@ -395,12 +404,17 @@ export function StoreProvider({
       setCatalogSource(saved?.catalogSource ?? "Manual entry");
       setSellMode(saved?.sellMode ?? "seller");
       const { data: calls, error: callsError } = await supabase.from("twiga_call_records").select("id,provider,provider_call_id,channel,direction,from_number,to_number,status,started_at,ended_at,duration_seconds,summary,structured_data,cost_usd,created_at").eq("business_id", businessId).order("created_at", { ascending: false }).limit(30);
-      if (!callsError) setCallRecords((calls || []) as CallRecord[]);
+      if (!callsError) setCallRecords((current) => {
+        const merged = new Map<string, CallRecord>();
+        for (const call of (calls || []) as CallRecord[]) merged.set(call.id, call);
+        for (const call of current) merged.set(call.id, call);
+        return Array.from(merged.values()).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).slice(0, 30);
+      });
       hydrated.current = true;
       setWorkspaceReady(true);
     };
     void load();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; void supabase.removeChannel(callChannel); };
   }, [demo, userId, businessId]);
 
   useEffect(() => {
