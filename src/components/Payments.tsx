@@ -89,7 +89,7 @@ export default function Payments() {
         phone: phone.trim(),
         amount: Number(amount),
         accountReference: (note.trim() || "TWIGA-" + Date.now()).slice(0, 120),
-        transactionDesc: (note.trim() || "TWIGA payment").slice(0, 255),
+        transactionDesc: (note.trim() || ("Payment from " + customer.trim())).slice(0, 255),
       });
       setMessage("M-Pesa prompt initiated. It is not a confirmed payment until PalPluss reports SUCCESS. Transaction ID: " + (result.transaction?.transactionId || "created"));
       setCustomer("");
@@ -148,7 +148,7 @@ export default function Payments() {
             const success = status === "SUCCESS";
             const pendingStatus = status === "PENDING" || status === "PROCESSING";
             return <div key={tx.transaction_id} className="flex flex-col gap-3 rounded-xl border border-neutral-100 p-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0"><p className="text-sm font-semibold text-neutral-950">{tx.account_reference || tx.transaction_desc || "M-Pesa payment"}</p><p className="mt-1 text-xs text-neutral-500">{tx.phone || "Phone not returned"} · {new Date(tx.created_at).toLocaleString()}</p><p className="mt-1 truncate font-mono text-[10px] text-neutral-400">{tx.transaction_id}</p>{tx.mpesa_receipt && <p className="mt-1 text-xs font-semibold text-neutral-700">M-Pesa receipt: {tx.mpesa_receipt}</p>}</div>
+              <div className="min-w-0"><p className="text-sm font-semibold text-neutral-950">{tx.customer_name || tx.account_reference || tx.transaction_desc || "M-Pesa payment"}</p><p className="mt-1 text-xs text-neutral-500">{tx.phone || "Phone not returned"} · {new Date(tx.created_at).toLocaleString()}</p><p className="mt-1 truncate font-mono text-[10px] text-neutral-400">{tx.transaction_id}</p>{tx.mpesa_receipt && <p className="mt-1 text-xs font-semibold text-neutral-700">M-Pesa receipt: {tx.mpesa_receipt}</p>}</div>
               <div className="flex items-center gap-3"><strong className="text-sm text-neutral-950">KES {Number(tx.amount).toLocaleString()}</strong><span className={"rounded-full px-3 py-1 text-xs font-semibold " + (success ? "bg-neutral-900 text-white" : pendingStatus ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600")}>{status}</span></div>
             </div>;
           })}
