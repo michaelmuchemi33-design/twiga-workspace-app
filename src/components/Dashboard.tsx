@@ -177,7 +177,7 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <div>
               <CardTitle className="flex items-center gap-2 text-xl font-semibold">
-                <IconMic className="h-5 w-5 text-orange-500" /> Live Calls
+                <IconMic className="h-5 w-5 text-orange-500" /> {demoMode ? "Live Calls" : "Recent Calls"}
               </CardTitle>
               <CardDescription className="text-neutral-400">
                 {demoMode ? "Illustrative sample activity — not real calls" : "Retell call history for this business. Transcripts are saved only when recording is enabled."}
