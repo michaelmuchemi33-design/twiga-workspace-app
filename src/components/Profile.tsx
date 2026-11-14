@@ -4,16 +4,16 @@ import { supabase } from "@/lib/supabase";
 
 type Business = { id: string; name: string; business_type?: string; status?: string; role?: string };
 const voiceNotes = [
-  ["Willa · Cartesia", "Female", "cartesia-Willa"],
-  ["Dorothy · ElevenLabs", "Female", "11labs-Dorothy"],
-  ["Amy · OpenAI", "Female", "openai-Amy"],
-  ["Maren · Minimax", "Female", "minimax-Maren"],
-  ["Eleanor · Inworld", "Female", "inworld-Eleanor"],
-  ["Anthony · ElevenLabs", "Male", "11labs-Anthony"],
-  ["Fable · OpenAI", "Male", "openai-Fable"],
-  ["Duncan · Inworld", "Male", "inworld-Duncan"],
-  ["Anthony · Cartesia", "Male", "cartesia-Anthony"],
-  ["Anthony · OpenAI", "Male", "openai-Anthony"],
+  ["Willa · Cartesia", "Female · British · calm", "cartesia-Willa"],
+  ["Dorothy · ElevenLabs", "Female · British · lower-register audition", "11labs-Dorothy"],
+  ["Amy · OpenAI", "Female · British · clear", "openai-Amy"],
+  ["Maren · Minimax", "Female · British · warm, fuller-tone audition", "minimax-Maren"],
+  ["Eleanor · Inworld", "Female · British · measured", "inworld-Eleanor"],
+  ["Anthony · ElevenLabs", "Male · British · calm", "11labs-Anthony"],
+  ["Fable · OpenAI", "Male · British · clear", "openai-Fable"],
+  ["Duncan · Inworld", "Male · British · warm", "inworld-Duncan"],
+  ["Anthony · Cartesia", "Male · British · measured", "cartesia-Anthony"],
+  ["Anthony · OpenAI", "Male · British · clear", "openai-Anthony"],
 ];
 
 function loadGoogle() {
