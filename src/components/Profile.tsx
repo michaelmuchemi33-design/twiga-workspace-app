@@ -75,6 +75,9 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [retellPlatformConfig, setRetellPlatformConfig] = useState<any>({ keyConfigured: false });
   const [retellPlatformKey, setRetellPlatformKey] = useState("");
   const [retellPlatformMessage, setRetellPlatformMessage] = useState("");
+  const [palPlatformConfig, setPalPlatformConfig] = useState<any>({ keyConfigured: false });
+  const [palPlatformKey, setPalPlatformKey] = useState("");
+  const [palPlatformMessage, setPalPlatformMessage] = useState("");
   const [inboundPrompt, setInboundPrompt] = useState("Greet callers warmly, understand what they need, and use only verified business information. Capture appointment and order requests for staff confirmation.");
   const [outboundPrompt, setOutboundPrompt] = useState("Only call people when the business has authorised the follow-up. Identify the business, explain the reason, ask if it is a convenient time, and respect requests not to be contacted.");
   const callSession = useRef<any>(null);
@@ -123,6 +126,8 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       }
       const { data: retellPlatformData, error: retellPlatformError } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "retell.platform.status" } });
       if (!retellPlatformError && retellPlatformData?.isAdmin) setRetellPlatformConfig(retellPlatformData);
+      const { data: palPlatformData, error: palPlatformError } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "palpluss.platform.status" } });
+      if (!palPlatformError && palPlatformData?.isAdmin) setPalPlatformConfig(palPlatformData);
     }
   }, []);
 
@@ -143,6 +148,22 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     } finally {
       setBusy(false);
     }
+  };
+
+  const savePalPlussPlatformKey = async () => {
+    if (!supabase || palPlatformKey.trim().length < 20) return;
+    setBusy(true); setPalPlatformMessage("");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "palpluss.platform.save", apiKey: palPlatformKey.trim() } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setPalPlatformKey("");
+      setPalPlatformConfig((current: any) => ({ ...current, ...data, keyConfigured: true }));
+      setPalPlatformMessage(data.message || "Central PalPluss account connected.");
+      await loadPal();
+    } catch (error) {
+      setPalPlatformMessage(error instanceof Error ? error.message : "Could not save the central PalPluss key.");
+    } finally { setBusy(false); }
   };
 
   const saveGoogleOAuth = async () => {
@@ -422,6 +443,12 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="new-password" value={retellPlatformKey} onChange={(e) => setRetellPlatformKey(e.target.value)} placeholder={retellPlatformConfig.keyConfigured ? "Enter a rotated Retell API key to replace it" : "Retell API key from your connected workspace"} className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-200 px-3 text-sm" /><button onClick={saveRetellPlatformKey} disabled={busy || retellPlatformKey.trim().length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save Retell key</button></div>
       {retellPlatformConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Stored in encrypted Vault · •••• {retellPlatformConfig.keyLast4}</p>}
       {retellPlatformMessage && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{retellPlatformMessage}</p>}
+    </section>}
+    {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Central PalPluss collections</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">Connect one TWIGA PalPluss account here. Each business then registers its own Safaricom Buy Goods Till or Paybill, and payment prompts route to that business's shortcode.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{palPlatformConfig.keyConfigured ? "Connected · •••• " + palPlatformConfig.keyLast4 : "Needs API key"}</span></div>
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="new-password" value={palPlatformKey} onChange={(e) => setPalPlatformKey(e.target.value)} placeholder={palPlatformConfig.keyConfigured ? "Enter rotated PalPluss key to replace it" : "PalPluss platform API key"} className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-200 px-3 text-sm" /><button onClick={savePalPlussPlatformKey} disabled={busy || palPlatformKey.trim().length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save PalPluss</button></div>
+      <p className="mt-2 text-xs text-neutral-500">The central key is stored in encrypted Supabase Vault. It is never sent to the browser's payment requests.</p>
+      {palPlatformMessage && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{palPlatformMessage}</p>}
     </section>}
     {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Google Workspace OAuth</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">These are TWIGA's shared OAuth application credentials. Each business owner still authorizes their own Calendar, Contacts, Drive and Sheets account separately.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{googleOAuthConfig.clientIdConfigured && googleOAuthConfig.clientSecretConfigured && googleOAuthConfig.encryptionReady ? "Server ready" : "Needs credentials"}</span></div>
