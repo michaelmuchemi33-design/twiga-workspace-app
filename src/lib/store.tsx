@@ -337,6 +337,15 @@ export function StoreProvider({
     let cancelled = false;
     hydrated.current = false;
     setWorkspaceReady(false);
+    setTasks([]);
+    setProducts([]);
+    setSales([]);
+    setPayments([]);
+    setMessages([]);
+    setCustomers([]);
+    setSettings(emptySettings);
+    setCatalogSource("Manual entry");
+    setSellMode("seller");
     const load = async () => {
       const { data, error } = await supabase
         .from("twiga_business_workspace_data")
