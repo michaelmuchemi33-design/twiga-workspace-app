@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
 import InstallApp from "@/components/InstallApp";
 import DemoInterest from "@/components/DemoInterest";
 import { StoreProvider } from "@/lib/store";
@@ -11,6 +12,7 @@ import WhatsAppOutbox from "@/components/WhatsAppOutbox";
 import Organizer from "@/components/Organizer";
 import Analytics from "@/components/Analytics";
 import Settings from "@/components/Settings";
+import Profile from "@/components/Profile";
 import Products from "@/components/Products";
 import Reports from "@/components/Reports";
 import Alerts from "@/components/Alerts";
@@ -51,6 +53,7 @@ const moreTabs = [
   { id: "products", label: "Products", icon: IconBox },
   { id: "reports", label: "Reports", icon: IconFile },
   { id: "alerts", label: "Alerts", icon: IconBell },
+  { id: "profile", label: "Profile", icon: IconUsers },
   { id: "settings", label: "Settings", icon: IconGear },
   { id: "logout", label: "Log out", icon: IconLogout },
 ];
@@ -58,6 +61,25 @@ const moreTabs = [
 export default function App({ demo = false, userId, onSignOut }: { demo?: boolean; userId?: string; onSignOut?: () => void }) {
   const [tab, setTab] = useState("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [businesses, setBusinesses] = useState<any[]>([]);
+  const [businessId, setBusinessId] = useState("");
+
+  const refreshBusinesses = useCallback(async () => {
+    if (demo || !userId || !supabase) return;
+    const { data, error } = await supabase.functions.invoke("twiga-businesses", { body: { action: "list" } });
+    if (error) { console.error("Could not load TWIGA businesses", error.message); return; }
+    const next = Array.isArray(data?.businesses) ? data.businesses : [];
+    setBusinesses(next);
+    setBusinessId((current) => current && next.some((b: any) => b.id === current) ? current : (next[0]?.id || ""));
+  }, [demo, userId]);
+
+  useEffect(() => { void refreshBusinesses(); }, [refreshBusinesses]);
+
+  const businessCreated = async (id: string) => {
+    await refreshBusinesses();
+    setBusinessId(id);
+    setTab("dashboard");
+  };
 
   const go = (id: string) => {
     setTab(id);
@@ -68,7 +90,7 @@ export default function App({ demo = false, userId, onSignOut }: { demo?: boolea
   const isSetup = tab === "setup";
 
   return (
-    <StoreProvider demo={demo} userId={userId}>
+    <StoreProvider demo={demo} userId={userId} businessId={businessId}>
       <div
         className={cn(
           "min-h-screen bg-neutral-50 text-neutral-900 transition-all duration-500",
@@ -89,7 +111,7 @@ export default function App({ demo = false, userId, onSignOut }: { demo?: boolea
           </div>
           {demo && <div className="mb-6 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-900"><strong>This is a sample workspace.</strong> Explore the screens and test the controls. Demo changes are temporary and are not connected to a real customer's business account.</div>}
           {tab === "dashboard" && <Dashboard onSetup={() => go("setup")} />}
-          {tab === "setup" && <SetupPage onDone={() => go("dashboard")} />}
+          {tab === "setup" && <SetupPage onDone={() => go("dashboard")} onBusinessCreated={businessCreated} />}
           {tab === "organizer" && <Organizer />}
           {tab === "functions" && <Functions />}
           {tab === "pos" && <PointOfSale />}
@@ -100,6 +122,7 @@ export default function App({ demo = false, userId, onSignOut }: { demo?: boolea
           {tab === "products" && <Products />}
           {tab === "reports" && <Reports />}
           {tab === "alerts" && <Alerts />}
+          {tab === "profile" && <Profile userId={userId} businessId={businessId} businesses={businesses} onBusinessChange={setBusinessId} onRefreshBusinesses={refreshBusinesses} />}
           {tab === "settings" && <Settings />}
           {tab === "logout" && <Logout onCancel={() => setTab("dashboard")} />}
         </main>
