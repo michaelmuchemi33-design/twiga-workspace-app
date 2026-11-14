@@ -54,7 +54,7 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageError, setStorageError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
-  const filesApi = String(import.meta.env.VITE_TWIGA_FILES_API_URL || "https://twiga-business-files.twiga-ke.workers.dev").replace(/\\/$/, "");
+  const filesApi = String(import.meta.env.VITE_TWIGA_FILES_API_URL || "https://twiga-business-files.twiga-ke.workers.dev").replace(/\/$/, "");
   const [tab, setTab] = useState<Tab>("basic");
   const [saved, setSaved] = useState(false);
 
