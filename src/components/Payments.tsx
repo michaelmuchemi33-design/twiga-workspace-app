@@ -17,6 +17,7 @@ type Transaction = {
 };
 
 type Tab = "collect" | "keys";
+type Channel = { id: string; provider_channel_id: string; name: string; type: "PAYBILL" | "TILL_NUMBER" | "SEND_MONEY"; shortcode: string; account_number?: string | null; is_default: boolean };
 
 export default function Payments() {
   const { businessId } = useStore();
@@ -26,6 +27,13 @@ export default function Payments() {
   const [keyDraft, setKeyDraft] = useState("");
   const [balance, setBalance] = useState<any>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [channelName, setChannelName] = useState("");
+  const [channelType, setChannelType] = useState<"PAYBILL" | "TILL_NUMBER">("PAYBILL");
+  const [shortcode, setShortcode] = useState("");
+  const [accountNumber, setAccountNumber] = useState("");
+  const [makeDefault, setMakeDefault] = useState(true);
+  const [selectedChannelId, setSelectedChannelId] = useState("");
   const [customer, setCustomer] = useState("");
   const [phone, setPhone] = useState("");
   const [amount, setAmount] = useState("");
@@ -41,6 +49,14 @@ export default function Payments() {
     return data;
   }, [businessId]);
 
+  const loadChannels = useCallback(async () => {
+    if (!businessId || !connected) { setChannels([]); setSelectedChannelId(""); return; }
+    const data = await invoke("channel.list");
+    const rows = Array.isArray(data.channels) ? data.channels as Channel[] : [];
+    setChannels(rows);
+    setSelectedChannelId((current) => current && rows.some((x) => x.provider_channel_id === current) ? current : (rows.find((x) => x.is_default)?.provider_channel_id || rows[0]?.provider_channel_id || ""));
+  }, [businessId, connected, invoke]);
+
   const loadTransactions = useCallback(async () => {
     if (!supabase || !businessId) { setTransactions([]); return; }
     const { data, error } = await supabase.from("twiga_palpluss_transactions").select("*").eq("business_id", businessId).order("created_at", { ascending: false }).limit(30);
@@ -55,12 +71,12 @@ export default function Payments() {
       setConnected(data.keyConfigured === true);
       setKeyLast4(data.keyLast4 || "");
       setBalance(data.balance || null);
-      if (data.keyConfigured) await loadTransactions();
-      else setTransactions([]);
+      if (data.keyConfigured) { await loadTransactions(); await loadChannels(); }
+      else { setTransactions([]); setChannels([]); }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not load PalPluss settings.");
     }
-  }, [businessId, invoke, loadTransactions]);
+  }, [businessId, invoke, loadTransactions, loadChannels]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -75,6 +91,7 @@ export default function Payments() {
       setBalance(data.balance || null);
       setMessage(data.message || "PalPluss key securely connected.");
       await loadTransactions();
+      await loadChannels();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "PalPluss key could not be saved.");
     } finally { setBusy(false); }
@@ -91,6 +108,7 @@ export default function Payments() {
         amount: Number(amount),
         accountReference: (note.trim() || "TWIGA-" + Date.now()).slice(0, 120),
         transactionDesc: (note.trim() || ("Payment from " + customer.trim())).slice(0, 255),
+        channelId: selectedChannelId || undefined,
       });
       setMessage("M-Pesa prompt initiated. It is not a confirmed payment until PalPluss reports SUCCESS. Transaction ID: " + (result.transaction?.transactionId || "created"));
       setCustomer("");
@@ -100,6 +118,23 @@ export default function Payments() {
       await loadTransactions();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not start the STK prompt.");
+    } finally { setBusy(false); }
+  };
+
+  const createChannel = async () => {
+    if (!channelName.trim() || !shortcode.trim()) return;
+    if (channelType === "PAYBILL" && !accountNumber.trim()) { setMessage("Add the Paybill account number."); return; }
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await invoke("channel.create", { name: channelName.trim(), type: channelType, shortcode: shortcode.trim(), accountNumber: accountNumber.trim(), isDefault: makeDefault });
+      const created = result.channel as Channel;
+      setChannels((current) => [created, ...current.filter((x) => x.provider_channel_id !== created.provider_channel_id)]);
+      setSelectedChannelId(created.provider_channel_id);
+      setChannelName(""); setShortcode(""); setAccountNumber("");
+      setMessage("Business payment channel saved. Future STK prompts can route to this Till or Paybill.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not add this payment channel.");
     } finally { setBusy(false); }
   };
 
@@ -128,10 +163,24 @@ export default function Payments() {
     <div className="flex rounded-xl border border-neutral-200 bg-white p-1 shadow-sm"><button onClick={() => setTab("collect")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "collect" ? "bg-neutral-950 text-white" : "text-neutral-500")}>Collect</button><button onClick={() => setTab("keys")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "keys" ? "bg-neutral-950 text-white" : "text-neutral-500")}>API & connection</button></div>
 
     {tab === "collect" ? <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm lg:col-span-2">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Business collection accounts</h2><p className="mt-1 text-sm text-neutral-500">Register this business's own Safaricom Till or Paybill with PalPluss. Each business keeps its own shortcode and account reference.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{channels.length} saved</span></div>
+        <div className="mt-4 grid gap-3 md:grid-cols-5">
+          <input value={channelName} onChange={(e) => setChannelName(e.target.value)} placeholder="Account label e.g. Main Till" className="h-11 rounded-xl border border-neutral-200 px-3 text-sm md:col-span-2" />
+          <select value={channelType} onChange={(e) => setChannelType(e.target.value as "PAYBILL" | "TILL_NUMBER")} className="h-11 rounded-xl border border-neutral-200 bg-white px-3 text-sm"><option value="PAYBILL">Paybill</option><option value="TILL_NUMBER">Buy Goods / Till</option></select>
+          <input value={shortcode} onChange={(e) => setShortcode(e.target.value)} placeholder="Paybill / Till number" className="h-11 rounded-xl border border-neutral-200 px-3 text-sm" />
+          <input value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} disabled={channelType !== "PAYBILL"} placeholder={channelType === "PAYBILL" ? "Account number" : "Not needed for Till"} className="h-11 rounded-xl border border-neutral-200 px-3 text-sm disabled:bg-neutral-50" />
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><label className="flex items-center gap-2 text-sm text-neutral-600"><input type="checkbox" checked={makeDefault} onChange={(e) => setMakeDefault(e.target.checked)} /> Make this the default collection account</label><button onClick={createChannel} disabled={!connected || busy || !channelName.trim() || !shortcode.trim() || (channelType === "PAYBILL" && !accountNumber.trim())} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Saving…" : "Add business account"}</button></div>
+        {channels.length > 0 && <div className="mt-4 grid gap-2 sm:grid-cols-2">{channels.map((x) => <div key={x.provider_channel_id} className="rounded-xl border border-neutral-100 bg-neutral-50 p-3"><div className="flex items-center justify-between gap-2"><strong className="text-sm">{x.name}</strong>{x.is_default && <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold">Default</span>}</div><p className="mt-1 text-xs text-neutral-500">{x.type === "TILL_NUMBER" ? "Buy Goods / Till" : "Paybill"} · {x.shortcode}{x.account_number ? " · Account " + x.account_number : ""}</p></div>)}</div>}
+      </section>
+
       <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-semibold text-neutral-950">New M-Pesa STK Push</h2><p className="mt-1 text-sm text-neutral-500">The customer receives a payment prompt on their phone.</p>
         {!connected && <div className="mt-4 rounded-xl bg-orange-50 p-3 text-sm text-orange-900">Connect your PalPluss API key in the API & connection tab first.</div>}
         <div className="mt-4 space-y-3">
+          {channels.length > 0 && <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">Collect into business Till / Paybill<select value={selectedChannelId} onChange={(e) => setSelectedChannelId(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-normal normal-case">{channels.map((x) => <option key={x.provider_channel_id} value={x.provider_channel_id}>{x.name} · {x.type === "TILL_NUMBER" ? "Till" : "Paybill"} {x.shortcode}{x.is_default ? " · Default" : ""}</option>)}</select></label>}
+          {channels.length === 0 && connected && <p className="rounded-xl bg-orange-50 p-3 text-xs text-orange-900">Add this business's Till or Paybill below before sending a routed payment request.</p>}
           <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">Customer name<input value={customer} onChange={(e) => setCustomer(e.target.value)} placeholder="e.g. Grace Mwangi" className="mt-1 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" /></label>
           <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">M-Pesa phone<input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0712 345 678" className="mt-1 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" /></label>
           <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">Amount (KES)<input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" min="1" step="1" placeholder="1500" className="mt-1 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" /></label>
