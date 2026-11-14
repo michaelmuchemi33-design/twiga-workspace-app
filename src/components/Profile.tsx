@@ -58,7 +58,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [retellKey, setRetellKey] = useState("");
   const [agents, setAgents] = useState<any[]>([]);
   const [agentId, setAgentId] = useState("");
-  const [model, setModel] = useState("gpt-6-luna");
+  const [model, setModel] = useState("gpt-4.1-mini");
   const [callStatus, setCallStatus] = useState("Not started");
   const [palKey, setPalKey] = useState("");
   const [palStatus, setPalStatus] = useState<any>({ keyConfigured: false });
@@ -72,6 +72,9 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [googleClientId, setGoogleClientId] = useState("");
   const [googleClientSecret, setGoogleClientSecret] = useState("");
   const [googleOAuthMessage, setGoogleOAuthMessage] = useState("");
+  const [retellPlatformConfig, setRetellPlatformConfig] = useState<any>({ keyConfigured: false });
+  const [retellPlatformKey, setRetellPlatformKey] = useState("");
+  const [retellPlatformMessage, setRetellPlatformMessage] = useState("");
   const [inboundPrompt, setInboundPrompt] = useState("Greet callers warmly, understand what they need, and use only verified business information. Capture appointment and order requests for staff confirmation.");
   const [outboundPrompt, setOutboundPrompt] = useState("Only call people when the business has authorised the follow-up. Identify the business, explain the reason, ask if it is a convenient time, and respect requests not to be contacted.");
   const callSession = useRef<any>(null);
@@ -118,8 +121,29 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
         setGoogleOAuthConfig(googleData);
         setGoogleClientId(String(googleData.clientId || ""));
       }
+      const { data: retellPlatformData, error: retellPlatformError } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "retell.platform.status" } });
+      if (!retellPlatformError && retellPlatformData?.isAdmin) setRetellPlatformConfig(retellPlatformData);
     }
   }, []);
+
+  const saveRetellPlatformKey = async () => {
+    if (!supabase || retellPlatformKey.trim().length < 20) return;
+    setBusy(true);
+    setRetellPlatformMessage("");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "retell.platform.save", apiKey: retellPlatformKey.trim() } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setRetellPlatformKey("");
+      setRetellPlatformConfig((current: any) => ({ ...current, ...data, keyConfigured: true }));
+      setRetellPlatformMessage(data.message || "Retell platform key saved.");
+      await loadRetell();
+    } catch (e) {
+      setRetellPlatformMessage(e instanceof Error ? e.message : "Retell platform key could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const saveGoogleOAuth = async () => {
     if (!supabase) return;
@@ -394,6 +418,12 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       {xaiMessage && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{xaiMessage}</p>}
     </section>}
     {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Retell platform connection</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">Use the API key from the same Retell account connected in Composio. TWIGA uses this server-side key to provision separate agents for each business and start browser test calls.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{retellPlatformConfig.keyConfigured ? "Connected" : "Needs API key"}</span></div>
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="new-password" value={retellPlatformKey} onChange={(e) => setRetellPlatformKey(e.target.value)} placeholder={retellPlatformConfig.keyConfigured ? "Enter a rotated Retell API key to replace it" : "Retell API key from your connected workspace"} className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-200 px-3 text-sm" /><button onClick={saveRetellPlatformKey} disabled={busy || retellPlatformKey.trim().length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save Retell key</button></div>
+      {retellPlatformConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Stored in encrypted Vault · •••• {retellPlatformConfig.keyLast4}</p>}
+      {retellPlatformMessage && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{retellPlatformMessage}</p>}
+    </section>}
+    {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Google Workspace OAuth</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">These are TWIGA's shared OAuth application credentials. Each business owner still authorizes their own Calendar, Contacts, Drive and Sheets account separately.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{googleOAuthConfig.clientIdConfigured && googleOAuthConfig.clientSecretConfigured && googleOAuthConfig.encryptionReady ? "Server ready" : "Needs credentials"}</span></div>
       <div className="mt-4 grid gap-3">
         <label className="block text-xs font-semibold uppercase text-neutral-500">Google OAuth web client ID<input value={googleClientId} onChange={(e) => setGoogleClientId(e.target.value)} autoComplete="off" placeholder="xxxx.apps.googleusercontent.com" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" /></label>
@@ -434,9 +464,9 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Voice & receptionist</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Retell AI</h2><p className="mt-1 text-sm text-neutral-500">Each business can connect its own Retell account. API keys are stored in Supabase Vault.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{retell.keyConfigured ? "Key saved · •••• " + (retell.keyLast4 || "") : "Not connected"}</span></div>
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Voice & receptionist</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Retell AI</h2><p className="mt-1 text-sm text-neutral-500">A shared TWIGA Retell account can power separate business agents. Platform and optional business keys are stored in Supabase Vault.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{retell.keyConfigured ? (retell.keySource === "platform" ? "TWIGA platform key · •••• " : "Business key · •••• ") + (retell.keyLast4 || "") : "Not connected"}</span></div>
       {!retell.keyConfigured ? <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={retellKey} onChange={(e) => setRetellKey(e.target.value)} placeholder="Retell API key for this business" className="h-11 min-w-0 flex-1 rounded-xl border px-3 text-sm" /><button onClick={saveRetellKey} disabled={busy || retellKey.length < 20 || !businessId} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Connect Retell</button></div> : <>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Retell model</label><select value={model} onChange={(e) => setModel(e.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm"><option value="gpt-6-luna">Retell GPT 6 Luna</option><option value="gpt-5.6-luna">Retell GPT 5.6 Luna</option></select></div><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Choose a voice template</label><select value={agentId} onChange={(e) => setAgentId(e.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm"><option value="">Select voice template from Retell…</option>{agents.map((a) => <option key={a.agent_id} value={a.agent_id}>{a.agent_name} · {a.agent_id.slice(0, 10)}</option>)}</select></div></div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Retell model</label><select value={model} onChange={(e) => setModel(e.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm"><option value="gpt-4.1-mini">GPT-4.1 mini · low-cost test</option></select></div><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Choose a voice template</label><select value={agentId} onChange={(e) => setAgentId(e.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm"><option value="">Select voice template from Retell…</option>{agents.map((a) => <option key={a.agent_id} value={a.agent_id}>{a.agent_name} · {a.agent_id.slice(0, 10)}</option>)}</select></div></div>
         <div className="mt-4 rounded-xl bg-neutral-50 p-4"><p className="text-sm font-semibold">10 voice candidates</p><p className="mt-1 text-xs text-neutral-500">The test agents will appear above if you connected the same Retell account. Five female and five male British-style candidates are listed here for comparison.</p><div className="mt-3 grid gap-2 sm:grid-cols-2">{voiceNotes.map((v) => <div key={v[2]} className="rounded-lg border bg-white px-3 py-2"><p className="text-xs font-semibold">{v[0]}</p><p className="text-[11px] text-neutral-500">{v[1]} · {v[2]}</p></div>)}</div></div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Inbound instructions</label><textarea rows={3} value={inboundPrompt} onChange={(e) => setInboundPrompt(e.target.value)} className="w-full rounded-xl border p-3 text-sm" /></div><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Outbound instructions</label><textarea rows={3} value={outboundPrompt} onChange={(e) => setOutboundPrompt(e.target.value)} className="w-full rounded-xl border p-3 text-sm" /></div></div>
         <div className="mt-4 rounded-xl border border-neutral-200 p-4">
