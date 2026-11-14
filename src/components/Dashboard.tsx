@@ -73,17 +73,24 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
     completeTask,
     demoMode,
     settings,
+    businessId,
   } = useStore();
   const [ownerName, setOwnerName] = useState("");
 
   useEffect(() => {
-    if (demoMode || !supabase) return;
+    if (demoMode || !supabase || !businessId) return;
     let active = true;
-    void supabase.auth.getUser().then(({ data }) => {
-      if (active) setOwnerName(String(data.user?.user_metadata?.full_name || data.user?.user_metadata?.name || ""));
+    void Promise.all([
+      supabase.auth.getUser(),
+      supabase.from("twiga_business_profiles").select("owner_name,owner_email").eq("business_id", businessId).maybeSingle(),
+    ]).then(([authResult, profileResult]) => {
+      if (!active) return;
+      const savedName = String(profileResult.data?.owner_name || "");
+      const accountName = String(authResult.data.user?.user_metadata?.full_name || authResult.data.user?.user_metadata?.name || "");
+      setOwnerName(savedName || accountName);
     });
     return () => { active = false; };
-  }, [demoMode]);
+  }, [demoMode, businessId]);
 
   const revenue = sales.reduce((s, x) => s + x.total, 0);
   const dueFollowUps = customers.filter((c) => c.followUpIn === 0).length;
