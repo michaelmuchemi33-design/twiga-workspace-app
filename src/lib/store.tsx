@@ -293,10 +293,12 @@ export function StoreProvider({
   children,
   demo = false,
   userId,
+  businessId,
 }: {
   children: ReactNode;
   demo?: boolean;
   userId?: string;
+  businessId?: string;
 }) {
   const [tasks, setTasks] = useState<Task[]>(demo ? seedTasks : []);
   const [products, setProducts] = useState<Product[]>(demo ? seedProducts : []);
@@ -308,58 +310,76 @@ export function StoreProvider({
   const [catalogSource, setCatalogSource] = useState(demo ? "Manual entry" : "Not configured");
   const [sellMode, setSellMode] = useState<SellMode>("seller");
   const [palplusKey, setPalplusKey] = useState("");
-  const [workspaceReady, setWorkspaceReady] = useState(demo || !userId || !supabase);
-  const hydrated = useRef(demo || !userId || !supabase);
+  const [workspaceReady, setWorkspaceReady] = useState(demo || !businessId || !supabase);
+  const hydrated = useRef(demo || !businessId || !supabase);
 
   useEffect(() => {
-    if (demo || !userId || !supabase) {
+    if (demo) {
       hydrated.current = true;
       setWorkspaceReady(true);
       return;
     }
+    if (!userId || !businessId || !supabase) {
+      hydrated.current = false;
+      setTasks([]);
+      setProducts([]);
+      setSales([]);
+      setPayments([]);
+      setMessages([]);
+      setCustomers([]);
+      setSettings(emptySettings);
+      setCatalogSource("Not configured");
+      setSellMode("seller");
+      setWorkspaceReady(true);
+      return;
+    }
     let cancelled = false;
+    hydrated.current = false;
+    setWorkspaceReady(false);
     const load = async () => {
       const { data, error } = await supabase
-        .from("twiga_app_workspaces")
+        .from("twiga_business_workspace_data")
         .select("workspace_data")
-        .eq("owner_id", userId)
+        .eq("business_id", businessId)
         .maybeSingle();
       if (cancelled) return;
-      if (error) console.error("Unable to load TWIGA workspace", error.message);
+      if (error) {
+        console.error("Unable to load this business workspace", error.message);
+        setWorkspaceReady(true);
+        return;
+      }
       const saved = data?.workspace_data as Partial<{
         tasks: Task[]; products: Product[]; sales: Sale[]; payments: Payment[];
         messages: Message[]; customers: Customer[]; settings: Settings;
         catalogSource: string; sellMode: SellMode;
       }> | undefined;
-      if (saved) {
-        setTasks(saved.tasks ?? []);
-        setProducts(saved.products ?? []);
-        setSales(saved.sales ?? []);
-        setPayments(saved.payments ?? []);
-        setMessages(saved.messages ?? []);
-        setCustomers(saved.customers ?? []);
-        setSettings(saved.settings ? { ...emptySettings, ...saved.settings } : emptySettings);
-        setCatalogSource(saved.catalogSource ?? "Manual entry");
-        setSellMode(saved.sellMode ?? "seller");
-      }
+      setTasks(saved?.tasks ?? []);
+      setProducts(saved?.products ?? []);
+      setSales(saved?.sales ?? []);
+      setPayments(saved?.payments ?? []);
+      setMessages(saved?.messages ?? []);
+      setCustomers(saved?.customers ?? []);
+      setSettings(saved?.settings ? { ...emptySettings, ...saved.settings } : emptySettings);
+      setCatalogSource(saved?.catalogSource ?? "Manual entry");
+      setSellMode(saved?.sellMode ?? "seller");
       hydrated.current = true;
       setWorkspaceReady(true);
     };
     void load();
     return () => { cancelled = true; };
-  }, [demo, userId]);
+  }, [demo, userId, businessId]);
 
   useEffect(() => {
-    if (demo || !userId || !supabase || !hydrated.current) return;
+    if (demo || !userId || !businessId || !supabase || !hydrated.current) return;
     const timeout = window.setTimeout(async () => {
       const workspace_data = { tasks, products, sales, payments, messages, customers, settings, catalogSource, sellMode };
       const { error } = await supabase
-        .from("twiga_app_workspaces")
-        .upsert({ owner_id: userId, workspace_data }, { onConflict: "owner_id" });
-      if (error) console.error("Unable to save TWIGA workspace", error.message);
+        .from("twiga_business_workspace_data")
+        .upsert({ business_id: businessId, updated_by: userId, workspace_data }, { onConflict: "business_id" });
+      if (error) console.error("Unable to save business workspace", error.message);
     }, 900);
     return () => window.clearTimeout(timeout);
-  }, [demo, userId, tasks, products, sales, payments, messages, customers, settings, catalogSource, sellMode]);
+  }, [demo, userId, businessId, tasks, products, sales, payments, messages, customers, settings, catalogSource, sellMode]);
 
   const value = useMemo<StoreValue>(
     () => ({
