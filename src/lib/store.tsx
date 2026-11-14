@@ -246,7 +246,7 @@ const defaultSettings: Settings = {
     name: "Nairobi Style Studio",
     currency: "KSh",
     dateFormat: "DD/MM/YYYY",
-    timezone: "Africa/Nairobi (GMT+3)",
+    timezone: "Africa/Nairobi",
     openTime: "08:00",
     closeTime: "18:00",
     holidayOverride: true,
@@ -291,7 +291,7 @@ const defaultSettings: Settings = {
 
 const emptySettings: Settings = {
   business: {
-    name: "", currency: "KSh", dateFormat: "DD/MM/YYYY", timezone: "Africa/Nairobi (GMT+3)",
+    name: "", currency: "KSh", dateFormat: "DD/MM/YYYY", timezone: "Africa/Nairobi",
     openTime: "", closeTime: "", holidayOverride: false, address: "", parking: "", website: "", faqs: "",
   },
   persona: {
