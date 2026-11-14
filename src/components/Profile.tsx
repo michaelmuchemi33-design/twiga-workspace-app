@@ -39,7 +39,7 @@ function loadGoogle() {
 
 export default function Profile({ userId, businessId, businesses, onBusinessChange, onRefreshBusinesses }: {
   userId?: string; businessId?: string; businesses: Business[];
-  onBusinessChange: (id: string) => void; onRefreshBusinesses: () => Promise<void>;
+  onBusinessChange: (id: string) => void; onRefreshBusinesses: () => Promise<void>; onCreateBusiness: () => void;
 }) {
   const [user, setUser] = useState<any>(null);
   const [name, setName] = useState("");
@@ -300,7 +300,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-neutral-950">Business workspaces</h2><p className="mt-1 text-sm text-neutral-500">Each business has separate customers, appointments, products, AI instructions and call history.</p></div>{businesses.length > 0 && <select value={businessId || ""} onChange={(e) => onBusinessChange(e.target.value)} className="h-11 min-w-52 rounded-xl border px-3 text-sm"><option value="" disabled>Select workspace</option>{businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>}</div>
       {current ? <p className="mt-3 text-xs text-neutral-500">{current.business_type || "Business"} · {current.role || "owner"} · {current.status || "TRIAL"}</p> : <p className="mt-3 rounded-xl bg-neutral-50 p-4 text-sm text-neutral-600">No workspace yet. Open AI Setup to describe your business and create your first workspace.</p>}
-      <button onClick={onRefreshBusinesses} className="mt-3 text-xs font-semibold underline">Refresh workspaces</button>
+      <div className="mt-3 flex flex-wrap gap-3"><button onClick={onRefreshBusinesses} className="text-xs font-semibold underline">Refresh workspaces</button><button onClick={onCreateBusiness} className="text-xs font-semibold text-orange-700 underline">Create another business</button></div>
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
