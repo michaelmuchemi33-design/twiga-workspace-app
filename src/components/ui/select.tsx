@@ -1,0 +1,8 @@
+import * as SelectPrimitive from "@radix-ui/react-select";
+import type { ComponentPropsWithoutRef } from "react";
+import { cn } from "@/lib/utils";
+export const Select = SelectPrimitive.Root;
+export const SelectValue = SelectPrimitive.Value;
+export function SelectTrigger({ className, children, ...props }: ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>) { return <SelectPrimitive.Trigger className={cn("flex h-10 w-full items-center justify-between rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm shadow-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100", className)} {...props}>{children}<SelectPrimitive.Icon><span aria-hidden>⌄</span></SelectPrimitive.Icon></SelectPrimitive.Trigger>; }
+export function SelectContent({ className, children, position = "popper", ...props }: ComponentPropsWithoutRef<typeof SelectPrimitive.Content>) { return <SelectPrimitive.Portal><SelectPrimitive.Content position={position} className={cn("z-[100] max-h-72 overflow-hidden rounded-xl border border-neutral-200 bg-white text-neutral-900 shadow-xl", className)} {...props}><SelectPrimitive.Viewport className="p-1">{children}</SelectPrimitive.Viewport></SelectPrimitive.Content></SelectPrimitive.Portal>; }
+export function SelectItem({ className, children, ...props }: ComponentPropsWithoutRef<typeof SelectPrimitive.Item>) { return <SelectPrimitive.Item className={cn("relative flex cursor-pointer select-none items-center rounded-lg px-3 py-2 text-sm outline-none data-[highlighted]:bg-orange-50 data-[highlighted]:text-orange-700", className)} {...props}><SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText></SelectPrimitive.Item>; }
