@@ -33,10 +33,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "android-beta-2026-11-14" "android/app/build/outputs/apk/debug/app-debug.apk" \
+          TAG="android-beta-2026-11-14-${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" "android/app/build/outputs/apk/debug/app-debug.apk" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "TWIGA Android Beta — 14 November 2026" \
-            --notes "Public beta test build. This APK is debug-signed for testing and is not the production-signed release. A production update must use the final TWIGA signing key." \
+            --title "TWIGA Android Beta — Build ${GITHUB_RUN_NUMBER}" \
+            --notes "Public beta test build containing the latest TWIGA workspace features. This APK is debug-signed for testing and is not the production-signed release. A production update must use the final TWIGA signing key." \
             --prerelease
       - uses: actions/upload-artifact@v4
         with:
