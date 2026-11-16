@@ -213,7 +213,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       if (!active) return;
       setUser(data.user);
       setName(String(data.user?.user_metadata?.full_name || data.user?.user_metadata?.name || ""));
-      setAvatar(String(data.user?.user_metadata?.avatar_url || ""));
+      setAvatar(String(data.user?.user_metadata?.avatar_url || data.user?.user_metadata?.picture || data.user?.user_metadata?.photo_url || ""));
       setSessionStart(localStorage.getItem("twiga_session_started_at") || "");
     };
     void load();

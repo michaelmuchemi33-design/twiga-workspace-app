@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { GoogleAuthContext } from "@/components/AuthGate";
 import { Capacitor } from "@capacitor/core";
 import { supabase } from "@/lib/supabase";
 import InstallApp from "@/components/InstallApp";
@@ -59,20 +60,26 @@ const moreTabs = [
   { id: "logout", label: "Log out", icon: IconLogout },
 ];
 
-export default function App({ demo = false, userId, onSignOut }: { demo?: boolean; userId?: string; onSignOut?: () => void }) {
+export default function App({ demo = false, userId, googleAuth, onSignOut }: { demo?: boolean; userId?: string; googleAuth?: GoogleAuthContext; onSignOut?: () => void }) {
   const [tab, setTab] = useState("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
   const [businesses, setBusinesses] = useState<any[]>([]);
   const [businessId, setBusinessId] = useState("");
   const [businessesLoaded, setBusinessesLoaded] = useState(false);
+  const [businessesError, setBusinessesError] = useState("");
+  const [googleSetupMessage, setGoogleSetupMessage] = useState("");
+  const [autoProvisioning, setAutoProvisioning] = useState(false);
+  const autoProvisioned = useRef<string | null>(null);
+  const googleConnectAttempted = useRef<string | null>(null);
   const isNativeApp = Capacitor.isNativePlatform();
 
   const refreshBusinesses = useCallback(async () => {
     if (demo || !userId || !supabase) return;
     setBusinessesLoaded(false);
     const { data, error } = await supabase.functions.invoke("twiga-business-workspaces", { body: { action: "list" } });
-    if (error) { console.error("Could not load TWIGA businesses", error.message); setBusinessesLoaded(true); return; }
+    if (error) { console.error("Could not load TWIGA businesses", error.message); setBusinessesError(error.message); setBusinessesLoaded(true); return; }
     const next = Array.isArray(data?.businesses) ? data.businesses : [];
+    setBusinessesError("");
     setBusinesses(next);
     setBusinessId((current) => current && next.some((b: any) => b.id === current) ? current : (next[0]?.id || ""));
     setBusinessesLoaded(true);
@@ -80,8 +87,88 @@ export default function App({ demo = false, userId, onSignOut }: { demo?: boolea
 
   useEffect(() => { void refreshBusinesses(); }, [refreshBusinesses]);
   useEffect(() => {
-    if (!demo && userId && businessesLoaded && businesses.length === 0) setTab("setup");
-  }, [demo, userId, businessesLoaded, businesses.length]);
+    if (demo || !userId || !businessesLoaded || businesses.length > 0) return;
+    if (businessesError) {
+      setTab("setup");
+      setGoogleSetupMessage("We could not check your saved workspace. Refresh the page and try again.");
+      return;
+    }
+    if (!googleAuth?.isGoogleUser) { setTab("setup"); return; }
+    if (autoProvisioned.current === userId || !supabase) return;
+    autoProvisioned.current = userId;
+    const createFirstWorkspace = async () => {
+      setAutoProvisioning(true);
+      setGoogleSetupMessage("Preparing your private TWIGA dashboard…");
+      try {
+        const { data, error } = await supabase.functions.invoke("twiga-business-workspaces", {
+          body: {
+            action: "create",
+            name: "My Business",
+            businessType: "general",
+            profile: {
+              owner_name: googleAuth.profile.fullName,
+              owner_email: googleAuth.profile.email,
+            },
+          },
+        });
+        if (error) throw error;
+        const created = data?.business;
+        if (!created?.id) throw new Error("TWIGA could not create your private workspace.");
+        setBusinesses([created]);
+        setBusinessId(created.id);
+        setBusinessesLoaded(true);
+        setTab("dashboard");
+        setGoogleSetupMessage(googleAuth.tokens?.accessToken
+          ? "Your dashboard is ready. Securing your Calendar and Contacts connection…"
+          : "Your dashboard is ready. Connect Calendar and Contacts from Profile when you are ready.");
+      } catch (e) {
+        setGoogleSetupMessage(e instanceof Error ? e.message : "Your Google account is signed in, but the workspace could not be created.");
+        setTab("setup");
+        autoProvisioned.current = null;
+      } finally {
+        setAutoProvisioning(false);
+      }
+    };
+    void createFirstWorkspace();
+  }, [demo, userId, businessesLoaded, businesses.length, businessesError, googleAuth]);
+
+  useEffect(() => {
+    if (demo || !userId || !googleAuth?.isGoogleUser || !googleAuth.tokens?.accessToken || !businessId || !supabase) return;
+    if (googleConnectAttempted.current === businessId) return;
+    googleConnectAttempted.current = businessId;
+    const connect = async () => {
+      try {
+        const { data: status, error: statusError } = await supabase.functions.invoke("google-workspace", {
+          body: { action: "status", businessId },
+        });
+        if (statusError) throw statusError;
+        const scopes = Array.isArray(status?.scopes) ? status.scopes as string[] : [];
+        const hasCalendar = scopes.some((scope) => scope.includes("calendar.events.owned") || scope.includes("calendar.events"));
+        const hasContacts = scopes.some((scope) => scope.includes("contacts.readonly") || scope.endsWith("/auth/contacts"));
+        if (status?.connected && hasCalendar && hasContacts) {
+          setGoogleSetupMessage("");
+          return;
+        }
+        const { data, error } = await supabase.functions.invoke("google-workspace", {
+          body: {
+            action: "connect",
+            businessId,
+            accessToken: googleAuth.tokens.accessToken,
+            refreshToken: googleAuth.tokens.refreshToken,
+            googleEmail: googleAuth.profile.email,
+          },
+        });
+        if (error) throw error;
+        if (!data?.connected) throw new Error(data?.message || "Google did not grant Calendar and Contacts access.");
+        setGoogleSetupMessage(data.refreshReady
+          ? ""
+          : "Calendar and Contacts are connected. Reconnect Google in Profile if its access expires.");
+      } catch (e) {
+        setGoogleSetupMessage("Your dashboard is ready. Google connection needs attention: " + (e instanceof Error ? e.message : "Reconnect Google from Profile."));
+      }
+    };
+    void connect();
+  }, [demo, userId, googleAuth, businessId]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -135,9 +222,14 @@ export default function App({ demo = false, userId, onSignOut }: { demo?: boolea
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {!isNativeApp && <select aria-label="Navigate workspace" value={tab} onChange={(e) => go(e.target.value)} className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 outline-none focus:border-orange-400 lg:hidden"><option value="dashboard">Home</option><option value="setup">AI setup</option><option value="organizer">Organize</option><option value="functions">Functions</option><option value="pos">Sell</option><option value="payments">Payments</option><option value="customers">People</option><option value="whatsapp">Inbox</option><option value="analytics">Stats</option><option value="products">Products</option><option value="reports">Reports</option><option value="alerts">Alerts</option><option value="profile">Profile</option><option value="settings">Settings</option></select>}
+              {!demo && googleAuth?.profile && <div className="mr-1 flex items-center gap-2 rounded-xl bg-neutral-50 py-1.5 pl-1.5 pr-2.5">
+                {googleAuth.profile.avatarUrl ? <img src={googleAuth.profile.avatarUrl} alt="" referrerPolicy="no-referrer" className="h-8 w-8 rounded-full border border-neutral-200 object-cover" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-orange-100 text-xs font-bold text-orange-800">{(googleAuth.profile.fullName || googleAuth.profile.email || "T").slice(0,1).toUpperCase()}</span>}
+                <span className="hidden max-w-[180px] sm:block"><span className="block truncate text-xs font-semibold text-neutral-800">{googleAuth.profile.fullName || "Your account"}</span><span className="block truncate text-[10px] text-neutral-500">{googleAuth.profile.email}</span></span>
+              </div>}
               <InstallApp />{demo && <DemoInterest />}{!demo && onSignOut && <button onClick={onSignOut} className="h-10 rounded-xl border border-neutral-200 px-4 text-sm font-semibold text-neutral-600 hover:bg-neutral-50">Sign out</button>}
             </div>
           </div>
+          {googleSetupMessage && !demo && <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-950"><span>{autoProvisioning && <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-orange-500" />}{googleSetupMessage}</span>{googleSetupMessage.includes("Google connection needs attention") && <button onClick={() => go("profile")} className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-bold">Open Google settings</button>}{googleSetupMessage.includes("could not be created") && <button onClick={() => { autoProvisioned.current = null; void refreshBusinesses(); }} className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-bold">Retry</button>}</div>}
           {demo && <div className="mb-6 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-900"><strong>This is a sample workspace.</strong> Explore the screens and test the controls. Demo changes are temporary and are not connected to a real customer's business account.</div>}
           {tab === "dashboard" && <Dashboard onSetup={() => go("setup")} />}
           {tab === "setup" && <SetupPage demo={demo} onDone={() => go("dashboard")} onBusinessCreated={businessCreated} />}
