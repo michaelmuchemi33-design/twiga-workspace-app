@@ -488,3 +488,18 @@ html:focus-within { scroll-behavior: auto !important; }
 .rail-shell.w-16 .rail-scroll > div > p {
   display: none !important;
 }
+
+
+/* Final quiet-dashboard polish: neutralise rail glows and centre SVG artwork exactly. */
+.rail-shell,
+.rail-shell .rail-item,
+.rail-shell .rail-logo,
+.rail-shell .rail-item:hover,
+.rail-shell .rail-item:focus-visible {
+  box-shadow: none !important;
+  filter: none !important;
+  text-shadow: none !important;
+}
+.rail-shell.w-16 .rail-item { display: flex !important; align-items: center !important; justify-content: center !important; }
+.rail-shell.w-16 .rail-icon { display: flex !important; width: 24px !important; height: 24px !important; margin-inline: auto !important; align-items: center !important; justify-content: center !important; }
+.rail-shell.w-16 .rail-icon svg { display: block !important; flex: none !important; margin: 0 auto !important; }
