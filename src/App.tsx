@@ -119,8 +119,8 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
         setBusinessesLoaded(true);
         setTab("dashboard");
         setGoogleSetupMessage(googleAuth.tokens?.accessToken
-          ? "Your dashboard is ready. Securing your Calendar and Contacts connection…"
-          : "Your dashboard is ready. Connect Calendar and Contacts from Profile when you are ready.");
+          ? "Your dashboard is ready. Securing your Calendar, Contacts, Sheets and Drive connection…"
+          : "Your dashboard is ready. Connect Calendar, Contacts, Sheets and Drive from Profile when you are ready.");
       } catch (e) {
         setGoogleSetupMessage(e instanceof Error ? e.message : "Your Google account is signed in, but the workspace could not be created.");
         setTab("setup");
@@ -145,7 +145,9 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
         const scopes = Array.isArray(status?.scopes) ? status.scopes as string[] : [];
         const hasCalendar = scopes.some((scope) => scope.includes("calendar.events.owned") || scope.includes("calendar.events"));
         const hasContacts = scopes.some((scope) => scope.includes("contacts.readonly") || scope.endsWith("/auth/contacts"));
-        if (status?.connected && hasCalendar && hasContacts) {
+        const hasSheets = scopes.includes("https://www.googleapis.com/auth/spreadsheets");
+        const hasDrive = scopes.includes("https://www.googleapis.com/auth/drive.file");
+        if (status?.connected && hasCalendar && hasContacts && hasSheets && hasDrive) {
           setGoogleSetupMessage("");
           return;
         }
@@ -159,7 +161,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           },
         });
         if (error) throw error;
-        if (!data?.connected) throw new Error(data?.message || "Google did not grant Calendar and Contacts access.");
+        if (!data?.connected) throw new Error(data?.message || "Google did not grant all requested Google Workspace permissions.");
         setGoogleSetupMessage(data.refreshReady
           ? ""
           : "Calendar and Contacts are connected. Reconnect Google in Profile if its access expires.");
