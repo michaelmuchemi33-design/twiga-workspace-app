@@ -193,7 +193,8 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     try {
       const data = await retellAction("get_config");
       setRetell(data);
-      setSelectedVoice(String(data.config?.retell_voice_id || "cartesia-Willa"));
+      const savedVoice = String(data.config?.retell_voice_id || "cartesia-Willa");
+      setSelectedVoice(voiceNotes.some((voice) => voice[2] === savedVoice) ? savedVoice : "cartesia-Willa");
       if (data.config?.retell_model) setModel(data.config.retell_model);
       setRecordingEnabled(data.recordingEnabled === true);
       setRecordingNotice(data.recordingNotice || "This call may be recorded to help us serve you.");
