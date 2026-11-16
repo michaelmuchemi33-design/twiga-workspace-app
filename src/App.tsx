@@ -241,7 +241,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           {tab === "dashboard" && <Dashboard onSetup={() => go("setup")} />}
           {tab === "setup" && <SetupPage demo={demo} onDone={() => go("dashboard")} onBusinessCreated={businessCreated} />}
           {tab === "phone" && <PhoneDesk businessId={businessId} demo={demo} />}
-          {tab === "connections" && <Connections businessId={businessId} demo={demo} />}
+          {tab === "connections" && <Connections businessId={businessId} demo={demo} googleAuth={googleAuth} />}
           {tab === "organizer" && <Organizer />}
           {tab === "functions" && <Functions />}
           {tab === "pos" && <PointOfSale />}
