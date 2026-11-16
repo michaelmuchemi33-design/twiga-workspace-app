@@ -471,3 +471,20 @@
 .setup-sheen { display: none !important; }
 .live-row:hover { transform: none !important; box-shadow: none !important; }
 html:focus-within { scroll-behavior: auto !important; }
+
+/* Keep the compact side rail visually centred at every viewport size. */
+.rail-shell.w-16 .rail-item {
+  justify-content: center !important;
+  gap: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+.rail-shell.w-16 > div:first-child {
+  justify-content: center !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+.rail-shell.w-16 .rail-item > span.whitespace-nowrap,
+.rail-shell.w-16 .rail-scroll > div > p {
+  display: none !important;
+}
