@@ -36,6 +36,8 @@ const GOOGLE_SCOPES = [
   "profile",
   "https://www.googleapis.com/auth/calendar.events.owned",
   "https://www.googleapis.com/auth/contacts.readonly",
+  "https://www.googleapis.com/auth/spreadsheets",
+  "https://www.googleapis.com/auth/drive.file",
 ].join(" ");
 
 export default function AuthGate({ children }: {
@@ -144,6 +146,8 @@ export default function AuthGate({ children }: {
                   <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-orange-600">◉</span><div><p className="text-xs font-semibold text-neutral-900">Profile picture</p><p className="text-[11px] text-neutral-500">Shown in your dashboard</p></div></div>
                   <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-orange-600">▦</span><div><p className="text-xs font-semibold text-neutral-900">Google Calendar</p><p className="text-[11px] text-neutral-500">Read and manage your events</p></div></div>
                   <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-orange-600">♧</span><div><p className="text-xs font-semibold text-neutral-900">Google Contacts</p><p className="text-[11px] text-neutral-500">Read contacts you approve</p></div></div>
+                  <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-orange-600">▤</span><div><p className="text-xs font-semibold text-neutral-900">Google Sheets</p><p className="text-[11px] text-neutral-500">Create and update business records</p></div></div>
+                  <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-orange-600">▣</span><div><p className="text-xs font-semibold text-neutral-900">Google Drive</p><p className="text-[11px] text-neutral-500">Access TWIGA files you choose</p></div></div>
                 </div>
               </div>
               <p className="mt-4 text-center text-[11px] leading-5 text-neutral-500">Calendar and Contacts are requested on Google's permission screen. TWIGA only receives the access you approve. You can disconnect Google later in Profile.</p>
