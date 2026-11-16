@@ -466,7 +466,8 @@
   animation: none !important;
   transition: none !important;
   scroll-behavior: auto !important;
-  box-shadow: none !important;
-  text-shadow: none !important;
 }
+[class*="shadow-orange"], .setup-glare, .logout-primary { box-shadow: none !important; text-shadow: none !important; }
+.setup-sheen { display: none !important; }
+.live-row:hover { transform: none !important; box-shadow: none !important; }
 html:focus-within { scroll-behavior: auto !important; }
