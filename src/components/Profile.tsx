@@ -344,20 +344,15 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   };
 
   const publishSelected = async () => {
-    if (!agentId) { setMessage("Choose a voice template first."); return; }
+    if (!selectedVoice) { setMessage("Choose a receptionist voice first."); return; }
     setBusy(true);
     try {
-      await retellAction("save_settings", { provider: "retell", voiceId: agentId === retell.config?.retell_agent_id ? (retell.config?.retell_voice_id || "retell-Willa") : "retell-Willa", model, ambientVolume: 0.08, inboundPrompt, outboundPrompt, recordingEnabled, recordingNotice });
-      if (agentId !== retell.config?.retell_agent_id) {
-        const { data: selectedVoice, error: selectionError } = await supabase!.functions.invoke("twiga-retell-select-voice", { body: { businessId, sourceAgentId: agentId } });
-        if (selectionError) throw new Error(selectionError.message);
-        if (selectedVoice?.error) throw new Error(String(selectedVoice.error));
-      }
+      await retellAction("save_settings", { provider: "retell", voiceId: selectedVoice, voiceModel: null, model, ambientVolume: 0.08, inboundPrompt, outboundPrompt, recordingEnabled, recordingNotice });
       const result = await retellAction("provision_agent");
       const { data: style, error: styleError } = await supabase!.functions.invoke("twiga-retell-voice-style", { body: { businessId } });
       if (styleError) throw new Error(styleError.message);
       if (style?.error) throw new Error(String(style.error));
-      setMessage(style?.message || result.message || "Business-specific Retell agent published.");
+      setMessage(style?.message || result.message || "The selected receptionist voice was published for this business.");
       await loadRetell();
     } catch (e) { setMessage(e instanceof Error ? e.message : "Retell setup failed."); }
     finally { setBusy(false); }
