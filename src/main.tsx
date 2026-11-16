@@ -2,14 +2,14 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import AuthGate from "@/components/AuthGate";
-import { hasSupabaseConfig, supabase } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
 import "./index.css";
 
 const demo = window.location.hostname === "demo.twiga.co.ke" || import.meta.env.VITE_APP_MODE === "demo";
 
 function Root() {
   if (demo) return <App demo />;
-  return <AuthGate>{(session) => <App userId={session.user.id} onSignOut={async () => { await supabase?.auth.signOut(); }} />}</AuthGate>;
+  return <AuthGate>{(session, googleAuth) => <App userId={session.user.id} googleAuth={googleAuth} onSignOut={async () => { await supabase?.auth.signOut(); }} />}</AuthGate>;
 }
 
 if ("serviceWorker" in navigator && import.meta.env.PROD) {
