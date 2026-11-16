@@ -71,14 +71,13 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
     liveCalls,
     callRecords,
     completeTask,
-    demoMode,
     settings,
     businessId,
   } = useStore();
   const [ownerName, setOwnerName] = useState("");
 
   useEffect(() => {
-    if (demoMode || !supabase || !businessId) return;
+    if (false || !supabase || !businessId) return;
     let active = true;
     void Promise.all([
       supabase.auth.getUser(),
@@ -90,7 +89,7 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
       setOwnerName(savedName || accountName);
     });
     return () => { active = false; };
-  }, [demoMode, businessId]);
+  }, [false, businessId]);
 
   const revenue = sales.reduce((s, x) => s + x.total, 0);
   const dueFollowUps = customers.filter((c) => c.followUpIn === 0).length;
@@ -105,18 +104,18 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
   };
   const businessTimeZone = resolveBusinessTimeZone(settings.business.timezone);
   const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: businessTimeZone });
-  const callsToday = demoMode ? 23 : callRecords.filter((c) => new Date(c.started_at || c.created_at).toLocaleDateString("en-CA", { timeZone: businessTimeZone }) === todayKey).length;
-  const callsHandled = demoMode ? 149 : callRecords.filter((c) => Date.now() - new Date(c.started_at || c.created_at).getTime() <= 7 * 24 * 60 * 60 * 1000).length;
-  const bookings = demoMode ? 8 : callRecords.filter((c) => Boolean(c.structured_data?.appointment_request || c.structured_data?.appointment_start_iso)).length;
+  const callsToday = callRecords.filter((c) => new Date(c.started_at || c.created_at).toLocaleDateString("en-CA", { timeZone: businessTimeZone }) === todayKey).length;
+  const callsHandled = callRecords.filter((c) => Date.now() - new Date(c.started_at || c.created_at).getTime() <= 7 * 24 * 60 * 60 * 1000).length;
+  const bookings = callRecords.filter((c) => Boolean(c.structured_data?.appointment_request || c.structured_data?.appointment_start_iso)).length;
   const ongoingCalls = callRecords.filter((c) => ["in_progress", "ringing", "ongoing"].includes(String(c.status).toLowerCase()));
   const recentCalls = callRecords.slice(0, 8);
   const averageDuration = callRecords.length ? Math.round(callRecords.reduce((sum, c) => sum + Number(c.duration_seconds || 0), 0) / callRecords.length) : 0;
   const formatDuration = (seconds: number) => seconds >= 60 ? Math.floor(seconds / 60) + "m " + String(seconds % 60).padStart(2, "0") + "s" : seconds + "s";
-  const leads = demoMode ? 5 : customers.length;
+  const leads = customers.length;
 
   const stats = [
     { label: "Calls handled today", value: `${callsToday}`, sub: `${callsHandled} this week`, icon: IconPhone, accent: true },
-    { label: "Ongoing calls", value: `${demoMode ? liveCalls.length : ongoingCalls.length}`, sub: "in progress now", icon: IconMic },
+    { label: "Ongoing calls", value: `${false ? liveCalls.length : ongoingCalls.length}`, sub: "in progress now", icon: IconMic },
     { label: "Bookings made", value: `${bookings}`, sub: "by the AI", icon: IconCalendar },
     { label: "Revenue today", value: `KSh ${revenue.toLocaleString()}`, sub: `${sales.length} sales`, icon: IconCoin, money: revenue },
   ];
@@ -147,8 +146,8 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
 
         <div className="flex flex-col items-stretch gap-3 sm:items-end">
           <div className="flex items-center gap-3 rounded-xl bg-neutral-950 px-4 py-3 text-white">
-            <span className={`h-2.5 w-2.5 rounded-full ${demoMode ? "bg-orange-500" : "bg-neutral-500"}`} />
-            <span className="text-sm font-medium">{demoMode ? "Sample activity" : "Workspace ready"}</span>
+            <span className={`h-2.5 w-2.5 rounded-full ${false ? "bg-orange-500" : "bg-neutral-500"}`} />
+            <span className="text-sm font-medium">{"Workspace ready"}</span>
           </div>
 
           <button
@@ -202,18 +201,18 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <div>
               <CardTitle className="flex items-center gap-2 text-xl font-semibold">
-                <IconMic className="h-5 w-5 text-orange-500" /> {demoMode ? "Live Calls" : "Recent Calls"}
+                <IconMic className="h-5 w-5 text-orange-500" /> {"Recent Calls"}
               </CardTitle>
               <CardDescription className="text-neutral-400">
-                {demoMode ? "Illustrative sample activity — not real calls" : "Retell call history for this business. Transcripts are saved only when recording is enabled."}
+                {"Retell call history for this business. Transcripts are saved only when recording is enabled."}
               </CardDescription>
             </div>
             <Badge className="border-orange-500/30 bg-orange-500/20 text-orange-400">
-              {demoMode ? liveCalls.length : ongoingCalls.length} active
+              {false ? liveCalls.length : ongoingCalls.length} active
             </Badge>
           </CardHeader>
           <CardContent className="space-y-3">
-            {demoMode ? (
+            {false ? (
               <>
                 {liveCalls.length === 0 && <p className="rounded-xl border border-dashed border-neutral-700 py-8 text-center text-sm text-neutral-500">No calls in progress — the line is open</p>}
                 <div className="live-scroll max-h-64 space-y-3 overflow-y-auto pr-2">
@@ -245,7 +244,7 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
             )}
 
             <div className="grid grid-cols-3 gap-3 border-t border-white/10 pt-4">
-              {demoMode ? <><MiniStat label="Avg. call" value="1m 12s" /><MiniStat label="Answered" value="98%" /><MiniStat label="Transferred" value="2" /></> : <><MiniStat label="Call records" value={String(callRecords.length)} /><MiniStat label="Completed" value={String(callRecords.filter((call) => String(call.status).toLowerCase() === "completed").length)} /><MiniStat label="Avg. call" value={formatDuration(averageDuration)} /></>}
+              {false ? <><MiniStat label="Avg. call" value="1m 12s" /><MiniStat label="Answered" value="98%" /><MiniStat label="Transferred" value="2" /></> : <><MiniStat label="Call records" value={String(callRecords.length)} /><MiniStat label="Completed" value={String(callRecords.filter((call) => String(call.status).toLowerCase() === "completed").length)} /><MiniStat label="Avg. call" value={formatDuration(averageDuration)} /></>}
             </div>
           </CardContent>
         </Card>
