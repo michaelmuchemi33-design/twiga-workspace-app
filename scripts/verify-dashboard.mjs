@@ -8,8 +8,10 @@ const connections = read("src/components/Connections.tsx");
 const app = read("src/App.tsx");
 const readme = read("README.md");
 const pkg = JSON.parse(read("package.json"));
-const migrationPath = "supabase/migrations/20261117000100_lock_down_legacy_erp_objects_and_pin_definer_paths.sql";
-const migration = read(migrationPath);
+const migration1 = read("supabase/migrations/20261116214034_lock_down_legacy_erp_objects_and_pin_definer_paths.sql");
+const migration2 = read("supabase/migrations/20261116214731_fix_device_line_assignment_and_remaining_function_paths.sql");
+const migration3 = read("supabase/migrations/20261116214935_optimize_twiga_rls_and_foreign_key_indexes.sql");
+const migration4 = read("supabase/migrations/20261116215022_harden_business_ai_rpc_permissions_and_line_updates.sql");
 
 const checks = [
   ["business-scoped workspace persistence", store.includes('from("twiga_business_workspace_data")') && store.includes('.eq("business_id", businessId)')],
@@ -23,7 +25,10 @@ const checks = [
   ["Google origin mismatch guidance", connections.includes("origin_mismatch")],
   ["business_id architecture documented", readme.includes("twiga_business_workspace_data") && readme.includes("business_id")],
   ["trial and Starter price documented", readme.includes("seven days") && readme.includes("KSh 1,500 monthly")],
-  ["security migration included", migration.includes("analytics_customer_value") && migration.includes("search_path = pg_catalog, public, private")],
+  ["legacy public data lock-down migration", migration1.includes("analytics_customer_value") && migration1.includes("search_path = pg_catalog, public, private")],
+  ["phone-line conflict safety migration", migration2.includes("if not found") && migration2.includes("This phone number is already assigned to another business")],
+  ["RLS and foreign-key performance migration", migration3.includes("idx_twiga_customers_business_id_fk") && migration3.includes("auth.uid()")],
+  ["business AI RPC authorization migration", migration4.includes("m.role in ('owner','admin','manager')") && migration4.includes("idx_devices_business_id_fk")],
   ["test command configured", pkg.scripts?.test === "node scripts/verify-dashboard.mjs"],
   ["no Unity branding in live app shell", !/Unity/i.test(app) && !/Unity/i.test(read("index.html"))],
 ];
