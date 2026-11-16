@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   IconHome,
@@ -27,6 +27,7 @@ const groups: { title: string; items: TabDef[] }[] = [
     title: "Front Desk",
     items: [
       { id: "dashboard", label: "Home", icon: IconHome },
+      { id: "phone", label: "Phone & AI", icon: IconChat },
       { id: "organizer", label: "Organize", icon: IconSwap },
       { id: "functions", label: "Functions", icon: IconSparkle },
     ],
@@ -66,12 +67,6 @@ export default function SideRail({
   onSelect: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [pulse, setPulse] = useState(0);
-
-  useEffect(() => {
-    const id = window.setInterval(() => setPulse((p) => p + 1), 5000);
-    return () => window.clearInterval(id);
-  }, []);
 
   return (
     <aside
@@ -128,7 +123,6 @@ export default function SideRail({
                     )}
                   >
                     <span
-                      key={pulse}
                       className="rail-icon flex h-6 w-6 shrink-0 items-center justify-center"
                     >
                       <Icon className="h-5 w-5" />
@@ -165,7 +159,6 @@ export default function SideRail({
           )}
         >
           <span
-            key={pulse}
             className="rail-icon flex h-6 w-6 shrink-0 items-center justify-center"
           >
             <IconLogout className="h-5 w-5" />
