@@ -195,7 +195,6 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       setRetell(data);
       setSelectedVoice(String(data.config?.retell_voice_id || "cartesia-Willa"));
       if (data.config?.retell_model) setModel(data.config.retell_model);
-      if (data.config?.retell_agent_id) setAgentId(data.config.retell_agent_id);
       setRecordingEnabled(data.recordingEnabled === true);
       setRecordingNotice(data.recordingNotice || "This call may be recorded to help us serve you.");
     } catch (e) { setMessage(e instanceof Error ? e.message : "Retell settings unavailable."); }
