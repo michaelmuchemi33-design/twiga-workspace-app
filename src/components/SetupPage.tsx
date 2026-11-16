@@ -3,12 +3,16 @@ import { supabase } from "@/lib/supabase";
 
 type Message = { id: string; role: "ai" | "user"; text: string };
 
-const prompts = [
-  "My business is called Nairobi Style Studio. We are a salon in Nairobi.",
-  "I run a restaurant. We serve local meals and offer delivery.",
-  "I sell beauty products online and through WhatsApp.",
-  "I run a repair business. Customers call to request quotes and appointments.",
-];
+async function edgeFunctionError(error: unknown) {
+  const err = error as any;
+  const response = err?.context;
+  if (response && typeof response.clone === "function") {
+    const payload = await response.clone().json().catch(() => null);
+    if (payload?.error) return String(payload.error);
+    if (payload?.message) return String(payload.message);
+  }
+  return err?.message || "The request could not be completed.";
+}
 
 export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
   demo?: boolean;
@@ -30,7 +34,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "auto" });
   }, [messages, thinking]);
 
   useEffect(() => {
@@ -44,7 +48,11 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
   const send = async (value?: string) => {
     const text = (value ?? input).trim();
     if (!text || thinking) return;
-    if (!demo && (!supabase || !ownerName.trim() || !ownerEmail.trim())) {
+    if (demo) {
+      setError("Sign in to create a real business workspace. Sample business data is disabled.");
+      return;
+    }
+    if (!supabase || !ownerName.trim() || !ownerEmail.trim()) {
       setError("Add the business owner name and contact email before starting setup.");
       return;
     }
@@ -54,17 +62,10 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
     setThinking(true);
     setError("");
     try {
-      if (demo) {
-        setProfile({ business_name: "Nairobi Style Studio", business_type: "salon", business_summary: "A sample Nairobi salon offering haircuts, styling and beauty services.", owner_name: ownerName || "Demo owner", owner_email: ownerEmail || "demo@example.com" });
-        setMissing(["Add your real business details after signing in"]);
-        setReady(false);
-        setMessages((m) => [...m, { id: String(Date.now() + 1), role: "ai", text: "This is the interactive demo of the Grok setup flow. In your live workspace, Grok collects your business information and saves it to your private business profile. The demo does not create a real workspace or call the paid Grok API. Sign in to configure your own business." }]);
-        return;
-      }
       const { data, error: invokeError } = await supabase!.functions.invoke("twiga-setup-assistant", {
         body: { messages: next.map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text })), ownerProfile: { name: ownerName.trim(), email: ownerEmail.trim() } },
       });
-      if (invokeError) throw new Error(invokeError.message);
+      if (invokeError) throw new Error(await edgeFunctionError(invokeError));
       if (data?.error) throw new Error(String(data.error));
       setMessages((m) => [...m, { id: String(Date.now() + 1), role: "ai", text: String(data.reply || "Tell me a little more about the business.") }]);
       setProfile(data.businessProfile || {});
@@ -79,7 +80,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
   };
 
   const buildWorkspace = async () => {
-    if (demo) { setError("This is a demo preview. Sign in to create a real business workspace."); return; }
+    if (demo) { setError("Sign in to create a real business workspace. Sample business data is disabled."); return; }
     if (!supabase || !ready || !profile.business_name || !ownerName.trim() || !ownerEmail.trim()) return;
     setBuilding(true);
     setError("");
@@ -92,7 +93,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
           profile: { ...profile, owner_name: ownerName.trim(), owner_email: ownerEmail.trim() },
         },
       });
-      if (createError) throw new Error(createError.message);
+      if (createError) throw new Error(await edgeFunctionError(createError));
       if (data?.error) throw new Error(String(data.error));
       const businessId = String(data?.business?.id || "");
       if (!businessId) throw new Error("The workspace was not created. Please try again.");
@@ -125,7 +126,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
           {thinking && <div className="rounded-2xl bg-neutral-100 px-4 py-3 text-sm text-neutral-500">Your setup assistant is organising the business details…</div>}
         </div>
         <div className="border-t border-neutral-100 p-4">
-          <div className="mb-3 flex flex-wrap gap-2">{prompts.map((p) => <button key={p} onClick={() => send(p)} disabled={thinking} className="rounded-full border border-neutral-200 px-3 py-1.5 text-xs text-neutral-600 hover:border-orange-300 hover:text-orange-700 disabled:opacity-40">{p}</button>)}</div>
+          <p className="mb-3 text-xs text-neutral-400">Start with your business name, what you do, and where you operate.</p>
           <div className="flex items-end gap-2"><textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} placeholder="Tell me about your business…" rows={3} className="min-h-[76px] flex-1 resize-y rounded-xl border border-neutral-200 p-3 text-sm outline-none focus:border-orange-400" /><button onClick={() => void send()} disabled={thinking || !input.trim()} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">Send</button></div>
           <p className="mt-2 text-[11px] text-neutral-400">Enter to send · Shift + Enter for a new line</p>
         </div>
