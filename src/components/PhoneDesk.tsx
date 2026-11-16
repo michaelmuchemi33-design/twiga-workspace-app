@@ -8,6 +8,8 @@ export default function PhoneDesk({ businessId, demo = false, onOpenProfile }: {
   const [inboundPrompt, setInboundPrompt] = useState("Greet callers warmly, identify their reason for calling, answer from verified business information, and capture appointment or order requests for staff confirmation. Never invent prices, availability or completed bookings.");
   const [outboundPrompt, setOutboundPrompt] = useState("Only call people when the business has authorised the follow-up. Identify the business, explain the reason, ask if it is a convenient time, and respect requests not to be contacted.");
   const [fromNumber, setFromNumber] = useState("");
+  const [carrier, setCarrier] = useState("other");
+  const [connectionMethod, setConnectionMethod] = useState("physical_sim");
   const [toNumber, setToNumber] = useState("");
   const [callReason, setCallReason] = useState("Customer follow-up");
   const [status, setStatus] = useState("Not started");
@@ -33,6 +35,8 @@ export default function PhoneDesk({ businessId, demo = false, onOpenProfile }: {
       setInboundPrompt(data.config?.inbound_prompt || inboundPrompt);
       setOutboundPrompt(data.config?.outbound_prompt || outboundPrompt);
       setFromNumber(String(data.aiBridgeNumber || ""));
+      setCarrier(String(data.phoneLine?.carrier || "other"));
+      setConnectionMethod(String(data.phoneLine?.connection_method || "physical_sim"));
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Could not load phone settings.");
     }
@@ -44,6 +48,16 @@ export default function PhoneDesk({ businessId, demo = false, onOpenProfile }: {
     if (clientRef.current) { try { clientRef.current.stopCall(); } catch {} }
   }, []);
 
+  const savePhoneLine = async () => {
+    if (!businessId || !fromNumber.trim()) { setMessage("Enter the number this business owns or is authorised to use."); return; }
+    setBusy(true); setMessage("");
+    try {
+      const result = await action("save_phone_line", { lineNumber: fromNumber.trim(), carrier, connectionMethod });
+      setMessage(result.message || "Number assigned to this business.");
+      await load();
+    } catch (e) { setMessage(e instanceof Error ? e.message : "Could not assign this phone number."); }
+    finally { setBusy(false); }
+  };
   const saveAndPublish = async () => {
     if (!businessId || !greeting.trim()) {
       setMessage("Write the first greeting before publishing the receptionist.");
@@ -117,11 +131,18 @@ export default function PhoneDesk({ businessId, demo = false, onOpenProfile }: {
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <h2 className="text-lg font-semibold text-neutral-950">This business phone number</h2>
-      {config.phoneLine ? <div className="mt-3 grid gap-3 sm:grid-cols-3">
+      {config.phoneLine && <div className="mt-3 grid gap-3 sm:grid-cols-3">
         <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Assigned number</p><p className="mt-1 font-semibold text-neutral-950">{config.phoneLine.line_number}</p></div>
         <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Incoming calls</p><p className="mt-1 font-semibold text-neutral-950">{config.phoneLine.inbound_enabled ? "Enabled" : config.phoneLine.inbound_status || "Not connected"}</p></div>
         <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Outgoing calls</p><p className="mt-1 font-semibold text-neutral-950">{config.phoneLine.outbound_enabled ? "Enabled" : config.phoneLine.outbound_status || "Not connected"}</p></div>
-      </div> : <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900">No phone number is assigned to this business yet. TWIGA keeps each business line separate; connect and verify a number before enabling real calls.</p>}
+      </div>}
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <label className="block text-sm font-medium text-neutral-800">Business number<input value={fromNumber} onChange={(e) => setFromNumber(e.target.value)} placeholder="+2547XXXXXXXX" className="mt-2 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-500" /></label>
+        <label className="block text-sm font-medium text-neutral-800">Carrier<select value={carrier} onChange={(e) => setCarrier(e.target.value)} className="mt-2 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm"><option value="safaricom">Safaricom</option><option value="airtel">Airtel</option><option value="telkom">Telkom</option><option value="sautikit">SautiKit</option><option value="retell">Retell</option><option value="other">Other</option></select></label>
+        <label className="block text-sm font-medium text-neutral-800">Connection type<select value={connectionMethod} onChange={(e) => setConnectionMethod(e.target.value)} className="mt-2 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm"><option value="physical_sim">Existing physical SIM</option><option value="sautikit">SautiKit number</option><option value="retell_sip">Retell / SIP import</option><option value="other">Other carrier route</option></select></label>
+      </div>
+      <button onClick={savePhoneLine} disabled={busy || !businessId || !fromNumber.trim()} className="mt-3 rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">{busy ? "Saving…" : config.phoneLine ? "Update this business number" : "Assign number to this business"}</button>
+      <p className="mt-3 text-xs leading-5 text-neutral-500">Each phone number can belong to only one TWIGA business. Saving assigns the number to this workspace; it does not activate calls. The carrier route must be connected and tested before inbound or outbound calls are enabled. A physical SIM cannot be imported into Retell by itself; it needs a supported carrier/SIP route.</p>
     </section>
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">First greeting</h2><p className="mt-1 text-sm text-neutral-500">This is the opening sentence callers hear when the AI answers.</p></div><span className="rounded-full border border-neutral-200 px-3 py-1 text-xs text-neutral-600">Business-specific</span></div>
