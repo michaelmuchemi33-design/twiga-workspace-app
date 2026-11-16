@@ -116,6 +116,14 @@ export default function PhoneDesk({ businessId, demo = false, onOpenProfile }: {
     </header>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+      <h2 className="text-lg font-semibold text-neutral-950">This business phone number</h2>
+      {config.phoneLine ? <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Assigned number</p><p className="mt-1 font-semibold text-neutral-950">{config.phoneLine.line_number}</p></div>
+        <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Incoming calls</p><p className="mt-1 font-semibold text-neutral-950">{config.phoneLine.inbound_enabled ? "Enabled" : config.phoneLine.inbound_status || "Not connected"}</p></div>
+        <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Outgoing calls</p><p className="mt-1 font-semibold text-neutral-950">{config.phoneLine.outbound_enabled ? "Enabled" : config.phoneLine.outbound_status || "Not connected"}</p></div>
+      </div> : <p className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900">No phone number is assigned to this business yet. TWIGA keeps each business line separate; connect and verify a number before enabling real calls.</p>}
+    </section>
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">First greeting</h2><p className="mt-1 text-sm text-neutral-500">This is the opening sentence callers hear when the AI answers.</p></div><span className="rounded-full border border-neutral-200 px-3 py-1 text-xs text-neutral-600">Business-specific</span></div>
       <textarea value={greeting} onChange={(e) => setGreeting(e.target.value)} rows={3} maxLength={1200} placeholder="Hello, thank you for calling [Business Name]. My name is [Assistant Name]. How can I help you today?" className="mt-4 w-full rounded-xl border border-neutral-200 p-3 text-sm leading-6 text-neutral-800 outline-none focus:border-orange-500" />
       <p className="mt-2 text-xs text-neutral-500">Keep it short, natural and clear. The setup assistant can help write this for your business.</p>
