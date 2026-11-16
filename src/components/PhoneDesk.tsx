@@ -32,7 +32,7 @@ export default function PhoneDesk({ businessId, demo = false, onOpenProfile }: {
       setGreeting(data.greeting || "Hello, thank you for calling {{business_name}}. How can I help you today?");
       setInboundPrompt(data.config?.inbound_prompt || inboundPrompt);
       setOutboundPrompt(data.config?.outbound_prompt || outboundPrompt);
-      setFromNumber("");
+      setFromNumber(String(data.aiBridgeNumber || ""));
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Could not load phone settings.");
     }
@@ -51,8 +51,8 @@ export default function PhoneDesk({ businessId, demo = false, onOpenProfile }: {
     }
     setBusy(true); setMessage("");
     try {
-      const voiceId = config.config?.retell_voice_id || "retell-Willa";
-      await action("save_settings", { provider: "retell", greeting, inboundPrompt, outboundPrompt, voiceId, voiceModel: config.config?.retell_voice_model || (voiceId.startsWith("cartesia-") ? "sonic-3" : "eleven_turbo_v2_5"), model: config.config?.retell_model || "gpt-4.1-mini", recordingEnabled: config.recordingEnabled === true, recordingNotice: config.recordingNotice || "This call may be recorded for service quality." });
+      const voiceId = config.config?.retell_voice_id || "cartesia-Willa";
+      await action("save_settings", { provider: "retell", greeting, inboundPrompt, outboundPrompt, voiceId, voiceModel: config.config?.retell_voice_model || null, model: config.config?.retell_model || "gpt-4.1-mini", recordingEnabled: config.recordingEnabled === true, recordingNotice: config.recordingNotice || "This call may be recorded for service quality." });
       const published = await action("provision_agent");
       setMessage(published.message || "Your receptionist greeting and instructions have been published.");
       await load();
