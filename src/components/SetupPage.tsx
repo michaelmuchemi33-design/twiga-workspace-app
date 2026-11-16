@@ -16,7 +16,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
   onBusinessCreated: (id: string) => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([
-    { id: "welcome", role: "ai", text: "Hello! I'm your TWIGA business setup helper. I help you describe your business and build its private workspace. Start with your business name, what you sell or do, and where you operate. I'll ask a few questions and organise the details. This is the account setup assistant, not your phone receptionist." },
+    { id: "welcome", role: "ai", text: "Hello! I'm your TWIGA business setup helper. I help you describe your business and build its private workspace. Start with your business name, what you sell or do, and where you operate. I'll ask a few questions and organise the details. I can also draft your receptionist greeting and call-handling instructions. After your workspace is created, use Phone & AI to review them, publish your receptionist and test a call." },
   ]);
   const [input, setInput] = useState("");
   const [ownerName, setOwnerName] = useState("");
@@ -110,7 +110,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
     <header className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
       <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-500">Grok · Business setup assistant</p>
       <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-950">Build your business workspace</h1>
-      <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Describe your business in plain language. The helper organises your information, then creates a separate workspace for that business. Grok is only used here for setup; Retell runs the receptionist.</p>
+      <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Describe your business in plain language. The assistant organises your business details and drafts your first phone greeting and receptionist instructions before creating a separate workspace. Grok is only used here for setup; Retell runs the receptionist.</p>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <label className="block text-sm font-medium text-neutral-700">Business owner name<input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} autoComplete="name" placeholder="Your full name" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
         <label className="block text-sm font-medium text-neutral-700">Business contact email<input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} autoComplete="email" placeholder="you@business.co.ke" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
@@ -138,7 +138,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
           <div className="mt-4 space-y-3 text-sm">
             <div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Business name</p><p className="mt-1 font-medium text-neutral-900">{profile.business_name || "Not added yet"}</p></div>
             <div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Business type</p><p className="mt-1 font-medium text-neutral-900">{profile.business_type || "Not added yet"}</p></div>
-            <div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">What it does / sells</p><p className="mt-1 text-neutral-700">{profile.business_summary || profile.what_they_do || profile.what_they_sell || "Waiting for details…"}</p></div>
+            <div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">What it does / sells</p><p className="mt-1 text-neutral-700">{profile.business_summary || profile.what_they_do || profile.what_they_sell || "Waiting for details…"}</p></div><div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">First phone greeting</p><p className="mt-1 text-neutral-700">{profile.receptionist_greeting || "The assistant will draft this with you."}</p></div>
           </div>
           {missing.length > 0 && <div className="mt-4 rounded-xl bg-neutral-50 p-3"><p className="text-xs font-semibold text-neutral-700">Still useful to add</p><ul className="mt-2 list-inside list-disc space-y-1 text-xs text-neutral-500">{missing.map((x) => <li key={x}>{x}</li>)}</ul></div>}
           <button onClick={buildWorkspace} disabled={!ready || building} className="mt-5 w-full rounded-xl bg-neutral-950 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{building ? "Creating workspace…" : "Create my business workspace"}</button>
