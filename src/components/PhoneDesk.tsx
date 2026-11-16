@@ -148,12 +148,12 @@ export default function PhoneDesk({ businessId, demo = false, onOpenProfile }: {
       <h2 className="text-lg font-semibold text-neutral-950">Place a phone call</h2>
       <p className="mt-1 text-sm text-neutral-500">Call a customer from a phone number already purchased or imported into your Retell account.</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <label className="block text-sm font-medium text-neutral-700">Your registered caller ID<input value={fromNumber} onChange={(e) => setFromNumber(e.target.value)} placeholder="+2547XXXXXXXX" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
+        <label className="block text-sm font-medium text-neutral-700">Your registered caller ID<input value={fromNumber} onChange={(e) => setFromNumber(e.target.value)} placeholder={config.aiBridgeNumber || "No business number assigned"} readOnly={Boolean(config.aiBridgeNumber)} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
         <label className="block text-sm font-medium text-neutral-700">Customer phone number<input value={toNumber} onChange={(e) => setToNumber(e.target.value)} placeholder="+2547XXXXXXXX" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
         <label className="block text-sm font-medium text-neutral-700 sm:col-span-2">Reason for calling<input value={callReason} onChange={(e) => setCallReason(e.target.value)} placeholder="Appointment follow-up, order update, requested callback…" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
       </div>
       <p className="mt-2 text-xs leading-5 text-neutral-500">Both numbers must use international format. Retell validates that the caller ID belongs to your account. A Retell-purchased US number may only dial US destinations; to call +254 numbers, the imported line or SIP carrier must support Kenya. Your ordinary SIM is not automatically a Retell caller ID.</p>
-      <button onClick={placePhoneCall} disabled={busy || !businessId || !config.keyConfigured || !config.config?.retell_agent_id} className="mt-4 rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">Call customer</button>
+      <button onClick={placePhoneCall} disabled={busy || !businessId || !config.keyConfigured || !config.config?.retell_agent_id || !config.phoneLine?.outbound_enabled} className="mt-4 rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">Call customer</button>
     </section>
 
     {message && <p role="status" className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">{message}</p>}
