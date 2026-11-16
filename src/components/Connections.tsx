@@ -74,6 +74,9 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Workspace integrations</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Connections & permissions</h1>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Connect the business owner's Google account. Each business has its own encrypted Google connection. Permissions are approved in Google's own consent screen.</p>
       <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{!oauthConfig.serverConfigured && !googleAuth?.tokens?.accessToken ? "Manual Google reconnection needs the Google OAuth web client ID and client secret in TWIGA server settings. If you sign in with Google, TWIGA can use the approved sign-in token to connect these services automatically." : "Google Workspace permissions can be connected using your approved Google sign-in or the separate consent screen."}</div>
+      <div className="mt-3 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-sm leading-6 text-neutral-700">
+        <strong>Google sign-in domain check:</strong> if Google shows <code>400 origin_mismatch</code> on <code>live.twiga.co.ke</code>, add <code>https://live.twiga.co.ke</code> and <code>https://app.twiga.co.ke</code> as Authorized JavaScript origins on the same Google OAuth Web client used by TWIGA. Do not add a path or wildcard. Save the client and retry.
+      </div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-800">{status.connected ? "Google connected" : "Google not connected"}</span>
         {status.googleEmail && <span className="text-sm text-neutral-600">{status.googleEmail}</span>}
