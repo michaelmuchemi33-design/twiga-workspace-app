@@ -28,6 +28,7 @@ const groups: { title: string; items: TabDef[] }[] = [
     items: [
       { id: "dashboard", label: "Home", icon: IconHome },
       { id: "phone", label: "Phone & AI", icon: IconChat },
+      { id: "connections", label: "Connections", icon: IconUsers },
       { id: "organizer", label: "Organize", icon: IconSwap },
       { id: "functions", label: "Functions", icon: IconSparkle },
     ],
