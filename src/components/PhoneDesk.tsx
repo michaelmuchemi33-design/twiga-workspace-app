@@ -4,7 +4,7 @@ import { supabase } from "@/lib/supabase";
 
 export default function PhoneDesk({ businessId, demo = false }: { businessId: string; demo?: boolean }) {
   const [config, setConfig] = useState<any>({});
-  const [greeting, setGreeting] = useState("");
+  const [greeting, setGreeting] = useState("Hello, thank you for calling {{business_name}}. How can I help you today?");
   const [inboundPrompt, setInboundPrompt] = useState("Greet callers warmly, identify their reason for calling, answer from verified business information, and capture appointment or order requests for staff confirmation. Never invent prices, availability or completed bookings.");
   const [outboundPrompt, setOutboundPrompt] = useState("Only call people when the business has authorised the follow-up. Identify the business, explain the reason, ask if it is a convenient time, and respect requests not to be contacted.");
   const [fromNumber, setFromNumber] = useState("");
@@ -12,7 +12,6 @@ export default function PhoneDesk({ businessId, demo = false }: { businessId: st
   const [status, setStatus] = useState("Not started");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [testSeconds, setTestSeconds] = useState(10);
   const clientRef = useRef<RetellWebClient | null>(null);
   const timeoutRef = useRef<number | null>(null);
 
@@ -29,14 +28,14 @@ export default function PhoneDesk({ businessId, demo = false }: { businessId: st
     try {
       const data = await action("get_config");
       setConfig(data);
-      setGreeting(data.greeting || "");
+      setGreeting(data.greeting || "Hello, thank you for calling {{business_name}}. How can I help you today?");
       setInboundPrompt(data.config?.inbound_prompt || inboundPrompt);
       setOutboundPrompt(data.config?.outbound_prompt || outboundPrompt);
-      setFromNumber(data.aiBridgeNumber || "");
+      setFromNumber("");
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Could not load phone settings.");
     }
-  }, [action, businessId]);
+  }, [action, businessId, inboundPrompt, outboundPrompt]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => () => {
