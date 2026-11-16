@@ -198,10 +198,6 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       if (data.config?.retell_agent_id) setAgentId(data.config.retell_agent_id);
       setRecordingEnabled(data.recordingEnabled === true);
       setRecordingNotice(data.recordingNotice || "This call may be recorded to help us serve you.");
-      if (data.keyConfigured) {
-        const result = await retellAction("list_agents");
-        setAgents(result.agents || []);
-      } else setAgents([]);
     } catch (e) { setMessage(e instanceof Error ? e.message : "Retell settings unavailable."); }
   }, [businessId, retellAction]);
 
