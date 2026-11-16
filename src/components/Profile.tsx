@@ -3,18 +3,7 @@ import { RetellWebClient } from "retell-client-js-sdk";
 import { supabase } from "@/lib/supabase";
 
 type Business = { id: string; name: string; business_type?: string; status?: string; role?: string };
-const voiceNotes = [
-  ["Willa · Cartesia", "Female · British · calm, measured", "cartesia-Willa", "https://retell-utils-public.s3.us-west-2.amazonaws.com/voice-previews/cartesia-sonic-3.6-2026-09-08T00-43-06-121Z/cartesia-Willa.mp3"],
-  ["Dorothy · ElevenLabs", "Female · British · warm, composed", "11labs-Dorothy", "https://retell-utils-public.s3.us-west-2.amazonaws.com/Dorothy.mp3"],
-  ["Amy · ElevenLabs", "Female · British · clear, gentle", "11labs-Amy", "https://retell-utils-public.s3.us-west-2.amazonaws.com/Amy.mp3"],
-  ["Maren · Inworld", "Female · British · soft, steady", "inworld-Maren", "https://retell-utils-public.s3.us-west-2.amazonaws.com/inworld-Maren.mp3"],
-  ["Eleanor · Inworld", "Female · British · mature, calm", "inworld-Eleanor", "https://retell-utils-public.s3.us-west-2.amazonaws.com/inworld-Eleanor.mp3"],
-  ["Adam · Cartesia", "Male · British · calm, measured", "cartesia-Adam", "https://retell-utils-public.s3.us-west-2.amazonaws.com/voice-previews/cartesia-sonic-3.6-2026-09-08T00-43-06-121Z/cartesia-Adam.mp3"],
-  ["Anthony · ElevenLabs", "Male · British · warm, composed", "11labs-Anthony", "https://retell-utils-public.s3.us-west-2.amazonaws.com/anthony.mp3"],
-  ["Anthony · Cartesia", "Male · British · steady, clear", "cartesia-Anthony", "https://retell-utils-public.s3.us-west-2.amazonaws.com/voice-previews/cartesia-sonic-3.6-2026-09-08T00-43-06-121Z/cartesia-Anthony.mp3"],
-  ["Fable · OpenAI", "Male · British · gentle, articulate", "openai-Fable", "https://retell-utils-public.s3.us-west-2.amazonaws.com/fable_.wav"],
-  ["Duncan · Inworld", "Male · British · warm, measured", "inworld-Duncan", "https://retell-utils-public.s3.us-west-2.amazonaws.com/inworld-Duncan.mp3"],
-];
+
 
 function loadGoogle() {
   return new Promise<void>((resolve, reject) => {
@@ -54,6 +43,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [googleTest, setGoogleTest] = useState("");
   const [retell, setRetell] = useState<any>({});
   const [selectedVoice, setSelectedVoice] = useState("cartesia-Willa");
+  const [voiceOptions, setVoiceOptions] = useState<any[]>([]);
   const [recordingEnabled, setRecordingEnabled] = useState(false);
   const [recordingNotice, setRecordingNotice] = useState("This call may be recorded to help us serve you.");
   const [retellKey, setRetellKey] = useState("");
@@ -193,8 +183,18 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     try {
       const data = await retellAction("get_config");
       setRetell(data);
-      const savedVoice = String(data.config?.retell_voice_id || "cartesia-Willa");
-      setSelectedVoice(voiceNotes.some((voice) => voice[2] === savedVoice) ? savedVoice : "cartesia-Willa");
+      const savedVoice = String(data.config?.retell_voice_id || "");
+      if (data.keyConfigured) {
+        const catalogue = await retellAction("list_voices");
+        const voices = Array.isArray(catalogue.voices) ? catalogue.voices : [];
+        setVoiceOptions(voices);
+        const savedExists = voices.some((voice: any) => voice.voiceId === savedVoice);
+        const preferred = voices.find((voice: any) => voice.gender === "female" && /british|african|kenyan|south african/i.test(voice.accent || ""));
+        setSelectedVoice(savedExists ? savedVoice : String(preferred?.voiceId || voices[0]?.voiceId || ""));
+      } else {
+        setVoiceOptions([]);
+        setSelectedVoice(savedVoice || "cartesia-Willa");
+      }
       if (data.config?.retell_model) setModel(data.config.retell_model);
       setRecordingEnabled(data.recordingEnabled === true);
       setRecordingNotice(data.recordingNotice || "This call may be recorded to help us serve you.");
