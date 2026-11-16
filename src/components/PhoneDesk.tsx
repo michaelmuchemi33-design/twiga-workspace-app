@@ -9,6 +9,7 @@ export default function PhoneDesk({ businessId, demo = false, onOpenProfile }: {
   const [outboundPrompt, setOutboundPrompt] = useState("Only call people when the business has authorised the follow-up. Identify the business, explain the reason, ask if it is a convenient time, and respect requests not to be contacted.");
   const [fromNumber, setFromNumber] = useState("");
   const [toNumber, setToNumber] = useState("");
+  const [callReason, setCallReason] = useState("Customer follow-up");
   const [status, setStatus] = useState("Not started");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -91,7 +92,7 @@ export default function PhoneDesk({ businessId, demo = false, onOpenProfile }: {
     if (!window.confirm("Place an AI-assisted outbound phone call to " + toNumber + "?")) return;
     setBusy(true); setMessage("");
     try {
-      const result = await action("create_phone_call", { fromNumber: fromNumber.trim(), toNumber: toNumber.trim() });
+      const result = await action("create_phone_call", { fromNumber: fromNumber.trim(), toNumber: toNumber.trim(), callReason: callReason.trim() });
       setMessage("Call submitted to Retell. Call ID: " + result.callId + ". Status: " + result.status + ".");
       setStatus("Call submitted");
     } catch (e) {
@@ -141,6 +142,7 @@ export default function PhoneDesk({ businessId, demo = false, onOpenProfile }: {
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <label className="block text-sm font-medium text-neutral-700">Your registered caller ID<input value={fromNumber} onChange={(e) => setFromNumber(e.target.value)} placeholder="+2547XXXXXXXX" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
         <label className="block text-sm font-medium text-neutral-700">Customer phone number<input value={toNumber} onChange={(e) => setToNumber(e.target.value)} placeholder="+2547XXXXXXXX" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
+        <label className="block text-sm font-medium text-neutral-700 sm:col-span-2">Reason for calling<input value={callReason} onChange={(e) => setCallReason(e.target.value)} placeholder="Appointment follow-up, order update, requested callback…" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
       </div>
       <p className="mt-2 text-xs leading-5 text-neutral-500">Both numbers must use international format. Retell validates that the caller ID belongs to your account. Your existing SIM is not automatically a Retell caller ID.</p>
       <button onClick={placePhoneCall} disabled={busy || !businessId || !config.keyConfigured || !config.config?.retell_agent_id} className="mt-4 rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">Call customer</button>
