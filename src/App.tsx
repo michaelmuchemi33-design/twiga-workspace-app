@@ -15,6 +15,7 @@ import Organizer from "@/components/Organizer";
 import Analytics from "@/components/Analytics";
 import Settings from "@/components/Settings";
 import Profile from "@/components/Profile";
+import PhoneDesk from "@/components/PhoneDesk";
 import Products from "@/components/Products";
 import Reports from "@/components/Reports";
 import Alerts from "@/components/Alerts";
@@ -47,6 +48,7 @@ const footerTabs = [
 ];
 
 const moreTabs = [
+  { id: "phone", label: "Phone & AI", icon: IconChat },
   { id: "organizer", label: "Organize", icon: IconSwap },
   { id: "functions", label: "Functions", icon: IconSparkle },
   { id: "customers", label: "People", icon: IconUsers },
@@ -223,7 +225,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
               {demo && <span className="rounded-full bg-orange-50 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-700">Demo</span>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {!isNativeApp && <select aria-label="Navigate workspace" value={tab} onChange={(e) => go(e.target.value)} className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 outline-none focus:border-orange-400 lg:hidden"><option value="dashboard">Home</option><option value="setup">AI setup</option><option value="organizer">Organize</option><option value="functions">Functions</option><option value="pos">Sell</option><option value="payments">Payments</option><option value="customers">People</option><option value="whatsapp">Inbox</option><option value="analytics">Stats</option><option value="products">Products</option><option value="reports">Reports</option><option value="alerts">Alerts</option><option value="profile">Profile</option><option value="settings">Settings</option></select>}
+              {!isNativeApp && <select aria-label="Navigate workspace" value={tab} onChange={(e) => go(e.target.value)} className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 outline-none focus:border-orange-400 lg:hidden"><option value="dashboard">Home</option><option value="setup">AI setup</option><option value="phone">Phone & AI</option><option value="organizer">Organize</option><option value="functions">Functions</option><option value="pos">Sell</option><option value="payments">Payments</option><option value="customers">People</option><option value="whatsapp">Inbox</option><option value="analytics">Stats</option><option value="products">Products</option><option value="reports">Reports</option><option value="alerts">Alerts</option><option value="profile">Profile</option><option value="settings">Settings</option></select>}
               {!demo && googleAuth?.profile && <div className="mr-1 flex items-center gap-2 rounded-xl bg-neutral-50 py-1.5 pl-1.5 pr-2.5">
                 {googleAuth.profile.avatarUrl ? <img src={googleAuth.profile.avatarUrl} alt="" referrerPolicy="no-referrer" className="h-8 w-8 rounded-full border border-neutral-200 object-cover" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-orange-100 text-xs font-bold text-orange-800">{(googleAuth.profile.fullName || googleAuth.profile.email || "T").slice(0,1).toUpperCase()}</span>}
                 <span className="hidden max-w-[180px] sm:block"><span className="block truncate text-xs font-semibold text-neutral-800">{googleAuth.profile.fullName || "Your account"}</span><span className="block truncate text-[10px] text-neutral-500">{googleAuth.profile.email}</span></span>
@@ -235,6 +237,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           {demo && <div className="mb-6 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-900"><strong>This is a sample workspace.</strong> Explore the screens and test the controls. Demo changes are temporary and are not connected to a real customer's business account.</div>}
           {tab === "dashboard" && <Dashboard onSetup={() => go("setup")} />}
           {tab === "setup" && <SetupPage demo={demo} onDone={() => go("dashboard")} onBusinessCreated={businessCreated} />}
+          {tab === "phone" && <PhoneDesk businessId={businessId} demo={demo} />}
           {tab === "organizer" && <Organizer />}
           {tab === "functions" && <Functions />}
           {tab === "pos" && <PointOfSale />}
