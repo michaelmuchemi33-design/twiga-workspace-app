@@ -68,7 +68,6 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
     payments,
     customers,
     messages,
-    liveCalls,
     callRecords,
     completeTask,
     settings,
@@ -115,7 +114,7 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
 
   const stats = [
     { label: "Calls handled today", value: `${callsToday}`, sub: `${callsHandled} this week`, icon: IconPhone, accent: true },
-    { label: "Ongoing calls", value: `${false ? liveCalls.length : ongoingCalls.length}`, sub: "in progress now", icon: IconMic },
+    { label: "Ongoing calls", value: `${ongoingCalls.length}`, sub: "in progress now", icon: IconMic },
     { label: "Bookings made", value: `${bookings}`, sub: "by the AI", icon: IconCalendar },
     { label: "Revenue today", value: `KSh ${revenue.toLocaleString()}`, sub: `${sales.length} sales`, icon: IconCoin, money: revenue },
   ];
@@ -146,7 +145,7 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
 
         <div className="flex flex-col items-stretch gap-3 sm:items-end">
           <div className="flex items-center gap-3 rounded-xl bg-neutral-950 px-4 py-3 text-white">
-            <span className={`h-2.5 w-2.5 rounded-full ${false ? "bg-orange-500" : "bg-neutral-500"}`} />
+            <span className={`h-2.5 w-2.5 rounded-full ${"bg-neutral-500"}`} />
             <span className="text-sm font-medium">{"Workspace ready"}</span>
           </div>
 
