@@ -108,7 +108,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
 
   return <div className="mx-auto max-w-5xl space-y-5">
     <header className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
-      <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-500">Grok · Business setup assistant</p>
+      <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-500">TWIGA · Business setup assistant</p>
       <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-950">Build your business workspace</h1>
       <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Describe your business in plain language. The assistant organises your business details and drafts your first phone greeting and receptionist instructions before creating a separate workspace. Grok is only used here for setup; Retell runs the receptionist.</p>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -122,7 +122,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
         <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4"><div><h2 className="font-semibold text-neutral-950">Business setup chat</h2><p className="text-xs text-neutral-500">Ask questions and build the profile together</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{thinking ? "Thinking…" : ready ? "Ready to build" : "Collecting details"}</span></div>
         <div ref={scrollRef} className="max-h-[55vh] min-h-[360px] space-y-4 overflow-y-auto p-5">
           {messages.map((m) => <div key={m.id} className={m.role === "user" ? "ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-neutral-950 px-4 py-3 text-sm leading-6 text-white" : "mr-auto max-w-[90%] rounded-2xl rounded-bl-md bg-neutral-100 px-4 py-3 text-sm leading-6 text-neutral-800"}>{m.text}</div>)}
-          {thinking && <div className="rounded-2xl bg-neutral-100 px-4 py-3 text-sm text-neutral-500">Grok is organising the business details…</div>}
+          {thinking && <div className="rounded-2xl bg-neutral-100 px-4 py-3 text-sm text-neutral-500">Your setup assistant is organising the business details…</div>}
         </div>
         <div className="border-t border-neutral-100 p-4">
           <div className="mb-3 flex flex-wrap gap-2">{prompts.map((p) => <button key={p} onClick={() => send(p)} disabled={thinking} className="rounded-full border border-neutral-200 px-3 py-1.5 text-xs text-neutral-600 hover:border-orange-300 hover:text-orange-700 disabled:opacity-40">{p}</button>)}</div>
