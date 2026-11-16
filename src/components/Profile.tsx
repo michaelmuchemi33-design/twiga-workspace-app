@@ -486,18 +486,26 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       {!retell.keyConfigured ? <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={retellKey} onChange={(e) => setRetellKey(e.target.value)} placeholder="Retell API key for this business" className="h-11 min-w-0 flex-1 rounded-xl border px-3 text-sm" /><button onClick={saveRetellKey} disabled={busy || retellKey.length < 20 || !businessId} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Connect Retell</button></div> : <>
         <div className="mt-4 max-w-sm"><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">AI language model</label><select value={model} onChange={(e) => setModel(e.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm"><option value="gpt-4.1-mini">GPT-4.1 mini</option></select></div>
         <div className="mt-4 rounded-xl border border-neutral-200 p-4">
-          <p className="text-sm font-semibold text-neutral-950">Choose a receptionist voice</p>
-          <p className="mt-1 text-xs text-neutral-500">Ten real Retell catalogue voices: five female and five male, all labelled British English. Preview each one before publishing.</p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            {voiceNotes.map((v) => <div key={v[2]} className={selectedVoice === v[2] ? "rounded-xl border-2 border-orange-500 bg-orange-50 p-3" : "rounded-xl border border-neutral-200 bg-white p-3"}>
-              <button type="button" onClick={() => setSelectedVoice(v[2])} className="flex w-full items-center justify-between gap-3 text-left">
-                <span><span className="block text-sm font-semibold text-neutral-900">{v[0]}</span><span className="mt-1 block text-xs text-neutral-500">{v[1]}</span><span className="mt-1 block font-mono text-[10px] text-neutral-400">{v[2]}</span></span>
-                <span className={selectedVoice === v[2] ? "rounded-full bg-orange-500 px-2.5 py-1 text-[10px] font-semibold text-white" : "rounded-full border border-neutral-200 px-2.5 py-1 text-[10px] font-semibold text-neutral-500"}>{selectedVoice === v[2] ? "Selected" : "Choose"}</span>
-              </button>
-              <audio controls preload="none" src={v[3]} className="mt-3 h-9 w-full" />
-            </div>)}
-          </div>
-          <p className="mt-3 text-[11px] leading-5 text-neutral-500">African-accent voices are not currently listed in this Retell workspace built-in catalogue. These options are not labelled African; additional African-English voices would need to be added by the provider first.</p>
+          <p className="text-sm font-semibold text-neutral-950">Retell voice library</p>
+          <p className="mt-1 text-xs leading-5 text-neutral-500">Loaded directly from the connected Retell account. Up to five female and five male voices with British, African, Kenyan or South African accent labels are shown when available.</p>
+          {voiceOptions.length === 0 ? <p className="mt-3 rounded-lg bg-neutral-50 p-3 text-sm text-neutral-600">No voices were returned. Connect a valid Retell key and refresh this page.</p> : <div className="mt-3 space-y-4">
+            {(["female", "male"] as const).map((gender) => {
+              const matching = voiceOptions.filter((voice: any) => voice.gender === gender && /british|african|kenyan|south african/i.test(String(voice.accent || ""))).slice(0, 5);
+              return <div key={gender}>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">{gender === "female" ? "Female voices" : "Male voices"} · {matching.length} available</p>
+                {matching.length === 0 ? <p className="rounded-lg bg-neutral-50 p-3 text-xs text-neutral-500">No matching {gender} British/African accent voice is currently available in this Retell account.</p> : <div className="grid gap-2 sm:grid-cols-2">
+                  {matching.map((voice: any) => <div key={voice.voiceId} className={selectedVoice === voice.voiceId ? "rounded-xl border-2 border-orange-500 bg-orange-50 p-3" : "rounded-xl border border-neutral-200 bg-white p-3"}>
+                    <button type="button" onClick={() => setSelectedVoice(voice.voiceId)} className="flex w-full items-center justify-between gap-2 text-left">
+                      <span><span className="block text-sm font-semibold text-neutral-900">{voice.name}</span><span className="mt-1 block text-xs text-neutral-500">{[voice.gender, voice.accent, voice.provider].filter(Boolean).join(" · ")}</span></span>
+                      <span className={selectedVoice === voice.voiceId ? "rounded-full bg-orange-500 px-2.5 py-1 text-[10px] font-semibold text-white" : "rounded-full border border-neutral-200 px-2.5 py-1 text-[10px] font-semibold text-neutral-500"}>{selectedVoice === voice.voiceId ? "Selected" : "Choose"}</span>
+                    </button>
+                    {voice.previewUrl && <audio controls preload="none" src={voice.previewUrl} className="mt-2 h-9 w-full" /> }
+                  </div>)}
+                </div>}
+              </div>;
+            })}
+          </div>}
+          <p className="mt-3 text-[11px] leading-5 text-neutral-500">TWIGA applies calm, slightly slower speech settings where the selected voice provider supports them. Names and accent labels come from the Retell catalogue.</p>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Inbound instructions</label><textarea rows={3} value={inboundPrompt} onChange={(e) => setInboundPrompt(e.target.value)} className="w-full rounded-xl border p-3 text-sm" /></div><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Outbound instructions</label><textarea rows={3} value={outboundPrompt} onChange={(e) => setOutboundPrompt(e.target.value)} className="w-full rounded-xl border p-3 text-sm" /></div></div>
         <div className="mt-4 rounded-xl border border-neutral-200 p-4">
