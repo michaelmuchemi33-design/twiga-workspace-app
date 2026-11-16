@@ -72,11 +72,12 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
     completeTask,
     settings,
     businessId,
+    demoMode,
   } = useStore();
   const [ownerName, setOwnerName] = useState("");
 
   useEffect(() => {
-    if (false || !supabase || !businessId) return;
+    if (demoMode || !supabase || !businessId) return;
     let active = true;
     void Promise.all([
       supabase.auth.getUser(),
@@ -88,7 +89,7 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
       setOwnerName(savedName || accountName);
     });
     return () => { active = false; };
-  }, [false, businessId]);
+  }, [demoMode, businessId]);
 
   const revenue = sales.reduce((s, x) => s + x.total, 0);
   const dueFollowUps = customers.filter((c) => c.followUpIn === 0).length;
@@ -212,7 +213,7 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="live-scroll max-h-64 space-y-3 overflow-y-auto pr-2">
-              {recentCalls.length === 0 && <p className="rounded-xl border border-dashed border-neutral-700 py-8 text-center text-sm text-neutral-500">No Retell calls yet. Publish a receptionist and complete a test call to see real activity here.</p>}
+              {recentCalls.length === 0 && <p className="rounded-xl border border-dashed border-neutral-700 py-8 text-center text-sm text-neutral-500">{demoMode ? "This demo does not generate fake call history. Connect and test a real line in your live workspace to see calls here." : "No Retell calls yet. Publish a receptionist and complete a test call to see real activity here."}</p>}
               {recentCalls.map((call) => {
                 const number = call.direction === "outbound" ? (call.to_number || call.from_number) : (call.from_number || call.to_number);
                 const callState = String(call.status || "unknown").toLowerCase();
