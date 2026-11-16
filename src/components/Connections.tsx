@@ -16,7 +16,7 @@ function loadGoogleIdentity() {
     script.onload = () => resolve(); script.onerror = () => reject(new Error("Google sign-in could not load.")); document.head.appendChild(script);
   });
 }
-export default function Connections({ businessId, demo = false }: { businessId: string; demo?: boolean }) {
+export default function Connections({ businessId, demo = false, googleAuth }: { businessId: string; demo?: boolean; googleAuth?: { tokens?: { accessToken: string; refreshToken?: string } | null } }) {
   const [status, setStatus] = useState<any>({ connected: false });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -36,6 +36,13 @@ export default function Connections({ businessId, demo = false }: { businessId: 
     if (!businessId || !supabase) { setMessage("Create or select a business first."); return; }
     setBusy(true); setMessage("");
     try {
+      if (googleAuth?.tokens?.accessToken) {
+        const saved = await action("connect", { accessToken: googleAuth.tokens.accessToken, refreshToken: googleAuth.tokens.refreshToken });
+        if (!saved.connected) throw new Error(saved.message || "Google did not grant all required permissions. Sign out and sign in with Google again to review the permissions.");
+        setMessage("Google connected as " + (saved.googleEmail || "your account") + ".");
+        await refresh();
+        return;
+      }
       const cfg = await action("oauth.config");
       if (!cfg.clientId) throw new Error("Google OAuth client ID is missing from TWIGA server settings.");
       await loadGoogleIdentity();
