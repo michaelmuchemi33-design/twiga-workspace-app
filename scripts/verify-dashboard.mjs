@@ -1,6 +1,4 @@
 import fs from "node:fs";
-import assert from "node:assert/strict";
-
 const read = (file) => fs.readFileSync(file, "utf8");
 const store = read("src/lib/store.tsx");
 const dashboard = read("src/components/Dashboard.tsx");
@@ -21,7 +19,7 @@ const checks = [
   ["dashboard avoids live profile fetch in demo", dashboard.includes("if (demoMode || !supabase || !businessId) return;") && !dashboard.includes("if (false ||")],
   ["demo call-history disclosure", dashboard.includes("This demo does not generate fake call history.")],
   ["phone line assignment flow", phone.includes("save_phone_line") && phone.includes("connectionMethod")],
-  ["live Retell voice catalogue and previews", profile.includes("list_voices") && profile.includes("preview_audio_url")],
+  ["live Retell voice catalogue and previews", profile.includes("list_voices") && profile.includes("previewUrl")],
   ["Google origin mismatch guidance", connections.includes("origin_mismatch")],
   ["business_id architecture documented", readme.includes("twiga_business_workspace_data") && readme.includes("business_id")],
   ["trial and Starter price documented", readme.includes("seven days") && readme.includes("KSh 1,500 monthly")],
