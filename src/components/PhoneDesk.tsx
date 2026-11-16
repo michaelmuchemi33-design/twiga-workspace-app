@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { RetellWebClient } from "retell-client-js-sdk";
 import { supabase } from "@/lib/supabase";
 
-export default function PhoneDesk({ businessId, demo = false }: { businessId: string; demo?: boolean }) {
+export default function PhoneDesk({ businessId, demo = false, onOpenProfile }: { businessId: string; demo?: boolean; onOpenProfile?: () => void }) {
   const [config, setConfig] = useState<any>({});
   const [greeting, setGreeting] = useState("Hello, thank you for calling {{business_name}}. How can I help you today?");
   const [inboundPrompt, setInboundPrompt] = useState("Greet callers warmly, identify their reason for calling, answer from verified business information, and capture appointment or order requests for staff confirmation. Never invent prices, availability or completed bookings.");
@@ -50,7 +50,8 @@ export default function PhoneDesk({ businessId, demo = false }: { businessId: st
     }
     setBusy(true); setMessage("");
     try {
-      await action("save_settings", { provider: "retell", greeting, inboundPrompt, outboundPrompt, voiceId: config.config?.retell_voice_id || "retell-Willa", model: config.config?.retell_model || "gpt-4.1-mini", recordingEnabled: config.recordingEnabled === true, recordingNotice: config.recordingNotice || "This call may be recorded to help you." });
+      const voiceId = config.config?.retell_voice_id || "retell-Willa";
+      await action("save_settings", { provider: "retell", greeting, inboundPrompt, outboundPrompt, voiceId, voiceModel: config.config?.retell_voice_model || (voiceId.startsWith("cartesia-") ? "sonic-3" : "eleven_turbo_v2_5"), model: config.config?.retell_model || "gpt-4.1-mini", recordingEnabled: config.recordingEnabled === true, recordingNotice: config.recordingNotice || "This call may be recorded for service quality." });
       const published = await action("provision_agent");
       setMessage(published.message || "Your receptionist greeting and instructions have been published.");
       await load();
@@ -125,13 +126,13 @@ export default function PhoneDesk({ businessId, demo = false }: { businessId: st
       <label className="mt-4 block text-sm font-medium text-neutral-800">Incoming calls<textarea value={inboundPrompt} onChange={(e) => setInboundPrompt(e.target.value)} rows={6} className="mt-2 w-full rounded-xl border border-neutral-200 p-3 text-sm leading-6 outline-none focus:border-orange-500" /></label>
       <label className="mt-4 block text-sm font-medium text-neutral-800">Outgoing calls and follow-ups<textarea value={outboundPrompt} onChange={(e) => setOutboundPrompt(e.target.value)} rows={4} className="mt-2 w-full rounded-xl border border-neutral-200 p-3 text-sm leading-6 outline-none focus:border-orange-500" /></label>
       <div className="mt-4 flex flex-wrap gap-2"><button onClick={saveAndPublish} disabled={busy || !businessId || !config.keyConfigured} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Saving…" : "Save & publish receptionist"}</button><button onClick={load} disabled={busy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-3 text-sm font-semibold text-neutral-700">Reload settings</button></div>
-      {!config.keyConfigured && <p className="mt-3 text-xs text-amber-800">Add the Retell API key in Profile → AI Front Desk before publishing.</p>}
+      {!config.keyConfigured && <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><span>Add the Retell API key in Profile → AI Front Desk before publishing or calling.</span><button onClick={onOpenProfile} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold">Open Retell settings</button></div>}
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <h2 className="text-lg font-semibold text-neutral-950">Test the voice</h2>
       <p className="mt-1 text-sm text-neutral-500">Start a browser conversation using your microphone. The test automatically ends after 10 seconds.</p>
-      <div className="mt-4 flex flex-wrap items-center gap-3"><button onClick={startBrowserTest} disabled={busy || !businessId || !config.config?.retell_agent_id} className="rounded-xl bg-orange-600 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{clientRef.current ? "End test" : "Start 10-second voice test"}</button><span className="text-sm text-neutral-600">Status: {status}</span></div>
+      <div className="mt-4 flex flex-wrap items-center gap-3"><button onClick={startBrowserTest} disabled={busy || !businessId || !config.keyConfigured || !config.config?.retell_agent_id} className="rounded-xl bg-orange-600 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{clientRef.current ? "End test" : "Start 10-second voice test"}</button><span className="text-sm text-neutral-600">Status: {status}</span></div>
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
