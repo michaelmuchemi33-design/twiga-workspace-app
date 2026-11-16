@@ -57,8 +57,6 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [recordingEnabled, setRecordingEnabled] = useState(false);
   const [recordingNotice, setRecordingNotice] = useState("This call may be recorded to help us serve you.");
   const [retellKey, setRetellKey] = useState("");
-  const [agents, setAgents] = useState<any[]>([]);
-  const [agentId, setAgentId] = useState("");
   const [model, setModel] = useState("gpt-4.1-mini");
   const [callStatus, setCallStatus] = useState("Not started");
   const [palKey, setPalKey] = useState("");
