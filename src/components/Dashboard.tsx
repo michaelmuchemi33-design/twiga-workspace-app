@@ -207,43 +207,30 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
               </CardDescription>
             </div>
             <Badge className="border-orange-500/30 bg-orange-500/20 text-orange-400">
-              {false ? liveCalls.length : ongoingCalls.length} active
+              {ongoingCalls.length} active
             </Badge>
           </CardHeader>
           <CardContent className="space-y-3">
-            {false ? (
-              <>
-                {liveCalls.length === 0 && <p className="rounded-xl border border-dashed border-neutral-700 py-8 text-center text-sm text-neutral-500">No calls in progress — the line is open</p>}
-                <div className="live-scroll max-h-64 space-y-3 overflow-y-auto pr-2">
-                  {liveCalls.map((call, i) => (
-                    <div key={call.id} style={{ animationDelay: `${i * 70}ms` }} className="live-row flex flex-col gap-3 rounded-xl bg-white/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500 text-white"><IconPhone className="h-4 w-4" /></span><div><p className="text-sm font-semibold">{call.caller}</p><p className="text-xs text-neutral-400">{call.phone} · {call.intent}</p></div></div>
-                      <div className="flex items-center gap-4"><span className="font-mono text-sm text-orange-400">{call.duration}</span><Badge className={cn("border", call.sentiment === "positive" ? "border-emerald-500/30 bg-emerald-500/20 text-emerald-400" : call.sentiment === "negative" ? "border-red-500/30 bg-red-500/20 text-red-400" : "border-neutral-600 bg-white/10 text-neutral-300")}>{call.sentiment}</Badge></div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <div className="live-scroll max-h-64 space-y-3 overflow-y-auto pr-2">
-                {recentCalls.length === 0 && <p className="rounded-xl border border-dashed border-neutral-700 py-8 text-center text-sm text-neutral-500">No Retell calls yet. Publish a receptionist in Profile → AI Front Desk, then test it.</p>}
-                {recentCalls.map((call) => {
-                  const number = call.direction === "outbound" ? (call.to_number || call.from_number) : (call.from_number || call.to_number);
-                  const status = String(call.status || "unknown").toLowerCase();
-                  const label = String(call.structured_data?.customer_name || "Caller");
-                  const intent = String(call.structured_data?.enquiry_type || call.structured_data?.intent || call.channel || "Call");
-                  return <div key={call.id} className="rounded-xl bg-white/5 p-4">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="min-w-0"><p className="text-sm font-semibold">{label}</p><p className="text-xs text-neutral-400">{number || "Number unavailable"} · {intent} · {new Date(call.started_at || call.created_at).toLocaleString()}</p></div>
-                      <div className="flex items-center gap-3"><span className="font-mono text-sm text-orange-400">{formatDuration(Number(call.duration_seconds || 0))}</span><Badge className={cn("border", status === "completed" ? "border-emerald-500/30 bg-emerald-500/20 text-emerald-400" : status === "in_progress" ? "border-orange-500/30 bg-orange-500/20 text-orange-300" : "border-neutral-600 bg-white/10 text-neutral-300")}>{status.replaceAll("_", " ")}</Badge></div>
-                    </div>
-                    {call.summary && <p className="mt-2 text-xs leading-5 text-neutral-300">{call.summary}</p>}
-                  </div>;
-                })}
-              </div>
-            )}
-
+            <div className="live-scroll max-h-64 space-y-3 overflow-y-auto pr-2">
+              {recentCalls.length === 0 && <p className="rounded-xl border border-dashed border-neutral-700 py-8 text-center text-sm text-neutral-500">No Retell calls yet. Publish a receptionist and complete a test call to see real activity here.</p>}
+              {recentCalls.map((call) => {
+                const number = call.direction === "outbound" ? (call.to_number || call.from_number) : (call.from_number || call.to_number);
+                const callState = String(call.status || "unknown").toLowerCase();
+                const label = String(call.structured_data?.customer_name || "Caller");
+                const intent = String(call.structured_data?.enquiry_type || call.structured_data?.intent || call.channel || "Call");
+                return <div key={call.id} className="rounded-xl bg-white/5 p-4">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0"><p className="text-sm font-semibold">{label}</p><p className="text-xs text-neutral-400">{number || "Number unavailable"} · {intent} · {new Date(call.started_at || call.created_at).toLocaleString()}</p></div>
+                    <div className="flex items-center gap-3"><span className="font-mono text-sm text-orange-400">{formatDuration(Number(call.duration_seconds || 0))}</span><Badge className={cn("border", callState === "completed" ? "border-emerald-500/30 bg-emerald-500/20 text-emerald-400" : callState === "in_progress" ? "border-orange-500/30 bg-orange-500/20 text-orange-300" : "border-neutral-600 bg-white/10 text-neutral-300")}>{callState.replaceAll("_", " ")}</Badge></div>
+                  </div>
+                  {call.summary && <p className="mt-2 text-xs leading-5 text-neutral-300">{call.summary}</p>}
+                </div>;
+              })}
+            </div>
             <div className="grid grid-cols-3 gap-3 border-t border-white/10 pt-4">
-              {false ? <><MiniStat label="Avg. call" value="1m 12s" /><MiniStat label="Answered" value="98%" /><MiniStat label="Transferred" value="2" /></> : <><MiniStat label="Call records" value={String(callRecords.length)} /><MiniStat label="Completed" value={String(callRecords.filter((call) => String(call.status).toLowerCase() === "completed").length)} /><MiniStat label="Avg. call" value={formatDuration(averageDuration)} /></>}
+              <MiniStat label="Call records" value={String(callRecords.length)} />
+              <MiniStat label="Completed" value={String(callRecords.filter((call) => String(call.status).toLowerCase() === "completed").length)} />
+              <MiniStat label="Avg. call" value={formatDuration(averageDuration)} />
             </div>
           </CardContent>
         </Card>
