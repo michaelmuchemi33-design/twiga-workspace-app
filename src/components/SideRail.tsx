@@ -27,6 +27,7 @@ const groups: { title: string; items: TabDef[] }[] = [
     title: "Front Desk",
     items: [
       { id: "dashboard", label: "Home", icon: IconHome },
+      { id: "setup", label: "Set up with AI", icon: IconSparkle },
       { id: "phone", label: "Phone & AI", icon: IconChat },
       { id: "connections", label: "Connections", icon: IconUsers },
       { id: "organizer", label: "Organize", icon: IconSwap },
