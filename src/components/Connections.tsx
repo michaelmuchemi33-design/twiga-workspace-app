@@ -21,6 +21,7 @@ export default function Connections({ businessId, demo = false }: { businessId: 
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [tests, setTests] = useState<Record<string,string>>({});
+  const [oauthConfig, setOauthConfig] = useState<any>({ serverConfigured: false });
   const action = useCallback(async (name: string, extra: Record<string,unknown> = {}) => {
     if (!supabase || !businessId) throw new Error("Choose a business workspace first.");
     const { data, error } = await supabase.functions.invoke("google-workspace", { body: { action: name, businessId, ...extra } });
@@ -28,7 +29,7 @@ export default function Connections({ businessId, demo = false }: { businessId: 
   }, [businessId]);
   const refresh = useCallback(async () => {
     if (!businessId || !supabase) return;
-    try { setStatus(await action("status")); } catch (e) { setMessage(e instanceof Error ? e.message : "Google status unavailable."); }
+    try { const [connection, oauth] = await Promise.all([action("status"), action("oauth.config")]); setStatus(connection); setOauthConfig(oauth); } catch (e) { setMessage(e instanceof Error ? e.message : "Google status unavailable."); }
   }, [action, businessId]);
   useEffect(() => { void refresh(); }, [refresh]);
   const connect = async () => {
@@ -65,6 +66,7 @@ export default function Connections({ businessId, demo = false }: { businessId: 
     <header className="rounded-2xl border border-neutral-200 bg-white p-6">
       <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Workspace integrations</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Connections & permissions</h1>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Connect the business owner's Google account. Each business has its own encrypted Google connection. Permissions are approved in Google's own consent screen.</p>
+      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{!oauthConfig.serverConfigured ? "Google Workspace OAuth is not fully configured on the TWIGA server yet. Add the Google OAuth web client ID and client secret, plus the token encryption key, in Profile → Platform administrator → Google Workspace OAuth." : "Google Workspace OAuth server configuration is ready. Each business owner still needs to approve the four permissions below."}</div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-800">{status.connected ? "Google connected" : "Google not connected"}</span>
         {status.googleEmail && <span className="text-sm text-neutral-600">{status.googleEmail}</span>}
