@@ -157,6 +157,8 @@ export interface Settings {
 
 interface StoreValue {
   demoMode: boolean;
+  saveStatus: "idle" | "pending" | "saving" | "saved" | "error" | "demo";
+  workspaceError: string | null;
   businessId?: string;
   tasks: Task[];
   products: Product[];
@@ -211,6 +213,43 @@ const emptySettings: Settings = {
   },
 };
 
+const demoSeed: {
+  tasks: Task[]; products: Product[]; sales: Sale[]; payments: Payment[];
+  messages: Message[]; customers: Customer[]; settings: Settings;
+  catalogSource: string; sellMode: SellMode;
+} = {
+  tasks: [
+    { id: "demo-task-1", label: "Confirm a haircut booking", detail: "Sample appointment request", status: "pending", time: "10:30" },
+    { id: "demo-task-2", label: "Reply to a WhatsApp enquiry", detail: "Customer asked about opening hours", status: "done", time: "09:45" },
+    { id: "demo-task-3", label: "Follow up with a returning customer", detail: "Send a service reminder", status: "pending", time: "14:00" },
+  ],
+  products: [
+    { id: "demo-product-haircut", name: "Haircut", price: 500, category: "Hair", stock: 12, source: "manual", kind: "service", duration: "30 min" },
+    { id: "demo-product-beard", name: "Beard trim", price: 300, category: "Grooming", stock: 8, source: "manual", kind: "service", duration: "20 min" },
+    { id: "demo-product-wash", name: "Hair wash", price: 250, category: "Hair", stock: 10, source: "manual", kind: "service", duration: "15 min" },
+    { id: "demo-product-oil", name: "Hair oil", price: 450, category: "Retail", stock: 20, source: "manual", kind: "seller" },
+  ],
+  sales: [
+    { id: "demo-sale-1", lines: [{ productId: "demo-product-haircut", name: "Haircut", price: 500, qty: 1 }], total: 500, customer: "Sample customer", time: "Today" },
+  ],
+  payments: [],
+  messages: [
+    { id: "demo-message-1", to: "Sample customer", phone: "Demo only", body: "Your appointment request has been received. Our team will confirm shortly.", status: "queued", time: "Today" },
+  ],
+  customers: [
+    { id: "demo-customer-1", name: "Sample customer", phone: "Demo only", stage: "Active", spend: 1250, lastVisit: "Today", followUpIn: 2 },
+    { id: "demo-customer-2", name: "New enquiry", phone: "Demo only", stage: "New", spend: 0, lastVisit: "—", followUpIn: 0 },
+    { id: "demo-customer-3", name: "Returning customer", phone: "Demo only", stage: "VIP", spend: 3200, lastVisit: "Yesterday", followUpIn: 7 },
+  ],
+  settings: {
+    ...emptySettings,
+    business: { ...emptySettings.business, name: "Sample Salon", address: "Nairobi, Kenya", openTime: "09:00", closeTime: "18:00" },
+    persona: { ...emptySettings.persona, greeting: "Hello, thank you for calling Sample Salon. How can I help you today?" },
+  },
+  catalogSource: "Sample catalogue",
+  sellMode: "service",
+};
+
 export function StoreProvider({
   children,
   demo = false,
@@ -222,23 +261,27 @@ export function StoreProvider({
   userId?: string;
   businessId?: string;
 }) {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [sales, setSales] = useState<Sale[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [tasks, setTasks] = useState<Task[]>(demo ? demoSeed.tasks : []);
+  const [products, setProducts] = useState<Product[]>(demo ? demoSeed.products : []);
+  const [sales, setSales] = useState<Sale[]>(demo ? demoSeed.sales : []);
+  const [payments, setPayments] = useState<Payment[]>(demo ? demoSeed.payments : []);
+  const [messages, setMessages] = useState<Message[]>(demo ? demoSeed.messages : []);
+  const [customers, setCustomers] = useState<Customer[]>(demo ? demoSeed.customers : []);
   const [callRecords, setCallRecords] = useState<CallRecord[]>([]);
-  const [settings, setSettings] = useState<Settings>(emptySettings);
-  const [catalogSource, setCatalogSource] = useState("Not configured");
-  const [sellMode, setSellMode] = useState<SellMode>("seller");
+  const [settings, setSettings] = useState<Settings>(demo ? demoSeed.settings : emptySettings);
+  const [catalogSource, setCatalogSource] = useState(demo ? demoSeed.catalogSource : "Not configured");
+  const [sellMode, setSellMode] = useState<SellMode>(demo ? demoSeed.sellMode : "seller");
   const [palplusKey, setPalplusKey] = useState("");
+  const [saveStatus, setSaveStatus] = useState<StoreValue["saveStatus"]>(demo ? "demo" : "idle");
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [workspaceReady, setWorkspaceReady] = useState(demo || !businessId || !supabase);
   const hydrated = useRef(demo || !businessId || !supabase);
 
   useEffect(() => {
     if (demo) {
       hydrated.current = true;
+      setWorkspaceError(null);
+      setSaveStatus("demo");
       setWorkspaceReady(true);
       return;
     }
@@ -254,6 +297,8 @@ export function StoreProvider({
       setSettings(emptySettings);
       setCatalogSource("Not configured");
       setSellMode("seller");
+      setWorkspaceError(null);
+      setSaveStatus("idle");
       setWorkspaceReady(true);
       return;
     }
@@ -268,6 +313,8 @@ export function StoreProvider({
       setCallRecords((current) => [next, ...current.filter((call) => call.id !== next.id)].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).slice(0, 30));
     }).subscribe();
     hydrated.current = false;
+    setWorkspaceError(null);
+    setSaveStatus("idle");
     setWorkspaceReady(false);
     setTasks([]);
     setProducts([]);
@@ -288,6 +335,8 @@ export function StoreProvider({
       if (cancelled) return;
       if (error) {
         console.error("Unable to load this business workspace", error.message);
+        setWorkspaceError("This workspace could not be loaded. Your edits are not being saved. Refresh to try again.");
+        setSaveStatus("error");
         setWorkspaceReady(true);
         return;
       }
@@ -313,6 +362,8 @@ export function StoreProvider({
         return Array.from(merged.values()).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).slice(0, 30);
       });
       hydrated.current = true;
+      setWorkspaceError(null);
+      setSaveStatus("idle");
       setWorkspaceReady(true);
     };
     void load();
@@ -321,19 +372,36 @@ export function StoreProvider({
 
   useEffect(() => {
     if (demo || !userId || !businessId || !supabase || !hydrated.current) return;
+    setSaveStatus("pending");
     const timeout = window.setTimeout(async () => {
+      setSaveStatus("saving");
       const workspace_data = { tasks, products, sales, payments, messages, customers, settings, catalogSource, sellMode };
       const { error } = await supabase
         .from("twiga_business_workspace_data")
         .upsert({ business_id: businessId, updated_by: userId, workspace_data }, { onConflict: "business_id" });
-      if (error) console.error("Unable to save business workspace", error.message);
+      if (error) {
+        console.error("Unable to save business workspace", error.message);
+        setWorkspaceError("Your changes could not be saved. Check your connection and try again.");
+        setSaveStatus("error");
+      } else {
+        setWorkspaceError(null);
+        setSaveStatus("saved");
+      }
     }, 900);
     return () => window.clearTimeout(timeout);
   }, [demo, userId, businessId, tasks, products, sales, payments, messages, customers, settings, catalogSource, sellMode]);
 
+  useEffect(() => {
+    if (saveStatus !== "saved") return;
+    const timeout = window.setTimeout(() => setSaveStatus("idle"), 2200);
+    return () => window.clearTimeout(timeout);
+  }, [saveStatus]);
+
   const value = useMemo<StoreValue>(
     () => ({
-      demoMode: false,
+      demoMode: demo,
+      saveStatus,
+      workspaceError,
       businessId,
       tasks,
       products,
@@ -366,13 +434,27 @@ export function StoreProvider({
         setCatalogSource(source);
       },
     }),
-    [demo, businessId, tasks, products, sales, payments, messages, customers, callRecords, settings, catalogSource, sellMode, palplusKey]
+    [demo, businessId, tasks, products, sales, payments, messages, customers, callRecords, settings, catalogSource, sellMode, palplusKey, saveStatus, workspaceError]
   );
 
   if (!workspaceReady && !demo) {
     return <div className="grid min-h-[70vh] place-items-center"><div className="rounded-2xl border bg-white px-6 py-5 text-sm text-neutral-500 shadow-sm">Opening your secure workspace…</div></div>;
   }
-  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+  return (
+    <StoreContext.Provider value={value}>
+      {!demo && saveStatus !== "idle" && saveStatus !== "demo" && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`fixed right-4 top-4 z-[120] flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold shadow-lg backdrop-blur ${saveStatus === "error" ? "border-red-200 bg-red-50 text-red-700" : saveStatus === "saved" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-neutral-200 bg-white/95 text-neutral-700"}`}
+        >
+          <span className={`h-2 w-2 shrink-0 rounded-full ${saveStatus === "error" ? "bg-red-500" : saveStatus === "saved" ? "bg-emerald-500" : "bg-orange-500"}`} />
+          <span>{saveStatus === "pending" || saveStatus === "saving" ? "Saving changes…" : saveStatus === "saved" ? "Saved" : workspaceError || "Workspace save failed."}</span>
+        </div>
+      )}
+      {children}
+    </StoreContext.Provider>
+  );
 }
 
 export function useStore() {
