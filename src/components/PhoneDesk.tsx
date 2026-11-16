@@ -50,7 +50,7 @@ export default function PhoneDesk({ businessId, demo = false }: { businessId: st
     }
     setBusy(true); setMessage("");
     try {
-      await action("save_settings", { provider: "retell", greeting, inboundPrompt, outboundPrompt, recordingEnabled: false, recordingNotice: "This call may be recorded to help you." });
+      await action("save_settings", { provider: "retell", greeting, inboundPrompt, outboundPrompt, voiceId: config.config?.retell_voice_id || "retell-Willa", model: config.config?.retell_model || "gpt-4.1-mini", recordingEnabled: config.recordingEnabled === true, recordingNotice: config.recordingNotice || "This call may be recorded to help you." });
       const published = await action("provision_agent");
       setMessage(published.message || "Your receptionist greeting and instructions have been published.");
       await load();
