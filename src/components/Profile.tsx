@@ -487,10 +487,13 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
         <div className="mt-4 max-w-sm"><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">AI language model</label><select value={model} onChange={(e) => setModel(e.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm"><option value="gpt-4.1-mini">GPT-4.1 mini</option></select></div>
         <div className="mt-4 rounded-xl border border-neutral-200 p-4">
           <p className="text-sm font-semibold text-neutral-950">Retell voice library</p>
-          <p className="mt-1 text-xs leading-5 text-neutral-500">Loaded directly from the connected Retell account. Up to five female and five male voices with British, African, Kenyan or South African accent labels are shown when available.</p>
+          <p className="mt-1 text-xs leading-5 text-neutral-500">Loaded directly from the connected Retell account. Each group shows up to three British and two African/Kenyan/South African voices, using the accent metadata from Retell.</p>
           {voiceOptions.length === 0 ? <p className="mt-3 rounded-lg bg-neutral-50 p-3 text-sm text-neutral-600">No voices were returned. Connect a valid Retell key and refresh this page.</p> : <div className="mt-3 space-y-4">
             {(["female", "male"] as const).map((gender) => {
-              const matching = voiceOptions.filter((voice: any) => voice.gender === gender && /british|african|kenyan|south african/i.test(String(voice.accent || ""))).slice(0, 5);
+              const eligible = voiceOptions.filter((voice: any) => voice.gender === gender);
+              const british = eligible.filter((voice: any) => /british/i.test(String(voice.accent || "")) && !/african/i.test(String(voice.accent || ""))).slice(0, 3);
+              const african = eligible.filter((voice: any) => /african|kenyan|nigerian|south african|east african|west african/i.test(String(voice.accent || ""))).filter((voice: any) => !british.some((item: any) => item.voiceId === voice.voiceId)).slice(0, 2);
+              const matching = [...british, ...african];
               return <div key={gender}>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">{gender === "female" ? "Female voices" : "Male voices"} · {matching.length} available</p>
                 {matching.length === 0 ? <p className="rounded-lg bg-neutral-50 p-3 text-xs text-neutral-500">No matching {gender} British/African accent voice is currently available in this Retell account.</p> : <div className="grid gap-2 sm:grid-cols-2">
