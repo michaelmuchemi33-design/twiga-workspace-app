@@ -191,104 +191,6 @@ export const stamp = () =>
 
 const StoreContext = createContext<StoreValue | null>(null);
 
-const seedTasks: Task[] = [
-  { id: "t1", label: "Answered call from Grace M.", detail: "Booked haircut for Fri 3pm", status: "done", time: "09:12" },
-  { id: "t2", label: "Sent payment link to Brian K.", detail: "KSh 4,500 · awaiting payment", status: "pending", time: "09:24" },
-  { id: "t3", label: "WhatsApp delivery update", detail: "Order #1042 out for delivery", status: "done", time: "09:41" },
-  { id: "t4", label: "Captured new lead", detail: "Walk-in enquiry about pricing", status: "done", time: "10:03" },
-  { id: "t5", label: "Missed call from unknown", detail: "No voicemail left", status: "failed", time: "10:18" },
-  { id: "t6", label: "Rescheduled appointment", detail: "Moved to Sat 11am per request", status: "done", time: "10:35" },
-];
-
-const seedProducts: Product[] = [
-  { id: "p1", name: "Signature Cut", price: 1500, category: "Hair", stock: 99, source: "manual", kind: "service", description: "Precision cut with consultation, wash and blow-dry finish.", duration: "45 min" },
-  { id: "p2", name: "Beard Trim", price: 800, category: "Grooming", stock: 99, source: "manual", kind: "service", description: "Shape and line-up with hot towel and beard oil.", duration: "20 min" },
-  { id: "p3", name: "Deep Conditioning", price: 2200, category: "Treatment", stock: 40, source: "manual", kind: "service", description: "Intensive moisture treatment for dry or damaged hair.", duration: "60 min" },
-  { id: "p4", name: "Hair Oil 100ml", price: 1200, category: "Retail", stock: 24, source: "manual", kind: "seller", description: "Cold-pressed argan oil for daily shine and repair." },
-  { id: "p5", name: "Shampoo 250ml", price: 950, category: "Retail", stock: 18, source: "manual", kind: "seller", description: "Sulphate-free shampoo for coloured and treated hair." },
-  { id: "p6", name: "Full Colour", price: 4500, category: "Colour", stock: 99, source: "manual", kind: "service", description: "Full-head colour with gloss and aftercare advice.", duration: "2 hr" },
-];
-
-const seedPayments: Payment[] = [
-  { id: "pay1", customer: "Grace Mwangi", phone: "+254 733 987 654", amount: 4500, note: "Full colour", status: "paid", link: "https://pay.palplus.io/a1b2c3", time: "08:50" },
-  { id: "pay2", customer: "Brian Kimani", phone: "+254 722 111 222", amount: 2200, note: "Deep conditioning", status: "pending", link: "https://pay.palplus.io/d4e5f6", time: "09:24" },
-  { id: "pay3", customer: "Aisha Noor", phone: "+254 711 333 444", amount: 1500, note: "Signature cut", status: "pending", link: "https://pay.palplus.io/g7h8i9", time: "09:55" },
-  { id: "pay4", customer: "Tom Otieno", phone: "+254 700 555 666", amount: 800, note: "Beard trim", status: "expired", link: "https://pay.palplus.io/j1k2l3", time: "07:30" },
-];
-
-const seedMessages: Message[] = [
-  { id: "m1", to: "Grace M.", phone: "+254 733 987 654", body: "Hi Grace, your appointment is confirmed for Fri 3pm. See you!", status: "delivered", time: "09:13" },
-  { id: "m2", to: "Brian K.", phone: "+254 722 111 222", body: "Please pay KSh 2,200 here: https://pay.palplus.io/d4e5f6", status: "sent", time: "09:25" },
-  { id: "m3", to: "Order #1042", phone: "+254 711 333 444", body: "Your order is on the way 🚚 ETA 30 mins.", status: "delivered", time: "09:41" },
-];
-
-const seedCustomers: Customer[] = [
-  { id: "c1", name: "Grace Mwangi", phone: "+254 733 987 654", stage: "VIP", spend: 48000, lastVisit: "2 days ago", followUpIn: 0 },
-  { id: "c2", name: "Brian Kimani", phone: "+254 722 111 222", stage: "Active", spend: 18500, lastVisit: "1 week ago", followUpIn: 2 },
-  { id: "c3", name: "Aisha Noor", phone: "+254 711 333 444", stage: "New", spend: 1500, lastVisit: "today", followUpIn: 5 },
-  { id: "c4", name: "Tom Otieno", phone: "+254 700 555 666", stage: "At Risk", spend: 9200, lastVisit: "6 weeks ago", followUpIn: 0 },
-  { id: "c5", name: "Lucy Wanjiru", phone: "+254 745 888 999", stage: "Active", spend: 26400, lastVisit: "3 days ago", followUpIn: 1 },
-];
-
-const seedLiveCalls: LiveCall[] = [
-  { id: "lc1", caller: "Unknown caller", phone: "+254 7xx xxx 118", intent: "Booking enquiry", duration: "00:42", sentiment: "positive" },
-  { id: "lc2", caller: "Peter Njoroge", phone: "+254 720 445 118", intent: "Reschedule request", duration: "01:15", sentiment: "neutral" },
-  { id: "lc3", caller: "Aisha Noor", phone: "+254 711 333 444", intent: "Price check", duration: "00:28", sentiment: "positive" },
-  { id: "lc4", caller: "Tom Otieno", phone: "+254 700 555 666", intent: "Complaint", duration: "02:04", sentiment: "negative" },
-  { id: "lc5", caller: "Grace Mwangi", phone: "+254 733 987 654", intent: "Confirm booking", duration: "00:51", sentiment: "positive" },
-  { id: "lc6", caller: "Brian Kimani", phone: "+254 722 111 222", intent: "Payment question", duration: "01:32", sentiment: "neutral" },
-  { id: "lc7", caller: "Lucy Wanjiru", phone: "+254 745 888 999", intent: "New appointment", duration: "00:47", sentiment: "positive" },
-  { id: "lc8", caller: "Unknown caller", phone: "+254 7xx xxx 902", intent: "Wrong number", duration: "00:12", sentiment: "neutral" },
-];
-
-const defaultSettings: Settings = {
-  business: {
-    name: "Nairobi Style Studio",
-    currency: "KSh",
-    dateFormat: "DD/MM/YYYY",
-    timezone: "Africa/Nairobi",
-    openTime: "08:00",
-    closeTime: "18:00",
-    holidayOverride: true,
-    address: "12 Kimathi Street, Nairobi",
-    parking: "Free parking behind the building",
-    website: "nairobistyle.co.ke",
-    faqs: "Do you take walk-ins? Yes, subject to availability.\nDo you offer student discounts? 10% with valid ID.",
-  },
-  persona: {
-    voice: "Female — Aria",
-    accent: "Kenyan English",
-    speed: 1.0,
-    greeting: "Thank you for calling Nairobi Style Studio, how can I help you today?",
-    closing: "Thank you for calling, have a wonderful day!",
-    tone: "Friendly",
-    primaryLang: "English",
-    fallbackLang: "Swahili",
-  },
-  routing: {
-    forwardOnAngry: true,
-    forwardOnManager: true,
-    forwardOnComplex: false,
-    escalationNumber: "+254 700 000 000",
-    vipNumbers: "+254 733 987 654\n+254 722 111 222",
-    vipKeywords: "urgent, complaint, manager",
-    maxDuration: 20,
-    silenceTimeout: 8,
-  },
-  scheduling: {
-    calendar: "Google Calendar",
-    bufferMinutes: 15,
-    minNotice: 2,
-    cancellationPolicy: "Free cancellation up to 4 hours before.",
-    notifySms: true,
-    notifyEmail: true,
-    notifySlack: false,
-    notifyPush: true,
-    recording: true,
-    disclaimer: "This call may be recorded for quality purposes.",
-  },
-};
-
 const emptySettings: Settings = {
   business: {
     name: "", currency: "KSh", dateFormat: "DD/MM/YYYY", timezone: "Africa/Nairobi",
@@ -320,15 +222,15 @@ export function StoreProvider({
   userId?: string;
   businessId?: string;
 }) {
-  const [tasks, setTasks] = useState<Task[]>(demo ? seedTasks : []);
-  const [products, setProducts] = useState<Product[]>(demo ? seedProducts : []);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
-  const [payments, setPayments] = useState<Payment[]>(demo ? seedPayments : []);
-  const [messages, setMessages] = useState<Message[]>(demo ? seedMessages : []);
-  const [customers, setCustomers] = useState<Customer[]>(demo ? seedCustomers : []);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [callRecords, setCallRecords] = useState<CallRecord[]>([]);
-  const [settings, setSettings] = useState<Settings>(demo ? defaultSettings : emptySettings);
-  const [catalogSource, setCatalogSource] = useState(demo ? "Manual entry" : "Not configured");
+  const [settings, setSettings] = useState<Settings>(emptySettings);
+  const [catalogSource, setCatalogSource] = useState("Not configured");
   const [sellMode, setSellMode] = useState<SellMode>("seller");
   const [palplusKey, setPalplusKey] = useState("");
   const [workspaceReady, setWorkspaceReady] = useState(demo || !businessId || !supabase);
@@ -431,7 +333,7 @@ export function StoreProvider({
 
   const value = useMemo<StoreValue>(
     () => ({
-      demoMode: demo,
+      demoMode: false,
       businessId,
       tasks,
       products,
@@ -439,7 +341,7 @@ export function StoreProvider({
       payments,
       messages,
       customers,
-      liveCalls: demo ? seedLiveCalls : [],
+      liveCalls: [],
       callRecords,
       settings,
       catalogSource,
