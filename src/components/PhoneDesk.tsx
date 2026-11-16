@@ -144,7 +144,7 @@ export default function PhoneDesk({ businessId, demo = false, onOpenProfile }: {
         <label className="block text-sm font-medium text-neutral-700">Customer phone number<input value={toNumber} onChange={(e) => setToNumber(e.target.value)} placeholder="+2547XXXXXXXX" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
         <label className="block text-sm font-medium text-neutral-700 sm:col-span-2">Reason for calling<input value={callReason} onChange={(e) => setCallReason(e.target.value)} placeholder="Appointment follow-up, order update, requested callback…" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
       </div>
-      <p className="mt-2 text-xs leading-5 text-neutral-500">Both numbers must use international format. Retell validates that the caller ID belongs to your account. Your existing SIM is not automatically a Retell caller ID.</p>
+      <p className="mt-2 text-xs leading-5 text-neutral-500">Both numbers must use international format. Retell validates that the caller ID belongs to your account. A Retell-purchased US number may only dial US destinations; to call +254 numbers, the imported line or SIP carrier must support Kenya. Your ordinary SIM is not automatically a Retell caller ID.</p>
       <button onClick={placePhoneCall} disabled={busy || !businessId || !config.keyConfigured || !config.config?.retell_agent_id} className="mt-4 rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">Call customer</button>
     </section>
 
