@@ -78,12 +78,12 @@ export default function SideRail({
     >
       <div
         className={cn(
-          "rail-shell flex flex-col gap-1 rounded-3xl border border-orange-500/20 bg-neutral-950 p-2 shadow-2xl shadow-orange-950/40",
+          "rail-shell flex flex-col gap-1 rounded-3xl border border-neutral-800 bg-neutral-950 p-2 shadow-xl",
           expanded ? "w-56" : "w-16"
         )}
       >
         <div className="mb-1 flex items-center gap-2 px-1.5 py-2">
-          <span className="rail-logo flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-orange-500 text-white shadow-lg shadow-orange-500/40">
+          <span className="rail-logo flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-orange-500 text-white">
             <IconSparkle className="h-5 w-5" />
           </span>
           <span
@@ -96,7 +96,7 @@ export default function SideRail({
           </span>
         </div>
 
-        <div className="mx-1 h-px bg-gradient-to-r from-transparent via-orange-500/40 to-transparent" />
+        <div className="mx-1 h-px bg-neutral-800" />
 
         <div className="rail-scroll flex max-h-[62vh] flex-col gap-3 overflow-y-auto py-1">
           {groups.map((g) => (
@@ -118,10 +118,10 @@ export default function SideRail({
                     onClick={() => onSelect(item.id)}
                     style={{ animationDelay: `${i * 60}ms` }}
                     className={cn(
-                      "rail-item group relative flex items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition-all duration-200 active:scale-90",
+                      "rail-item group relative flex items-center gap-3 w-full rounded-xl px-2.5 py-2.5 text-left",
                       active
-                        ? "bg-orange-500 text-white shadow-lg shadow-orange-500/40"
-                        : "text-neutral-400 hover:bg-orange-500/10 hover:text-orange-400"
+                        ? "bg-orange-500 text-white"
+                        : "text-neutral-400 hover:bg-neutral-900 hover:text-white"
                     )}
                   >
                     <span
@@ -154,7 +154,7 @@ export default function SideRail({
         <button
           onClick={() => onSelect("logout")}
           className={cn(
-            "rail-item group relative flex items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition-all duration-200 active:scale-90",
+            "rail-item group relative flex items-center gap-3 w-full rounded-xl px-2.5 py-2.5 text-left",
             tab === "logout"
               ? "bg-orange-500 text-white shadow-lg shadow-orange-500/40"
               : "text-neutral-400 hover:bg-orange-500/10 hover:text-orange-400"
