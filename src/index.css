@@ -460,3 +460,13 @@
     box-shadow: 0 0 20px 2px rgb(249 115 22 / 0.4);
   }
 }
+
+/* TWIGA calm interface: no continuous motion, glow, or animated decoration. */
+*, *::before, *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+html:focus-within { scroll-behavior: auto !important; }
