@@ -4,16 +4,16 @@ import { supabase } from "@/lib/supabase";
 
 type Business = { id: string; name: string; business_type?: string; status?: string; role?: string };
 const voiceNotes = [
-  ["Willa · Cartesia", "Female · British · calm", "cartesia-Willa"],
-  ["Dorothy · ElevenLabs", "Female · British · lower-register audition", "11labs-Dorothy"],
-  ["Amy · OpenAI", "Female · British · clear", "openai-Amy"],
-  ["Maren · Minimax", "Female · British · warm, fuller-tone audition", "minimax-Maren"],
-  ["Eleanor · Inworld", "Female · British · measured", "inworld-Eleanor"],
-  ["Anthony · ElevenLabs", "Male · British · calm", "11labs-Anthony"],
-  ["Fable · OpenAI", "Male · British · clear", "openai-Fable"],
-  ["Duncan · Inworld", "Male · British · warm", "inworld-Duncan"],
-  ["Anthony · Cartesia", "Male · British · measured", "cartesia-Anthony"],
-  ["Anthony · OpenAI", "Male · British · clear", "openai-Anthony"],
+  ["Willa · Cartesia", "Female · British · calm, measured", "cartesia-Willa", "https://retell-utils-public.s3.us-west-2.amazonaws.com/voice-previews/cartesia-sonic-3.6-2026-09-08T00-43-06-121Z/cartesia-Willa.mp3"],
+  ["Dorothy · ElevenLabs", "Female · British · warm, composed", "11labs-Dorothy", "https://retell-utils-public.s3.us-west-2.amazonaws.com/Dorothy.mp3"],
+  ["Amy · ElevenLabs", "Female · British · clear, gentle", "11labs-Amy", "https://retell-utils-public.s3.us-west-2.amazonaws.com/Amy.mp3"],
+  ["Maren · Inworld", "Female · British · soft, steady", "inworld-Maren", "https://retell-utils-public.s3.us-west-2.amazonaws.com/inworld-Maren.mp3"],
+  ["Eleanor · Inworld", "Female · British · mature, calm", "inworld-Eleanor", "https://retell-utils-public.s3.us-west-2.amazonaws.com/inworld-Eleanor.mp3"],
+  ["Adam · Cartesia", "Male · British · calm, measured", "cartesia-Adam", "https://retell-utils-public.s3.us-west-2.amazonaws.com/voice-previews/cartesia-sonic-3.6-2026-09-08T00-43-06-121Z/cartesia-Adam.mp3"],
+  ["Anthony · ElevenLabs", "Male · British · warm, composed", "11labs-Anthony", "https://retell-utils-public.s3.us-west-2.amazonaws.com/anthony.mp3"],
+  ["Anthony · Cartesia", "Male · British · steady, clear", "cartesia-Anthony", "https://retell-utils-public.s3.us-west-2.amazonaws.com/voice-previews/cartesia-sonic-3.6-2026-09-08T00-43-06-121Z/cartesia-Anthony.mp3"],
+  ["Fable · OpenAI", "Male · British · gentle, articulate", "openai-Fable", "https://retell-utils-public.s3.us-west-2.amazonaws.com/fable_.wav"],
+  ["Duncan · Inworld", "Male · British · warm, measured", "inworld-Duncan", "https://retell-utils-public.s3.us-west-2.amazonaws.com/inworld-Duncan.mp3"],
 ];
 
 function loadGoogle() {
