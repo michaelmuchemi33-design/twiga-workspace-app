@@ -125,7 +125,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
         setTab("dashboard");
         setGoogleSetupMessage(googleAuth.tokens?.accessToken
           ? "Your dashboard is ready. Securing your Calendar, Contacts, Sheets and Drive connection…"
-          : "Your dashboard is ready. Connect Calendar, Contacts, Sheets and Drive from Profile when you are ready.");
+          : "Your dashboard is ready. Connect Calendar, Contacts, Sheets and Drive from Connections when you are ready.");
       } catch (e) {
         setGoogleSetupMessage(e instanceof Error ? e.message : "Your Google account is signed in, but the workspace could not be created.");
         setTab("setup");
@@ -169,9 +169,9 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
         if (!data?.connected) throw new Error(data?.message || "Google did not grant all requested Google Workspace permissions.");
         setGoogleSetupMessage(data.refreshReady
           ? ""
-          : "Calendar and Contacts are connected. Reconnect Google in Profile if its access expires.");
+          : "Calendar and Contacts are connected. Reconnect Google from Connections if its access expires.");
       } catch (e) {
-        setGoogleSetupMessage("Your dashboard is ready. Google connection needs attention: " + (e instanceof Error ? e.message : "Reconnect Google from Profile."));
+        setGoogleSetupMessage("Your dashboard is ready. Google connection needs attention: " + (e instanceof Error ? e.message : "Reconnect Google from Connections."));
       }
     };
     void connect();
@@ -236,7 +236,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
               <InstallApp />{demo && <DemoInterest />}{!demo && onSignOut && <button onClick={onSignOut} className="h-10 rounded-xl border border-neutral-200 px-4 text-sm font-semibold text-neutral-600 hover:bg-neutral-50">Sign out</button>}
             </div>
           </div>
-          {googleSetupMessage && !demo && <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-950"><span>{autoProvisioning && <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-orange-500" />}{googleSetupMessage}</span>{googleSetupMessage.includes("Google connection needs attention") && <button onClick={() => go("profile")} className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-bold">Open Google settings</button>}{googleSetupMessage.includes("could not be created") && <button onClick={() => { autoProvisioned.current = null; void refreshBusinesses(); }} className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-bold">Retry</button>}</div>}
+          {googleSetupMessage && !demo && <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-950"><span>{autoProvisioning && <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-orange-500" />}{googleSetupMessage}</span>{googleSetupMessage.includes("Google connection needs attention") && <button onClick={() => go("connections")} className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-bold">Open Google connections</button>}{googleSetupMessage.includes("could not be created") && <button onClick={() => { autoProvisioned.current = null; void refreshBusinesses(); }} className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-bold">Retry</button>}</div>}
           {demo && <div className="mb-6 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-900"><strong>This is a sample workspace.</strong> Explore the screens and test the controls. Demo changes are temporary and are not connected to a real customer's business account.</div>}
           {tab === "dashboard" && <Dashboard onSetup={() => go("setup")} />}
           {tab === "setup" && <SetupPage demo={demo} onDone={() => go("dashboard")} onBusinessCreated={businessCreated} />}
