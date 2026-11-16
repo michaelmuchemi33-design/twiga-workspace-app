@@ -23,7 +23,6 @@ import Alerts from "@/components/Alerts";
 import Functions from "@/components/Functions";
 import Logout from "@/components/Logout";
 import SideRail from "@/components/SideRail";
-import ControlDock from "@/components/ControlDock";
 import SetupPage from "@/components/SetupPage";
 import {
   IconHome,
@@ -217,7 +216,6 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           isSetup ? "pb-10" : isNativeApp ? "pb-32" : "pb-8"
         )}
       >
-        {!isNativeApp && <ControlDock />}
         {!isNativeApp && <SideRail tab={tab} onSelect={go} />}
 
         <main className={cn("mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8", !isNativeApp && "lg:pl-24")}>
