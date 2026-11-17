@@ -114,6 +114,14 @@ Deno.serve(async (req: Request) => {
         .select("business_id,line_number,provider_reference").eq("provider", "sautikit");
       if (assignedError) throw assignedError;
       const assigned = new Map((assignedRows || []).map((row: Row) => [String(row.provider_reference || ""), row]));
+      const assignedBusinessIds = [...new Set((assignedRows || []).map((row: Row) => String(row.business_id || "")).filter(Boolean))];
+      const businessNames = new Map<string, string>();
+      if (assignedBusinessIds.length) {
+        const { data: assignedBusinesses, error: businessNamesError } = await admin.from("businesses")
+          .select("id,name").in("id", assignedBusinessIds);
+        if (businessNamesError) throw businessNamesError;
+        for (const business of assignedBusinesses || []) businessNames.set(String(business.id), String(business.name || ""));
+      }
       return json({
         numbers: numbers.map((number: Row) => {
           const id = String(number.id || number.number_id || "");
@@ -125,7 +133,7 @@ Deno.serve(async (req: Request) => {
             monthlyRetailMinor: Number(number.monthly_retail_total_minor ?? number.monthly_retail_minor ?? 0),
             currency: String(number.currency || "KES"),
             assignedBusinessId: line?.business_id || null,
-            assignedBusinessName: null,
+            assignedBusinessName: line ? (businessNames.get(String(line.business_id)) || null) : null,
             assignedLineNumber: line?.line_number || null,
           };
         }),
