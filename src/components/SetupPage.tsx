@@ -73,8 +73,24 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
       setMissing(Array.isArray(data.missingFields) ? data.missingFields : []);
       setReady(data.readyToBuild === true);
     } catch (e) {
-      setError("TWIGA’s setup assistant is temporarily unavailable. Please try again shortly.");
-      setMessages((m) => [...m, { id: String(Date.now() + 2), role: "ai", text: "I’m having trouble reaching the setup assistant right now. Your details are safe — please try again shortly." }]);
+      let setupError = "TWIGA’s setup assistant is temporarily unavailable. Please try again shortly.";
+      let assistantNotice = "I’m having trouble reaching the setup assistant right now. Your details are safe — please try again shortly.";
+      try {
+        const { data: providerStatus, error: statusError } = await supabase!.functions.invoke("twiga-platform-secrets", { body: { action: "get_config" } });
+        if (!statusError && providerStatus?.isAdmin) {
+          if (providerStatus.keyConfigured !== true) {
+            setupError = "The platform OpenRouter API key is missing. Open Connections to save it securely.";
+            assistantNotice = "The setup assistant is waiting for TWIGA’s OpenRouter key. Your details are safe. Open Connections, use the OpenRouter card to validate and save the platform key, then return here and send your message again.";
+          } else {
+            setupError = "OpenRouter is configured, but its free model did not respond. Open Connections and run the setup-model test.";
+            assistantNotice = "The OpenRouter key is saved, but the free setup model did not respond this time. Open Connections and choose Test free setup model, then return here and try again.";
+          }
+        }
+      } catch {
+        // Keep the safe generic message if provider status cannot be checked.
+      }
+      setError(setupError);
+      setMessages((m) => [...m, { id: String(Date.now() + 2), role: "ai", text: assistantNotice }]);
     } finally {
       setThinking(false);
     }
@@ -151,7 +167,8 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
     </div>
     {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
       <p>{error}</p>
-      {error.includes("setup assistant") && <p className="mt-2 text-xs text-neutral-700">No action or technical setup is needed from you. Please try again shortly or contact TWIGA support.</p>}
+      {error.includes("OpenRouter") && onOpenConnections && <button type="button" onClick={onOpenConnections} className="mt-3 rounded-xl bg-neutral-950 px-4 py-2.5 text-xs font-semibold text-white">Open Connections</button>}
+      {error.includes("temporarily unavailable") && <p className="mt-2 text-xs text-neutral-700">Your business details remain in this chat. Please retry after the service is restored.</p>}
     </div>}
   </div>;
 }
