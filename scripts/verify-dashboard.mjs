@@ -42,7 +42,7 @@ const checks = [
   ["voice choices come only from the live provider catalogue", !sautikit.includes("CATALOG_FALLBACK") && sautikit.includes("xl:grid-cols-5") && sautikit.includes("visibleVoiceOptions")],
   ["provider route is verified before inbound is marked ready", sautikitFunction.includes("Promise.allSettled") && sautikitFunction.includes("liveInboundVerified") && sautikitFunction.includes("inboundBound:")],
   ["AI setup has a recovery path to provider connections", setup.includes("onOpenConnections") && setup.includes("Open Connections")],
-  ["setup assistant reads the encrypted OpenRouter key", setupAssistant.includes('p_provider:"openrouter"') && setupAssistant.includes("api.openrouter.ai/api/v1/chat/completions") && setupAssistant.includes("inclusionai/ling-3.2-flash:free")],
+  ["setup assistant reads the encrypted OpenRouter key", setupAssistant.includes('p_provider:"openrouter"') && setupAssistant.includes("openrouter.ai/api/v1/chat/completions") && setupAssistant.includes("inclusionai/ling-3.2-flash:free")],
   ["Retell voice catalogue loads after provider connection", profile.includes('retellAction("list_voices")') && profile.includes("setVoiceOptions(voices)") && profile.includes("setSelectedVoice(")],
   ["Google origin mismatch guidance", connections.includes("origin_mismatch")],
   ["no-answer retry defaults to one five-minute second attempt", scheduledCalls.includes("delay_minutes: 5") && scheduledCalls.includes("unreachable_after_no_answer") && scheduledUi.includes("Retry once when unanswered")],
