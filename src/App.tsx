@@ -333,6 +333,12 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
                     );
                   })}
                 </div>
+                <div className="mt-3 border-t border-neutral-200 pt-3 dark:border-neutral-700">
+                  <button type="button" onClick={() => setTheme((current) => current === "light" ? "dark" : "light")} aria-pressed={theme === "dark"} className="flex w-full items-center justify-between rounded-xl bg-neutral-100 px-4 py-3 text-sm font-semibold text-neutral-800 dark:bg-neutral-800 dark:text-neutral-100">
+                    <span>{theme === "light" ? "☾  Dark mode" : "☀  Light mode"}</span>
+                    <span className={"rounded-full px-3 py-1 " + (theme === "dark" ? "bg-orange-500 text-white" : "bg-neutral-300 text-neutral-800")}>{theme === "dark" ? "ON" : "OFF"}</span>
+                  </button>
+                </div>
               </div>
             )}
 
