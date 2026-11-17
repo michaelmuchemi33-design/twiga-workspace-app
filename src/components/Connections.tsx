@@ -35,6 +35,15 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   const [providerBusy, setProviderBusy] = useState(false);
   const [providerMessage, setProviderMessage] = useState("");
   const [grokTestMessage, setGrokTestMessage] = useState("");
+  const [smsConfig, setSmsConfig] = useState<any>({ connected: false });
+  const [smsClientId, setSmsClientId] = useState("");
+  const [smsClientSecret, setSmsClientSecret] = useState("");
+  const [smsSenderName, setSmsSenderName] = useState("");
+  const [smsOrderEnabled, setSmsOrderEnabled] = useState(false);
+  const [smsPaymentEnabled, setSmsPaymentEnabled] = useState(false);
+  const [smsTestTo, setSmsTestTo] = useState("");
+  const [smsTestMessage, setSmsTestMessage] = useState("TWIGA test message. Your business SMS connection is working.");
+  const [smsMessage, setSmsMessage] = useState("");
 
   const action = useCallback(async (name: string, extra: Record<string, unknown> = {}) => {
     if (!supabase || !businessId) throw new Error("Choose a business workspace first.");
@@ -54,10 +63,11 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
 
   const refreshProviders = useCallback(async () => {
     if (!businessId || !supabase) return;
-    const [sautikit, xai, googleSecrets] = await Promise.allSettled([
+    const [sautikit, xai, googleSecrets, sms] = await Promise.allSettled([
       supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } }),
       supabase.functions.invoke("twiga-platform-secrets", { body: { action: "get_config" } }),
       supabase.functions.invoke("twiga-platform-secrets", { body: { action: "google.oauth.status" } }),
+      supabase.functions.invoke("twiga-kimisms", { body: { action: "get_config", businessId } }),
     ]);
     if (sautikit.status === "fulfilled" && !sautikit.value.error && !sautikit.value.data?.error) setSautikitConfig(sautikit.value.data || {});
     else setSautikitConfig({ isPlatformAdmin: false, providerError: sautikit.status === "rejected" ? String(sautikit.reason) : sautikit.value.error?.message });
@@ -65,6 +75,12 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     else setXaiConfig({ isAdmin: false });
     if (googleSecrets.status === "fulfilled" && !googleSecrets.value.error && !googleSecrets.value.data?.error) setGoogleSecretConfig(googleSecrets.value.data || {});
     else setGoogleSecretConfig({ isAdmin: false });
+    if (sms.status === "fulfilled" && !sms.value.error && !sms.value.data?.error) {
+      setSmsConfig(sms.value.data || { connected: false });
+      setSmsSenderName(String(sms.value.data?.senderName || ""));
+      setSmsOrderEnabled(sms.value.data?.orderConfirmationEnabled === true);
+      setSmsPaymentEnabled(sms.value.data?.paymentConfirmationEnabled === true);
+    } else setSmsConfig({ connected: false, providerError: sms.status === "rejected" ? String(sms.reason) : sms.value.error?.message });
   }, [businessId]);
 
   useEffect(() => { void refresh(); void refreshProviders(); }, [refresh, refreshProviders]);
@@ -134,6 +150,59 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       setProviderMessage(data?.message || "Google OAuth credentials saved in encrypted Vault.");
       await Promise.all([refresh(), refreshProviders()]);
     } catch (e) { setProviderMessage(e instanceof Error ? e.message : "Could not save Google OAuth credentials."); }
+    finally { setProviderBusy(false); }
+  };
+
+  const saveSmsCredentials = async () => {
+    if (!businessId || !supabase || !smsClientId.trim() || !smsClientSecret.trim() || !smsSenderName.trim()) {
+      setSmsMessage("Enter the KIMISMS Client ID, Client Secret and approved Sender ID.");
+      return;
+    }
+    setProviderBusy(true); setSmsMessage("Validating KIMISMS credentials…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-kimisms", { body: {
+        action: "save_credentials", businessId, clientId: smsClientId.trim(),
+        clientSecret: smsClientSecret.trim(), senderName: smsSenderName.trim(),
+      }});
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setSmsClientId(""); setSmsClientSecret("");
+      setSmsConfig((current: any) => ({ ...current, connected: true, keyLast4: data.keyLast4, senderName: data.senderName }));
+      setSmsMessage(data.message || "KIMISMS credentials saved securely.");
+      await refreshProviders();
+    } catch (e) {
+      setSmsMessage(e instanceof Error ? e.message : "Could not connect KIMISMS.");
+    } finally { setProviderBusy(false); }
+  };
+
+  const saveSmsSettings = async () => {
+    if (!businessId || !supabase) return;
+    setProviderBusy(true); setSmsMessage("Saving business SMS settings…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-kimisms", { body: {
+        action: "save_settings", businessId, senderName: smsSenderName.trim(),
+        orderConfirmationEnabled: smsOrderEnabled, paymentConfirmationEnabled: smsPaymentEnabled,
+      }});
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setSmsMessage(data.message || "SMS notification settings saved.");
+      await refreshProviders();
+    } catch (e) { setSmsMessage(e instanceof Error ? e.message : "Could not save SMS settings."); }
+    finally { setProviderBusy(false); }
+  };
+
+  const sendSmsTest = async () => {
+    if (!businessId || !supabase || !smsTestTo.trim()) { setSmsMessage("Enter the Kenyan mobile number you control for this test."); return; }
+    if (!window.confirm("Send one billable test SMS to " + smsTestTo.trim() + "? Confirm that you control this number.")) return;
+    setProviderBusy(true); setSmsMessage("Sending test SMS…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-kimisms", { body: {
+        action: "send_test", businessId, to: smsTestTo.trim(), message: smsTestMessage.trim(), confirmTestRecipient: true,
+      }});
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setSmsMessage(data.message || ("SMS accepted · " + (data.status || "pending")));
+    } catch (e) { setSmsMessage(e instanceof Error ? e.message : "SMS test failed."); }
     finally { setProviderBusy(false); }
   };
 
@@ -217,6 +286,35 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
           <button onClick={() => void saveProviderKey("sautikit")} disabled={providerBusy || !sautikitKey.trim()} className="mt-3 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save SautiKit key</button>
         </> : <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">The provider key is managed centrally by TWIGA. Your business line and voice settings remain separate.</p>}
       </div>
+    </section>
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Business SMS provider</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">KIMISMS · SMS notifications</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">KIMISMS sends SMS across Kenyan mobile networks. It uses a Client ID and Client Secret plus your approved Sender ID. This is separate from PalPluss M-Pesa and SautiKit voice. Credentials are encrypted per business.</p>
+        </div>
+        <span className={"rounded-full px-3 py-1 text-xs font-semibold " + (smsConfig.connected ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600")}>{smsConfig.connected ? "Connected" : "Not connected"}</span>
+      </div>
+      {smsConfig.connected && <p className="mt-2 text-xs text-neutral-500">Encrypted SMS credentials saved {smsConfig.keyLast4 ? "· ending " + smsConfig.keyLast4 : ""}. Sender ID: {smsConfig.senderName || smsSenderName || "not set"}.</p>}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="block text-sm font-medium text-neutral-800">KIMISMS Client ID<input value={smsClientId} onChange={e => setSmsClientId(e.target.value)} autoComplete="off" placeholder="KIMISMS Client ID" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+        <label className="block text-sm font-medium text-neutral-800">{smsConfig.connected ? "Rotate Client Secret" : "KIMISMS Client Secret"}<input type="password" value={smsClientSecret} onChange={e => setSmsClientSecret(e.target.value)} autoComplete="new-password" placeholder="Paste Client Secret" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+        <label className="block text-sm font-medium text-neutral-800">Approved Sender ID<input value={smsSenderName} onChange={e => setSmsSenderName(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0,11))} placeholder="Your approved Sender ID" maxLength={11} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm uppercase" /></label>
+        <div className="flex items-end"><a href="https://kimipay.co.ke/api/docs/swagger-ui/" target="_blank" rel="noreferrer" className="text-sm font-semibold text-orange-700 underline">KIMISMS API credentials & documentation ↗</a></div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => void saveSmsCredentials()} disabled={providerBusy || !smsClientId.trim() || !smsClientSecret.trim() || !smsSenderName.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save SMS credentials</button></div>
+      {smsConfig.connected && <div className="mt-4 rounded-xl border border-neutral-200 p-4">
+        <p className="text-sm font-semibold text-neutral-900">Automatic notifications</p>
+        <label className="mt-3 flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" className="mt-1" checked={smsOrderEnabled} onChange={e => setSmsOrderEnabled(e.target.checked)} /><span><strong>Order confirmation SMS</strong><span className="block text-xs text-neutral-500">Send an order reference and amount after the business confirms the order, only when the customer has opted in.</span></span></label>
+        <label className="mt-3 flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" className="mt-1" checked={smsPaymentEnabled} onChange={e => setSmsPaymentEnabled(e.target.checked)} /><span><strong>Payment receipt SMS</strong><span className="block text-xs text-neutral-500">Send a receipt only after PalPluss reports SUCCESS and the customer has opted in.</span></span></label>
+        <button onClick={() => void saveSmsSettings()} disabled={providerBusy || !smsSenderName.trim()} className="mt-3 rounded-xl border border-neutral-200 px-4 py-2 text-sm font-semibold text-neutral-800 disabled:opacity-40">Save SMS notification settings</button>
+      </div>}
+      {smsConfig.connected && <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_2fr_auto]">
+        <label className="text-sm font-medium text-neutral-800">Test number<input value={smsTestTo} onChange={e => setSmsTestTo(e.target.value)} placeholder="+2547…" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+        <label className="text-sm font-medium text-neutral-800">Test message<input value={smsTestMessage} onChange={e => setSmsTestMessage(e.target.value)} maxLength={1000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+        <div className="flex items-end"><button onClick={() => void sendSmsTest()} disabled={providerBusy || !smsTestTo.trim()} className="h-10 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-40">Send test SMS</button></div>
+      </div>}
+      {smsMessage && <p role="status" className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{smsMessage}</p>}
+      <p className="mt-3 text-xs leading-5 text-neutral-500">A customer SMS consent record is required before an order or payment message can be sent. Sending a test message may incur provider charges.</p>
     </section>
     {providerMessage && <p role="status" className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">{providerMessage}</p>}
     {message && <p role="status" className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">{message}</p>}
