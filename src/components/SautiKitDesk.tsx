@@ -141,6 +141,32 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
     finally { setBusy(false); }
   }
 
+  async function createAgent() {
+    if (!line) return setNotice("Connect this business's SautiKit phone number before creating its receptionist.");
+    if (!selected) return setNotice("Choose a voice and model from the live SautiKit catalogue first.");
+    if (!window.confirm("Create a separate AI receptionist for this business and bind it to " + line.line_number + "? The agent will use this business's saved profile.")) return;
+    setBusy(true); setNotice(""); setCall(null);
+    try {
+      const result = await invoke("create_agent", {
+        voice, model, corePrompt: core,
+        greeting: scripts.greeting, inboundPrompt: scripts.inbound, outboundPrompt: scripts.outbound,
+      });
+      setNotice(result.message || "Dedicated business receptionist created.");
+      await refresh();
+    } catch (e) { setNotice(e instanceof Error ? e.message : "Could not create this business's receptionist."); await refresh(); }
+    finally { setBusy(false); }
+  }
+
+  async function bindAgent() {
+    setBusy(true); setNotice("");
+    try {
+      const result = await invoke("bind_agent");
+      setNotice(result.message || "Inbound route saved. Test it from another phone.");
+      await refresh();
+    } catch (e) { setNotice(e instanceof Error ? e.message : "Could not bind the receptionist to this number."); }
+    finally { setBusy(false); }
+  }
+
   async function placeCall() {
     if (!authorised) return setNotice("Confirm that this callback has been authorised before calling.");
     if (!to.trim() || !reason.trim()) return setNotice("Enter the customer's number and the reason for calling.");
@@ -188,7 +214,7 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
     <header className="rounded-2xl border border-neutral-200 bg-white p-6">
       <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">TWIGA · Front Desk</p>
       <h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Phone & AI receptionist</h1>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">One SautiKit agent handles incoming and outgoing calls. Set the voice and instructions once, then publish them to the same existing line.</p>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Each business gets its own SautiKit receptionist agent, connected only to that business's existing phone line and saved business profile.</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-5">
         <div className="rounded-xl border border-orange-200 bg-orange-50 p-3"><p className="text-xs text-neutral-600">Business phone number</p><p className="mt-1 font-semibold text-neutral-950">{line?.line_number || "No number assigned"}</p></div>
         <div className="rounded-xl border border-neutral-200 p-3"><p className="text-xs text-neutral-500">Provider</p><p className="mt-1 font-semibold text-neutral-900">SautiKit</p></div>
@@ -235,7 +261,7 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
       </div>
       {catalogOptions.length > 25 ? <button type="button" onClick={() => setShowAllVoiceOptions((v) => !v)} className="mt-3 rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700">{showAllVoiceOptions ? "Show first 25 voices" : "Show all " + catalogOptions.length + " voice/model options"}</button> : null}
       <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">This is a 5-column list showing up to 25 voice/model combinations at a time. TWIGA displays the actual names and model combinations returned by SautiKit; it does not invent extra voices. Man and Woman are labelled according to the provider's catalogue. Other named voices are not assigned a gender unless SautiKit specifies one. AI usage rates are per minute; carrier charges are separate.</p>
-      <div className="mt-4 flex flex-wrap items-center gap-3"><p className="text-sm text-neutral-600">Selected: <strong className="text-neutral-900">{voice}</strong> · {model}</p><button onClick={publish} disabled={busy || !data.keyConfigured || !active || !inboundBound || !selected} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Publishing…" : "Save voice & publish"}</button></div>
+      <div className="mt-4 flex flex-wrap items-center gap-3"><p className="text-sm text-neutral-600">Selected: <strong className="text-neutral-900">{voice}</strong> · {model}</p>{!active ? <button onClick={createAgent} disabled={busy || !data.keyConfigured || !line || !selected} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Creating…" : "Create this business's AI receptionist"}</button> : <button onClick={publish} disabled={busy || !data.keyConfigured || !inboundBound || !selected} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Publishing…" : "Save voice & publish"}</button>}{active && !inboundBound ? <button onClick={bindAgent} disabled={busy || !data.keyConfigured} className="rounded-xl border border-orange-300 px-4 py-3 text-sm font-semibold text-orange-800 disabled:opacity-40">Retry inbound binding</button> : null}</div>
       {!inboundBound ? <p className="mt-2 text-xs text-amber-800">The existing inbound binding is not confirmed in TWIGA records. Publishing is paused to protect the current line.</p> : null}{inboundBound && !inboundVerified ? <p className="mt-2 text-xs text-amber-800">TWIGA records the agent as bound, but SautiKit has not yet confirmed the route. Publishing remains paused until the API key is connected and the live binding is verified.</p> : null}
     </section>
 

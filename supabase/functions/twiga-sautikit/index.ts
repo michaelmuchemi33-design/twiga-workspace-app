@@ -194,7 +194,161 @@ Deno.serve(async (req: Request) => {
 
     if (!key) return json({ error: "Connect the SautiKit API key in Connections before changing phone routing." }, 409);
     if (!line || !numberId) return json({ error: "This business does not yet have a SautiKit number ID linked to its phone line. Verify the number in the same SautiKit workspace first." }, 409);
-    if (!canManage && ["publish_agent", "send_call", "configure_forwarding"].includes(action)) return json({ error: "Only the business owner, admin or TWIGA platform administrator can change or call from this receptionist." }, 403);
+    if (!canManage && ["create_agent", "bind_agent", "publish_agent", "send_call", "configure_forwarding"].includes(action)) return json({ error: "Only the business owner, admin or TWIGA platform administrator can change or call from this receptionist." }, 403);
+
+    const callbackUrl = "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-sautikit-callback";
+
+    if (action === "create_agent") {
+      if (agentId) return json({ error: "This business already has a SautiKit agent. Use the existing agent settings instead of creating a duplicate." }, 409);
+      const [businessResult, profileResult, businessSettingsResult] = await Promise.all([
+        admin.from("businesses").select("name").eq("id", businessId).maybeSingle(),
+        admin.from("twiga_business_profiles").select("business_summary,what_they_sell,what_they_do,products_and_services,target_customers,unique_selling_points,service_area,opening_hours,delivery_and_payment,returns_and_refunds,frequently_asked_questions,brand_voice,reply_language,assistant_instructions").eq("business_id", businessId).maybeSingle(),
+        admin.from("twiga_business_settings").select("timezone,business_hours,language_mode").eq("business_id", businessId).maybeSingle(),
+      ]);
+      if (businessResult.error) throw businessResult.error;
+      if (profileResult.error) throw profileResult.error;
+      if (businessSettingsResult.error) throw businessSettingsResult.error;
+      const businessName = String(businessResult.data?.name || "Business").trim().slice(0, 120);
+      const profile: Row = profileResult.data || {};
+      const businessSettings: Row = businessSettingsResult.data || {};
+      const modelId = String(body.model || "sautikit-flash");
+      const voice = String(body.voice || "Woman");
+      const catalogue = await skRequest(key, "/v1/models");
+      const modelEntry = (Array.isArray(catalogue?.data) ? catalogue.data : []).find((entry: Row) => String(entry.id || "") === modelId);
+      if (!modelEntry) return json({ error: "Choose a model from the live SautiKit catalogue." }, 400);
+      const voices = Array.isArray(modelEntry.voices) ? modelEntry.voices.map(String) : [];
+      if (!voices.includes(voice)) return json({ error: "That voice is not available for the selected SautiKit model." }, 400);
+
+      const scripts = {
+        greeting: String(body.greeting || settings.sautikit_scripts?.greeting || "Hello, karibu! Thank you for calling " + businessName + ". How can I help you today?").slice(0, 1200),
+        inbound: String(body.inboundPrompt || settings.sautikit_scripts?.inbound || "Answer in the caller's preferred language. Use this business's verified profile, understand the reason for the call, and capture booking or order requests for the team to confirm. Never claim an action is complete unless TWIGA confirms it was saved.").slice(0, 5000),
+        outbound: String(body.outboundPrompt || settings.sautikit_scripts?.outbound || "Only call people when this business has authorised a callback. Identify the business and reason for calling, ask whether it is convenient, keep it brief, and respect requests not to be called again.").slice(0, 5000),
+      };
+      const profileFacts = [
+        "BUSINESS NAME: " + businessName,
+        "BUSINESS SUMMARY: " + String(profile.business_summary || "").slice(0, 2500),
+        "WHAT THE BUSINESS DOES: " + String(profile.what_they_do || "").slice(0, 1800),
+        "WHAT THE BUSINESS SELLS: " + String(profile.what_they_sell || "").slice(0, 1800),
+        "PRODUCTS AND SERVICES: " + String(profile.products_and_services || "").slice(0, 2500),
+        "TARGET CUSTOMERS: " + String(profile.target_customers || "").slice(0, 1200),
+        "UNIQUE SELLING POINTS: " + String(profile.unique_selling_points || "").slice(0, 1200),
+        "SERVICE AREA: " + String(profile.service_area || "").slice(0, 800),
+        "OPENING HOURS: " + String(profile.opening_hours || JSON.stringify(businessSettings.business_hours || {})).slice(0, 1200),
+        "TIME ZONE: " + String(businessSettings.timezone || "Africa/Nairobi"),
+        "PAYMENT AND DELIVERY: " + String(profile.delivery_and_payment || "").slice(0, 1200),
+        "RETURNS AND REFUNDS: " + String(profile.returns_and_refunds || "").slice(0, 1200),
+        "FREQUENTLY ASKED QUESTIONS: " + String(profile.frequently_asked_questions || "").slice(0, 2500),
+        "BRAND VOICE: " + String(profile.brand_voice || "Warm, professional and concise").slice(0, 500),
+        "REPLY LANGUAGE: " + String(profile.reply_language || businessSettings.language_mode || "Kenyan English and Kiswahili").slice(0, 300),
+        "BUSINESS-SPECIFIC INSTRUCTIONS: " + String(profile.assistant_instructions || body.corePrompt || "").slice(0, 5000),
+      ].filter((value) => !value.endsWith(": "));
+      const corePrompt = [
+        "You are the dedicated AI receptionist for " + businessName + ". You serve only this business workspace. Do not mix information with another business.",
+        profileFacts.join("\n"),
+        "Use only the profile and verified information for this business. If a price, stock level, booking slot, order status or payment status is not available, say the team will confirm it. Never invent a booking, order or payment. Never request passwords, PINs, OTPs, card numbers or security codes.",
+      ].join("\n\n");
+      const basePrompt = composePrompt(corePrompt, scripts.greeting, scripts.inbound, scripts.outbound);
+      const agentName = businessName + " · TWIGA Receptionist";
+      const createdEnvelope = await skRequest(key, "/v1/agents", "POST", {
+        name: agentName,
+        base_prompt: basePrompt,
+        model: modelId,
+        voice,
+        accent: "Kenyan English and Kiswahili",
+        speech_style: "Warm, clear, natural Kenyan English and Kiswahili; calm, concise turns and natural pauses.",
+        max_call_minutes: 8,
+      });
+      const createdAgent = createdEnvelope?.agent || createdEnvelope?.data?.agent || createdEnvelope?.data || createdEnvelope;
+      const createdAgentId = String(createdAgent?.id || createdAgent?.agent_id || "");
+      if (!createdAgentId) throw new Error("SautiKit created a response but did not return an agent ID. Refresh before retrying.");
+      const signingSecret = String(createdAgent?.tool_signing_secret || createdEnvelope?.tool_signing_secret || "");
+      if (signingSecret.length >= 20) {
+        const { error: secretSaveError } = await admin.rpc("twiga_set_provider_secret", {
+          p_business_id: businessId,
+          p_provider: "sautikit_agent_tool_signing",
+          p_secret: signingSecret,
+          p_updated_by: user.id,
+        });
+        if (secretSaveError) throw new Error("SautiKit created the agent, but TWIGA could not save its private tool-signing secret in Vault. Do not create another agent; contact TWIGA support.");
+      }
+      const publishedEnvelope = await skRequest(key, "/v1/agents/" + encodeURIComponent(createdAgentId) + "/publish", "POST", {});
+      const published = publishedEnvelope?.revision || publishedEnvelope?.data?.revision || publishedEnvelope?.data || publishedEnvelope;
+      const revision = Number(published?.revision || published?.current_revision || published?.version || createdAgent?.current_revision || 1);
+      const nextSettings: Row = {
+        ...settings,
+        inbound_agent_id: createdAgentId,
+        inbound_agent_provider: "sautikit-managed",
+        inbound_agent_name: agentName,
+        inbound_agent_revision: revision,
+        inbound_voice: voice,
+        inbound_model_id: modelId,
+        ai_agent_bound: false,
+        sautikit_scripts: scripts,
+      };
+      const { error: saveAgentError } = await admin.from("twiga_phone_lines")
+        .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", updated_at: new Date().toISOString() })
+        .eq("id", line.id);
+      if (saveAgentError) throw saveAgentError;
+
+      try {
+        await skRequest(key, "/v1/numbers/" + encodeURIComponent(numberId) + "/routing", "PUT", {
+          voice_callback_url: callbackUrl,
+          events_url: callbackUrl,
+          inbound_agent: {
+            enabled: true,
+            agent_id: createdAgentId,
+            mode: "always",
+            handover_callback_url: callbackUrl,
+            handover_voicemail: {
+              greeting_text: "The " + businessName + " team cannot take your call live right now. Please leave your name, callback number and a short message after the tone.",
+              max_length: 90,
+              beep: true,
+            },
+          },
+        });
+        const boundSettings = { ...nextSettings, ai_agent_bound: true };
+        const { error: saveBoundError } = await admin.from("twiga_phone_lines")
+          .update({ settings: boundSettings, inbound_enabled: true, inbound_status: "testing", updated_at: new Date().toISOString() })
+          .eq("id", line.id);
+        if (saveBoundError) throw saveBoundError;
+        return json({
+          created: true, bound: true, agentId: createdAgentId, revision, voice, model: modelId,
+          message: "Created a dedicated " + businessName + " receptionist, published revision " + revision + " and bound it to this business's existing SautiKit number. Inbound remains in testing until a real call is answered.",
+        });
+      } catch (routeError) {
+        const routeMessage = routeError instanceof Error ? routeError.message : "SautiKit did not confirm the inbound route.";
+        return json({
+          created: true, bound: false, agentId: createdAgentId, revision,
+          error: "The dedicated agent was created, but the number binding needs to be retried: " + routeMessage,
+          message: "The agent is saved for this business. Use Retry inbound binding; do not create another agent.",
+        }, 502);
+      }
+    }
+
+    if (action === "bind_agent") {
+      if (!agentId) return json({ error: "Create this business's receptionist first." }, 409);
+      await skRequest(key, "/v1/numbers/" + encodeURIComponent(numberId) + "/routing", "PUT", {
+        voice_callback_url: callbackUrl,
+        events_url: callbackUrl,
+        inbound_agent: {
+          enabled: true,
+          agent_id: agentId,
+          mode: "always",
+          handover_callback_url: callbackUrl,
+          handover_voicemail: {
+            greeting_text: "The business team cannot take your call live right now. Please leave your name, callback number and a short message after the tone.",
+            max_length: 90,
+            beep: true,
+          },
+        },
+      });
+      const nextSettings = { ...settings, ai_agent_bound: true, inbound_agent_provider: "sautikit-managed" };
+      const { error: saveError } = await admin.from("twiga_phone_lines")
+        .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", updated_at: new Date().toISOString() })
+        .eq("id", line.id);
+      if (saveError) throw saveError;
+      return json({ bound: true, agentId, message: "SautiKit confirmed the inbound route. Keep it in testing until a real incoming call is answered." });
+    }
 
     if (action === "configure_forwarding") {
       const mode = String(body.mode || "");
