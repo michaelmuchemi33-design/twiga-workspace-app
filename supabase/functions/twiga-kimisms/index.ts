@@ -151,7 +151,7 @@ Deno.serve(async (req: Request) => {
     let orderId: string | null = null;
     let idempotencyKey = safe(body.idempotencyKey, 180);
 
-    if (action === "send_order_confirmation" || action === "send_payment_confirmation") {
+    if (action === "send_order_confirmation" || action === "send_payment_request_notice" || action === "send_payment_confirmation") {
       orderId = safe(body.orderId, 80);
       if (!/^[0-9a-f-]{36}$/i.test(orderId)) return reply({ error: "A valid business order ID is required." }, 400);
       const { data: order, error: orderError } = await admin.from("twiga_orders")
@@ -162,12 +162,14 @@ Deno.serve(async (req: Request) => {
       if (order.customer_sms_consent !== true) return reply({ error: "This customer has not opted in to SMS for this order." }, 409);
       if (!order.customer_phone) return reply({ error: "This order has no customer phone number." }, 409);
       const isPayment = action === "send_payment_confirmation";
+      const isPaymentRequest = action === "send_payment_request_notice";
       if (isPayment && String(order.payment_status || "").toLowerCase() !== "paid") return reply({ error: "The payment is not confirmed as paid. No payment receipt was sent." }, 409);
-      if (!isPayment && smsSettings.order_confirmation_enabled !== true) return reply({ error: "Order-confirmation SMS is disabled for this business." }, 409);
+      if (isPaymentRequest && !["pending","processing"].includes(String(order.payment_status || "").toLowerCase())) return reply({ error: "The M-Pesa request is not pending. No payment notice was sent." }, 409);
+      if (!isPayment && smsSettings.order_confirmation_enabled !== true) return reply({ error: "Order and payment-request SMS is disabled for this business." }, 409);
       if (isPayment && smsSettings.payment_confirmation_enabled !== true) return reply({ error: "Payment-confirmation SMS is disabled for this business." }, 409);
       recipient = normalizePhone(order.customer_phone);
       if (!recipient) return reply({ error: "The customer's number is not a valid Kenyan mobile number." }, 400);
-      eventType = isPayment ? "payment_confirmation" : "order_confirmation";
+      eventType = isPayment ? "payment_confirmation" : isPaymentRequest ? "payment_request_notice" : "order_confirmation";
       idempotencyKey = safe(idempotencyKey || (order.id + ":" + eventType), 180);
       const business = await admin.from("businesses").select("name").eq("id", businessId).maybeSingle();
       const businessName = safe(business.data?.name || "the business", 60);
@@ -175,7 +177,9 @@ Deno.serve(async (req: Request) => {
       const amount = Number(order.total_amount || 0).toLocaleString("en-KE");
       message = isPayment
         ? "Payment received by " + businessName + ". Order " + orderNumber + " · KSh " + amount + ". Thank you."
-        : "Order received by " + businessName + ". Order " + orderNumber + " · KSh " + amount + ". We will update you when it is ready.";
+        : isPaymentRequest
+          ? "We sent an M-Pesa payment prompt for order " + orderNumber + " (KSh " + amount + "). Approve the prompt on your phone to complete payment. Never share your M-Pesa PIN."
+          : "Order received by " + businessName + ". Order " + orderNumber + " · KSh " + amount + ". We will update you when it is ready.";
     } else if (action === "send_test") {
       if (!canManage || body.confirmTestRecipient !== true) return reply({ error: "Confirm that you control this test phone number before sending a test SMS." }, 403);
       recipient = normalizePhone(body.to);
