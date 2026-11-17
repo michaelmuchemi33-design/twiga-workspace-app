@@ -26,12 +26,12 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   const [tests, setTests] = useState<Record<string, string>>({});
   const [oauthConfig, setOauthConfig] = useState<any>({ serverConfigured: false });
   const [sautikitConfig, setSautikitConfig] = useState<any>({});
-  const [openrouterConfig, setXaiConfig] = useState<any>({});
+  const [openrouterConfig, setOpenrouterConfig] = useState<any>({});
   const [googleSecretConfig, setGoogleSecretConfig] = useState<any>({});
   const [googleClientIdInput, setGoogleClientIdInput] = useState("");
   const [googleClientSecretInput, setGoogleClientSecretInput] = useState("");
   const [sautikitKey, setSautikitKey] = useState("");
-  const [openrouterKey, setXaiKey] = useState("");
+  const [openrouterKey, setOpenrouterKey] = useState("");
   const [providerBusy, setProviderBusy] = useState(false);
   const [providerMessage, setProviderMessage] = useState("");
   const [openrouterTestMessage, setOpenRouterTestMessage] = useState("");
@@ -71,8 +71,8 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     ]);
     if (sautikit.status === "fulfilled" && !sautikit.value.error && !sautikit.value.data?.error) setSautikitConfig(sautikit.value.data || {});
     else setSautikitConfig({ isPlatformAdmin: false, providerError: sautikit.status === "rejected" ? String(sautikit.reason) : sautikit.value.error?.message });
-    if (openrouter.status === "fulfilled" && !openrouter.value.error && !openrouter.value.data?.error) setXaiConfig(openrouter.value.data || {});
-    else setXaiConfig({ isAdmin: false });
+    if (openrouter.status === "fulfilled" && !openrouter.value.error && !openrouter.value.data?.error) setOpenrouterConfig(openrouter.value.data || {});
+    else setOpenrouterConfig({ isAdmin: false });
     if (googleSecrets.status === "fulfilled" && !googleSecrets.value.error && !googleSecrets.value.data?.error) setGoogleSecretConfig(googleSecrets.value.data || {});
     else setGoogleSecretConfig({ isAdmin: false });
     if (sms.status === "fulfilled" && !sms.value.error && !sms.value.data?.error) {
@@ -142,7 +142,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       const { data, error } = await supabase.functions.invoke(functionName, { body: { action: actionName, apiKey } });
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(String(data.error));
-      if (provider === "openrouter") setXaiKey(""); else setSautikitKey("");
+      if (provider === "openrouter") setOpenrouterKey(""); else setSautikitKey("");
       setProviderMessage(data?.message || (provider === "openrouter" ? "OpenRouter key validated and saved in encrypted storage." : "SautiKit key validated and saved in encrypted storage."));
       await refreshProviders();
     } catch (e) { setProviderMessage(e instanceof Error ? e.message : "Could not save provider key."); }
@@ -275,13 +275,13 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     </section>
     <section className="grid gap-5 lg:grid-cols-2">
       <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Business setup assistant</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">OpenRouter · OpenRouter</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${openrouterConfig.keyConfigured ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{openrouterConfig.keyConfigured ? "Connected" : openrouterConfig.isAdmin ? "API key needed" : "Managed by TWIGA"}</span></div>
-        <p className="mt-2 text-sm leading-6 text-neutral-600">OpenRouter powers the real business onboarding assistant. The key is validated against OpenRouter and stored in Supabase Vault; it is never exposed to customer browsers.</p>
+        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Business setup assistant</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">OpenRouter · free models</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${openrouterConfig.keyConfigured ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{openrouterConfig.keyConfigured ? "Connected" : openrouterConfig.isAdmin ? "API key needed" : "Managed by TWIGA"}</span></div>
+        <p className="mt-2 text-sm leading-6 text-neutral-600">OpenRouter runs business onboarding on Ling 3.2 Flash (free model, $0 input and output). Its API key is validated on the server and stored in Supabase Vault; it is never exposed to customer browsers. The model may be rate-limited, so TWIGA does not silently switch to a paid model.</p>
         {openrouterConfig.isAdmin ? <>
           {openrouterConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Encrypted key saved{openrouterConfig.keyLast4 ? ` · ending ${openrouterConfig.keyLast4}` : ""}.</p>}
-          <label className="mt-4 block text-sm font-medium text-neutral-800">{openrouterConfig.keyConfigured ? "Replace OpenRouter API key" : "OpenRouter API key"}<input type="password" autoComplete="new-password" value={openrouterKey} onChange={e => setXaiKey(e.target.value)} placeholder="Paste OpenRouter API key" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
-          <a href="https://console.openrouter.ai/team/default/api-keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Get a OpenRouter API key ↗</a>
-          <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => void saveProviderKey("openrouter")} disabled={providerBusy || !openrouterKey.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save OpenRouter key</button>{openrouterConfig.keyConfigured && <button onClick={() => void testOpenRouter()} disabled={providerBusy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">Test OpenRouter</button>}</div>
+          <label className="mt-4 block text-sm font-medium text-neutral-800">{openrouterConfig.keyConfigured ? "Replace OpenRouter API key" : "OpenRouter API key"}<input type="password" autoComplete="new-password" value={openrouterKey} onChange={e => setOpenrouterKey(e.target.value)} placeholder="Paste OpenRouter API key" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
+          <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Get an OpenRouter API key ↗</a>
+          <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => void saveProviderKey("openrouter")} disabled={providerBusy || !openrouterKey.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save OpenRouter key</button>{openrouterConfig.keyConfigured && <button onClick={() => void testOpenRouter()} disabled={providerBusy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">Test free setup model</button>}</div>
           {openrouterTestMessage && <p role="status" className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{openrouterTestMessage}</p>}
         </> : <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">Only the TWIGA platform administrator can manage this shared API key.</p>}
       </div>
