@@ -503,3 +503,18 @@ html:focus-within { scroll-behavior: auto !important; }
 .rail-shell.w-16 .rail-item { display: flex !important; align-items: center !important; justify-content: center !important; }
 .rail-shell.w-16 .rail-icon { display: flex !important; width: 24px !important; height: 24px !important; margin-inline: auto !important; align-items: center !important; justify-content: center !important; }
 .rail-shell.w-16 .rail-icon svg { display: block !important; flex: none !important; margin: 0 auto !important; }
+
+
+/* TWIGA customer-support entry point: keep the loop animation visible even in the quiet-dashboard reset. */
+.twiga-support-float {
+  animation: twiga-support-breathe 2.8s ease-in-out infinite !important;
+  transition: transform .2s ease, box-shadow .2s ease !important;
+}
+.twiga-support-float:hover { transform: translateY(-2px) !important; box-shadow: 0 10px 28px rgb(249 115 22 / .22) !important; }
+@keyframes twiga-support-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(249 115 22 / .10); }
+  50% { box-shadow: 0 0 0 6px rgb(249 115 22 / .16); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .twiga-support-float { animation: none !important; }
+}
