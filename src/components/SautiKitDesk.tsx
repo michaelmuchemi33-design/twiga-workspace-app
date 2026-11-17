@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-type Option = { voice: string; model: string; rate: number; note?: string };
-const VOICES: Option[] = [
-  { voice: "Woman", model: "sautikit-flash", rate: 4, note: "Tested female voice · current default" },
-  { voice: "Man", model: "sautikit-flash", rate: 4, note: "Male voice" },
-  ...["Neema", "Zuri", "Amani", "Furaha", "Baraka", "Jabari", "Tumaini", "Simba"].map((voice) => ({ voice, model: "sautikit-voice-2", rate: 7 })),
-];
+type Option = { voice: string; model: string; rate: number; label: string; note: string; tested?: boolean };
+const MODEL_LABELS: Record<string, string> = {
+  "sautikit-flash": "Flash",
+  "sautikit-flash-large": "Flash Large",
+  "sautikit-voice-2": "Voice 2",
+  "sautikit-pro": "Pro",
+  "sautikit-reason": "Reason",
+};
 const DEFAULTS = {
   greeting: "Hello, karibu! Thank you for calling {{business_name}}. How can I help you today?",
   inbound: "Answer in the caller's language (Kenyan English or Kiswahili). Identify why they are calling, use verified business information, and capture booking or order requests for the team to confirm. Never say that a booking, order or payment is complete until TWIGA confirms it was saved.",
@@ -62,16 +64,41 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const catalogOptions = (() => {
-    if (!models.length) return VOICES;
-    const flash = models.find((m) => m.id === "sautikit-flash");
-    const voice2 = models.find((m) => m.id === "sautikit-voice-2");
+  const catalogOptions: Option[] = (() => {
+    if (!models.length) return [];
     const list: Option[] = [];
-    for (const name of ["Woman", "Man"]) if (flash?.voices?.includes(name)) {
-      list.push({ voice: name, model: "sautikit-flash", rate: Number(flash.rate_per_minute_minor || 0) / 100, note: name === "Woman" ? "Tested female voice · current default" : "Male voice" });
-    }
-    for (const name of ["Neema", "Zuri", "Amani", "Furaha", "Baraka", "Jabari", "Tumaini", "Simba"]) if (voice2?.voices?.includes(name)) {
-      list.push({ voice: name, model: "sautikit-voice-2", rate: Number(voice2.rate_per_minute_minor || 0) / 100 });
+    const knownNames = new Set<string>();
+    for (const entry of models) {
+      const modelId = String(entry.id || "");
+      const modelLabel = MODEL_LABELS[modelId] || modelId;
+      const rate = Number(entry.rate_per_minute_minor || 0) / 100;
+      const voices = Array.isArray(entry.voices) ? entry.voices.map(String) : [];
+      for (const name of voices) {
+        if (name === "Either") continue;
+        if (name === "Man" || name === "Woman") {
+          list.push({
+            voice: name,
+            model: modelId,
+            rate,
+            label: name + " · " + modelLabel,
+            note: name === "Woman" && modelId === "sautikit-flash"
+              ? "Female · your tested voice"
+              : name === "Man"
+                ? "Male voice · " + modelLabel + " model"
+                : "Female voice · " + modelLabel + " model",
+            tested: name === "Woman" && modelId === "sautikit-flash",
+          });
+        } else if (!knownNames.has(name)) {
+          knownNames.add(name);
+          list.push({
+            voice: name,
+            model: modelId,
+            rate,
+            label: name + " · " + modelLabel,
+            note: "Named SautiKit catalogue voice · gender not specified by provider",
+          });
+        }
+      }
     }
     return list;
   })();
@@ -161,22 +188,22 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Choose the receptionist voice</h2><p className="mt-1 text-sm text-neutral-500">Ten voices from the SautiKit catalogue. Your tested Woman voice stays selected by default.</p></div><span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">10 SautiKit voices</span></div>
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Choose the receptionist voice</h2><p className="mt-1 text-sm text-neutral-500">All voices and model tiers returned by SautiKit. Your tested Woman voice stays selected by default.</p></div><span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">{catalogOptions.length ? catalogOptions.length + " voice/model options" : "10 catalogue voices"}</span></div>
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        {VOICES.map((v) => {
-          const exists = catalogOptions.some((item) => item.voice === v.voice && item.model === v.model);
+        {catalogOptions.map((v) => {
           const isSelected = voice === v.voice && model === v.model;
-          const disabled = !data.keyConfigured || (models.length > 0 && !exists);
+          const disabled = !data.keyConfigured;
           return <button key={v.model + ":" + v.voice} type="button" disabled={disabled} onClick={() => { setVoice(v.voice); setModel(v.model); }} className={"rounded-xl border p-3 text-left transition " + (isSelected ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-neutral-400") + (disabled ? " opacity-60" : "")}>
-            <div className="flex items-center justify-between gap-2"><span className="font-semibold text-neutral-900">{v.voice}</span><span className="text-xs text-neutral-500">KSh {v.rate}/min AI</span></div>
-            <p className="mt-1 text-xs text-neutral-500">{v.note || "SautiKit Voice 2"}</p>
-            {isSelected ? <p className="mt-2 text-xs font-semibold text-orange-800">Selected{v.voice === "Woman" ? " · tested voice" : ""}</p> : null}
+            <div className="flex items-center justify-between gap-2"><span className="font-semibold text-neutral-900">{v.label}</span><span className="shrink-0 text-xs text-neutral-500">KSh {v.rate}/min AI</span></div>
+            <p className="mt-1 text-xs text-neutral-500">{v.note}</p>
+            {isSelected ? <p className="mt-2 text-xs font-semibold text-orange-800">Selected{v.tested ? " · your tested voice" : ""}</p> : null}
           </button>;
         })}
+        {!catalogOptions.length ? <p className="rounded-xl border border-dashed border-neutral-300 p-4 text-sm text-neutral-600 sm:col-span-2">{data.keyConfigured ? "Loading the SautiKit voice catalogue…" : "Connect the SautiKit API key above to load all available voices and live prices."}</p> : null}
       </div>
-      <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">Woman and Man use SautiKit Flash at KSh 4/min AI. The eight named options use SautiKit Voice 2 at KSh 7/min AI. Carrier charges are separate. SautiKit does not label the gender of the eight named voices, so TWIGA does not guess.</p>
-      <div className="mt-4 flex flex-wrap items-center gap-3"><p className="text-sm text-neutral-600">Selected: <strong className="text-neutral-900">{voice}</strong> · {model}</p><button onClick={publish} disabled={busy || !data.keyConfigured || !active || !inboundVerified || !selected} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Publishing…" : "Save voice & publish"}</button></div>
-      {!inboundVerified ? <p className="mt-2 text-xs text-amber-800">The existing inbound binding could not be verified. Publishing is paused to avoid changing a different route.</p> : null}
+      <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">The catalogue has 10 named voice choices: Man, Woman and eight additional named voices. Man and Woman are available across Flash, Flash Large, Voice 2, Pro and Reason model tiers, giving you more male voice/model choices. The eight named voices are shown exactly as SautiKit lists them; SautiKit does not publish their gender labels. AI prices are per minute; carrier charges are separate.</p>
+      <div className="mt-4 flex flex-wrap items-center gap-3"><p className="text-sm text-neutral-600">Selected: <strong className="text-neutral-900">{voice}</strong> · {model}</p><button onClick={publish} disabled={busy || !data.keyConfigured || !active || !inboundBound || !inboundVerified || !selected} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Publishing…" : "Save voice & publish"}</button></div>
+      {!inboundBound ? <p className="mt-2 text-xs text-amber-800">The existing inbound binding is not confirmed in TWIGA records. Publishing is paused to protect the current line.</p> : null}{inboundBound && !inboundVerified ? <p className="mt-2 text-xs text-amber-800">TWIGA records the agent as bound, but SautiKit has not yet confirmed the route. Publishing remains paused until the API key is connected and the live binding is verified.</p> : null}
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
