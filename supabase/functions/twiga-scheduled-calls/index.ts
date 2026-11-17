@@ -115,6 +115,7 @@ Deno.serve(async (req: Request) => {
         if (!Number.isFinite(scheduledAt.getTime()) || scheduledAt.getTime() < Date.now() + 30000) return json({ error: "Choose a future call time at least 30 seconds from now." }, 400);
         const repeat = ["daily", "weekly"].includes(String(body.repeat)) ? String(body.repeat) : "none";
         const repeatCount = repeat === "none" ? 1 : Math.max(2, Math.min(30, Number(body.repeatCount) || 4));
+        const retryOnNoAnswer = body.retryOnNoAnswer !== false;
         const triggerTypes = ["timer", "missed_call", "appointment_reminder", "follow_up", "conditional"];
         const triggerType = triggerTypes.includes(String(body.triggerType)) ? String(body.triggerType) : "timer";
         const onlyIfMissed = body.onlyIfMissed === true || triggerType === "missed_call";
@@ -145,7 +146,10 @@ Deno.serve(async (req: Request) => {
           trigger_conditions: { only_if_missed_call: onlyIfMissed, only_if_unpaid: onlyIfUnpaid, order_id: orderId || null },
           source_call_id: sourceCallId || null, calling_window_start: windowStart, calling_window_end: windowEnd,
           status: "scheduled", attempt_count: 0, max_attempts: 3, retry_interval_minutes: 30, created_by: user.id,
-          metadata: { series_id: seriesId, repeat, repeat_remaining: repeatCount, dispatch_status: "pending" },
+          metadata: {
+            series_id: seriesId, repeat, repeat_remaining: repeatCount, dispatch_status: "pending",
+            no_answer_retry: { enabled: retryOnNoAnswer, attempts: 0, max_attempts: 2, delay_minutes: 5 },
+          },
         }));
         const { data: inserted, error } = await admin.from("twiga_scheduled_calls").insert(rows).select("id");
         if (error) throw error;
