@@ -20,7 +20,7 @@ Deno.serve(async(req:Request)=>{
   const {data:vaultXaiKey,error:keyError}=await admin.rpc("twiga_get_platform_secret",{p_provider:"xai"});
   const xaiKey=String(vaultXaiKey||Deno.env.get("XAI_API_KEY")||"");
   if(keyError&&!xaiKey) console.error("xAI Vault lookup failed",keyError.message);
-  if(!xaiKey) return json({error:"Grok is not connected yet. Add the rotated xAI API key in Profile → Platform administrator → Grok business setup helper."},503);
+  if(!xaiKey) return json({error:"Grok is not connected yet. Open Connections → Grok business setup helper and add the xAI API key. A TWIGA platform administrator must complete this shared connection."},503);
   const body=await req.json().catch(()=>({}));
   const messages=Array.isArray(body.messages)?body.messages.slice(-16):[];
   const ownerName=String(body.ownerProfile?.name||authData.user.user_metadata?.full_name||authData.user.user_metadata?.name||"").slice(0,160);
