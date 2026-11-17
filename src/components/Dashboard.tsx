@@ -116,6 +116,10 @@ export default function Dashboard({ onSetup, onOpenPhone }: { onSetup: () => voi
   const averageDuration = completedCalls.length ? Math.round(completedCalls.reduce((sum, c) => sum + Number(c.duration_seconds || 0), 0) / completedCalls.length) : 0;
   const formatDuration = (seconds: number) => seconds >= 60 ? Math.floor(seconds / 60) + "m " + String(seconds % 60).padStart(2, "0") + "s" : seconds + "s";
   const leads = customers.length;
+  const phoneStatusLabel = !phoneLine ? "Phone setup required"
+    : phoneLine.provider !== "sautikit" ? "Check phone provider"
+    : phoneLine.inbound_status === "active" && phoneLine.outbound_status === "active" ? "Provider marked active · test call required"
+    : "Phone setup · test required";
 
   const stats = [
     { label: "Calls handled today", value: `${callsToday}`, sub: `${callsHandled} this week`, icon: IconPhone, accent: true },
@@ -150,8 +154,8 @@ export default function Dashboard({ onSetup, onOpenPhone }: { onSetup: () => voi
 
         <div className="flex flex-col items-stretch gap-3 sm:items-end">
           <div className="flex items-center gap-3 rounded-xl bg-neutral-950 px-4 py-3 text-white">
-            <span className={`h-2.5 w-2.5 rounded-full ${"bg-neutral-500"}`} />
-            <span className="text-sm font-medium">{"Workspace ready"}</span>
+            <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", phoneLine?.inbound_status === "active" && phoneLine?.outbound_status === "active" ? "bg-orange-400" : "bg-neutral-500")} />
+            <span className="text-sm font-medium">{phoneStatusLabel}</span>
           </div>
 
           <button
@@ -164,21 +168,21 @@ export default function Dashboard({ onSetup, onOpenPhone }: { onSetup: () => voi
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid items-stretch gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((s) => (
           <Card
             key={s.label}
             className={cn(
-              "rounded-2xl shadow-sm",
+              "flex h-full min-h-[132px] rounded-2xl shadow-sm",
               s.accent ? "border-orange-200 bg-orange-50" : "border-neutral-200"
             )}
           >
-            <CardContent className="flex items-center justify-between p-5">
-              <div>
+            <CardContent className="flex w-full items-start justify-between gap-4 p-5">
+              <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
                   {s.label}
                 </p>
-                <p className="mt-1 text-2xl font-bold tracking-tight text-neutral-900">
+                <p className="mt-1 min-h-8 text-2xl font-bold tracking-tight tabular-nums text-neutral-900">
                   {s.money !== undefined ? (
                     <AnimatedNumber value={s.money} prefix="KSh " />
                   ) : (
@@ -189,7 +193,7 @@ export default function Dashboard({ onSetup, onOpenPhone }: { onSetup: () => voi
               </div>
               <div
                 className={cn(
-                  "flex h-11 w-11 items-center justify-center rounded-xl",
+                  "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl",
                   s.accent ? "bg-orange-500 text-white" : "bg-neutral-950 text-white"
                 )}
               >
@@ -205,7 +209,7 @@ export default function Dashboard({ onSetup, onOpenPhone }: { onSetup: () => voi
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Your TWIGA phone number</p>
             <p className="mt-1 text-2xl font-bold tracking-tight text-neutral-950">{phoneLine?.line_number || "No phone line assigned yet"}</p>
-            <p className="mt-1 text-sm text-neutral-500">{phoneLine ? `Inbound: ${phoneLine.inbound_status || (phoneLine.inbound_enabled ? "enabled" : "off")} · Outbound: ${phoneLine.outbound_status || (phoneLine.outbound_enabled ? "enabled" : "off")}` : "Connect and manage your existing business line in Phone & AI."}</p>
+            <p className="mt-1 text-sm text-neutral-500">{phoneLine ? `Provider: ${phoneLine.provider || "unknown"} · Inbound: ${phoneLine.inbound_status || (phoneLine.inbound_enabled ? "enabled" : "off")} · Outbound: ${phoneLine.outbound_status || (phoneLine.outbound_enabled ? "enabled" : "off")}` : "Connect and manage your existing business line in Phone & AI."}</p>
             {phoneLine && <p className="mt-1 text-xs text-neutral-500">The provider route is configured; a real inbound call is still required to verify pickup and audio.</p>}
           </div>
           <div className="flex shrink-0 items-center gap-2"><Badge className={cn("border", phoneLine?.outbound_status === "active" ? "border-orange-200 bg-orange-50 text-orange-700" : "border-neutral-200 bg-neutral-100 text-neutral-600")}>{phoneLine?.outbound_status === "active" ? "Outbound active" : "Phone setup"}</Badge><Button onClick={onOpenPhone} className="bg-neutral-950 text-white hover:bg-neutral-800">Manage Phone & AI</Button></div>
