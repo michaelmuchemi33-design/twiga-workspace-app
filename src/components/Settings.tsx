@@ -307,18 +307,18 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-orange-400">Business payment connection</p>
-            <h2 className="mt-1 text-xl font-semibold text-white">PalPluss API key</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-300">Add this business’s own PalPluss key to send M-Pesa prompts and verify payments. The key is checked by the server and stored in encrypted Supabase Vault.</p>
+            <h2 className="mt-1 text-xl font-semibold text-white">Payments connection</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-300">TWIGA manages the payment provider connection for you. You only need to choose how your customers pay; no external provider account or API key is required.</p>
           </div>
-          <span className="rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-neutral-200">{palplussStatus.keySource === "business" ? "Business key saved" : palplussStatus.keySource === "platform" ? "Using TWIGA connection" : "Not connected"}</span>
+          <span className="rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-neutral-200">{palplussStatus.keyConfigured ? "Managed by TWIGA" : "Being configured by TWIGA"}</span>
         </div>
-        {palplussStatus.keyConfigured && <p className="mt-3 text-xs text-neutral-300">{palplussStatus.keySource === "business" ? "Business API key saved" : "Using the central TWIGA key"}{palplussStatus.keyLast4 ? " · ending " + palplussStatus.keyLast4 : ""}.</p>}
+        <p className="mt-3 text-xs text-neutral-300">Provider credentials are kept private by TWIGA and are never shown to your staff or customers.</p>
         {!demo && <div className="mt-4 flex flex-col gap-2 sm:flex-row">
           <input type="password" autoComplete="new-password" value={palplussKeyDraft} onChange={(event) => setPalplussKeyDraft(event.target.value)} placeholder="Paste PalPluss API key" className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-700 bg-neutral-900 px-3 text-sm text-white placeholder:text-neutral-500 outline-none focus:border-orange-500" />
           <button type="button" onClick={() => void savePalplussKey()} disabled={palplussBusy || !businessId || palplussKeyDraft.trim().length < 20} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-neutral-950 hover:bg-orange-400 disabled:opacity-40">{palplussBusy ? "Validating…" : "Validate & save key"}</button>
         </div>}
         {demo && <p className="mt-3 text-sm text-neutral-300">Sign in and choose a business workspace to connect payments.</p>}
-        <p className="mt-3 text-xs leading-5 text-neutral-400">PalPluss authenticates with the API key using HTTP Basic authentication. It does not require a separate OAuth access token; TWIGA builds the authorization header on the server. Manage the business Till, Paybill and hosted Paylink in Payments.</p>
+        <p className="mt-3 text-xs leading-5 text-neutral-400">Set your Till or Paybill and customer payment options in Payments. TWIGA handles provider authentication and settlement checks in the background.</p>
         <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => { void refreshPalpluss(); }} disabled={palplussBusy || demo} className="rounded-lg border border-neutral-700 px-3 py-2 text-xs font-semibold text-neutral-200 hover:bg-neutral-900 disabled:opacity-40">Refresh payment status</button><button type="button" onClick={onOpenPayments} className="rounded-lg border border-neutral-700 px-3 py-2 text-xs font-semibold text-neutral-200 hover:bg-neutral-900">Open Payments</button></div>
         {palplussMessage && <p role="status" className="mt-3 rounded-xl border border-neutral-700 bg-neutral-900 p-3 text-sm text-neutral-200">{palplussMessage}</p>}
       </section>
