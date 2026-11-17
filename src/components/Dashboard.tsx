@@ -165,7 +165,7 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-900">
             {ownerName ? `Welcome, ${ownerName}` : settings.business.name ? `Welcome, ${settings.business.name}` : "Your workspace"}
           </h1>
-          <p className="mt-1 text-sm text-neutral-500">
+          <p className="mt-1 text-sm text-neutral-800">
             {settings.business.name ? `${settings.business.name} · ` : ""}Your receptionist handled {doneTasks} tasks today · {pendingTasks} pending · {failedTasks} failed
           </p>
         </div>
@@ -240,7 +240,7 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
                 <IconMic className="h-5 w-5 text-orange-500" /> {"Recent Calls"}
               </CardTitle>
               <CardDescription className="text-neutral-400">
-                {"AI call history for this business. Transcripts are saved only when recording is enabled."}
+                <span className="text-neutral-900">{"AI call history for this business. Transcripts are saved only when recording is enabled."}</span>
               </CardDescription>
             </div>
             <Badge className="border-orange-500/30 bg-orange-500/20 text-orange-400">
