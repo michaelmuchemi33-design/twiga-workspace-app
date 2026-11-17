@@ -160,7 +160,7 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
       const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "palpluss.platform.save", apiKey: centralPalKey.trim() } });
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(String(data.error));
-      setCentralPal(""); setCentralPalStatus(data); setProviderSaveMessage(data?.message || "TWIGA payment connection saved securely.");
+      setCentralPalKey(""); setCentralPalStatus(data); setProviderSaveMessage(data?.message || "TWIGA payment connection saved securely.");
     } catch (e) { setProviderSaveMessage(e instanceof Error ? e.message : "Payment connection could not be saved."); }
     finally { setPalplussBusy(false); }
   };
