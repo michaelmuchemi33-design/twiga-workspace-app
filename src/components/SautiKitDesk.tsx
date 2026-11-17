@@ -36,6 +36,8 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
   const [forwardOpening, setForwardOpening] = useState("08:00");
   const [forwardClosing, setForwardClosing] = useState("18:00");
   const [forwardBusy, setForwardBusy] = useState(false);
+  const [recordingEnabled, setRecordingEnabled] = useState(false);
+  const [recordingNotice, setRecordingNotice] = useState("");
 
   const invoke = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
     if (!supabase) throw new Error("TWIGA Supabase connection is not configured.");
@@ -52,6 +54,13 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
     try {
       const result = await invoke("get_config");
       setData(result);
+      const { data: recordingPrefs, error: recordingError } = await supabase.from("twiga_business_settings")
+        .select("call_recording_enabled,recording_notice")
+        .eq("business_id", businessId).maybeSingle();
+      if (!recordingError) {
+        setRecordingEnabled(recordingPrefs?.call_recording_enabled === true);
+        setRecordingNotice(String(recordingPrefs?.recording_notice || ""));
+      }
       const savedForward = result.phoneLine?.settings?.forwarding_config || {};
       if (savedForward.mode === "always" || savedForward.mode === "after_hours") setForwardMode(savedForward.mode);
       if (savedForward.to) setForwardTo(String(savedForward.to));
@@ -252,6 +261,12 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
         <button onClick={copyInboundNumber} className="mt-3 rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold text-neutral-800">Copy number for inbound test</button>
         {data.inboundMode ? <p className="mt-2 text-xs text-neutral-500">Routing mode: {data.inboundMode}</p> : null}
       </> : <p className="mt-3 text-sm text-neutral-600">No SautiKit number is assigned to this business.</p>}
+    </section>
+
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Call recordings & cloud storage</h2><p className="mt-1 text-sm leading-6 text-neutral-500">Recording preference for this business: {recordingEnabled ? "ON" : "OFF"}. {recordingEnabled ? "The database preference is enabled; verify provider-side recording and the recording notice before relying on audio being captured." : "Call audio is not currently enabled in this business's TWIGA recording settings."}</p></div><span className={"rounded-full px-3 py-1 text-xs font-semibold " + (recordingEnabled ? "bg-amber-50 text-amber-800" : "bg-neutral-100 text-neutral-700")}>{recordingEnabled ? "Preference on · provider check required" : "Recording off"}</span></div>
+      {recordingNotice ? <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-xs text-neutral-600">Saved recording notice: “{recordingNotice}”</p> : null}
+      <p className="mt-3 text-sm leading-6 text-neutral-600">SautiKit is the phone-call provider. Its call-recording API returns a temporary recording link to a provider-managed Google Cloud Storage file. TWIGA is not currently copying audio into a TWIGA-owned Cloudflare R2 or Supabase Storage archive. The separate Settings preference does not itself start recording. Do not promise permanent storage or enable recording without the correct notice and retention policy.</p>
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
