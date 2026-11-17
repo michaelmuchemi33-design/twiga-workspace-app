@@ -69,7 +69,13 @@ export default function Payments() {
   useEffect(() => {
     if (!businessId || !supabase) return;
     void loadPendingOrders();
-    const channel = supabase.channel("twiga-payment-orders-" + businessId).on("postgres_changes", { event: "*", schema: "public", table: "twiga_orders", filter: "business_id=eq." + businessId }, () => { void loadPendingOrders(); }).subscribe();
+    const channel = supabase.channel("twiga-payment-orders-" + businessId).on("postgres_changes", { event: "*", schema: "public", table: "twiga_orders", filter: "business_id=eq." + businessId }, (payload) => {
+      void loadPendingOrders();
+      const row = payload.new as any;
+      if (row?.business_id === businessId && row?.customer_sms_consent === true && row?.status === "pending_confirmation" && row?.payment_status === "unpaid") {
+        void supabase!.functions.invoke("twiga-kimisms", { body: { action: "send_order_confirmation", businessId, orderId: row.id } });
+      }
+    }).subscribe();
     return () => { void supabase.removeChannel(channel); };
   }, [businessId, loadPendingOrders]);
 
@@ -165,7 +171,20 @@ export default function Payments() {
       const result = await invoke("stk", { phone, amount: Number(order.total_amount), channelId: selectedChannelId, accountReference: order.order_number || ("TWIGA-" + order.id.slice(0, 8)), transactionDesc: ("Order " + order.order_number + " · " + order.customer_name).slice(0, 255) });
       const { error } = await supabase!.from("twiga_orders").update({ status: "payment_requested", payment_status: "pending", payment_method: "MPESA_STK" }).eq("business_id", businessId).eq("id", order.id);
       if (error) throw error;
-      setMessage("Payment prompt sent to " + phone + ". It is pending until PalPluss confirms SUCCESS. Transaction: " + (result.transaction?.transactionId || "created"));
+      let smsNote = "";
+      if (order.customer_sms_consent) {
+        try {
+          const { data: sms, error: smsError } = await supabase!.functions.invoke("twiga-kimisms", { body: { action: "send_payment_request_notice", businessId, orderId: order.id } });
+          if (smsError) throw new Error(smsError.message);
+          if (sms?.error) throw new Error(String(sms.error));
+          smsNote = " Order payment notice SMS: " + (sms.duplicate ? "already sent" : "submitted") + ".";
+        } catch (smsError) {
+          smsNote = " The M-Pesa prompt was sent; the optional SMS notice could not be sent: " + (smsError instanceof Error ? smsError.message : "SMS failed.");
+        }
+      } else {
+        smsNote = " No SMS was sent because customer SMS consent has not been recorded.";
+      }
+      setMessage("M-Pesa prompt sent to " + phone + ". It is pending until PalPluss confirms SUCCESS. Transaction: " + (result.transaction?.transactionId || "created") + "." + smsNote);
       await loadPendingOrders();
       await loadTransactions();
     } catch (error) {
