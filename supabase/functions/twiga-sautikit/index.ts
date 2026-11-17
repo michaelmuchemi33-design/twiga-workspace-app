@@ -167,6 +167,9 @@ Deno.serve(async (req: Request) => {
           outbound: scripts.outbound || "Only call a person when the business has authorised the callback. Introduce yourself and the business, explain the reason for the call, ask whether it is a convenient time, keep the conversation brief, and respect requests not to be called again.",
         },
         providerError,
+        inboundBound: settings.ai_agent_bound === true
+          && settings.inbound_agent_provider === "sautikit-managed"
+          && settings.inbound_agent_id === agentId,
         inboundVerified: !!(number?.routing?.inbound_agent?.enabled && number?.routing?.inbound_agent?.agent_id === agentId),
         inboundMode: number?.routing?.inbound_agent?.mode || null,
       });
