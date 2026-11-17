@@ -80,6 +80,7 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
   const currentAgent = data.agent;
   const active = !!currentAgent?.id;
   const inboundVerified = data.inboundVerified === true;
+  const inboundBound = data.inboundBound === true || inboundVerified;
   const selected = catalogOptions.find((v) => v.voice === voice && v.model === model);
 
   async function connect() {
@@ -142,10 +143,11 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
       <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">TWIGA · Front Desk</p>
       <h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Phone & AI receptionist</h1>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">One SautiKit agent handles incoming and outgoing calls. Set the voice and instructions once, then publish them to the same existing line.</p>
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+      <div className="mt-4 grid gap-3 sm:grid-cols-4">
         <div className="rounded-xl border border-neutral-200 p-3"><p className="text-xs text-neutral-500">Provider</p><p className="mt-1 font-semibold text-neutral-900">SautiKit</p></div>
         <div className="rounded-xl border border-neutral-200 p-3"><p className="text-xs text-neutral-500">Active voice</p><p className="mt-1 font-semibold text-neutral-900">{currentAgent?.voice || line?.settings?.inbound_voice || "Woman"}</p></div>
         <div className="rounded-xl border border-neutral-200 p-3"><p className="text-xs text-neutral-500">Published revision</p><p className="mt-1 font-semibold text-neutral-900">{currentAgent?.current_revision ?? line?.settings?.inbound_agent_revision ?? "—"}</p></div>
+        <div className="rounded-xl border border-neutral-200 p-3"><p className="text-xs text-neutral-500">Outbound line status</p><p className="mt-1 font-semibold text-neutral-900">{line?.outbound_status || "Not configured"}</p></div>
       </div>
     </header>
 
@@ -192,10 +194,10 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
       {line ? <>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Existing business number</p><p className="mt-1 font-semibold text-neutral-950">{line.line_number}</p></div>
-          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Agent binding</p><p className="mt-1 font-semibold text-neutral-950">{inboundVerified ? "Bound to TWIGA agent" : "Needs verification"}</p></div>
+          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Agent binding</p><p className="mt-1 font-semibold text-neutral-950">{inboundVerified ? "Live route verified" : inboundBound ? "Bound (saved)" : "Needs setup"}</p></div>
           <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Inbound status</p><p className="mt-1 font-semibold text-neutral-950">{line.inbound_status || "Unknown"}</p></div>
         </div>
-        <p className="mt-3 text-sm leading-6 text-neutral-600">{inboundVerified ? "SautiKit confirms the number is routed to this TWIGA agent. The line remains marked as testing until a real incoming call is answered and checked from another phone." : "The inbound route is not confirmed by the SautiKit API. Do not treat incoming calls as production-ready until it is bound and tested."}</p>
+        <p className="mt-3 text-sm leading-6 text-neutral-600">{inboundVerified ? "SautiKit confirms this number is routed to the TWIGA agent. It still needs a real incoming call test from another phone before inbound is marked active." : inboundBound ? "TWIGA’s saved phone-line record confirms this number is bound to the TWIGA agent. Connect SautiKit in this dashboard to refresh the provider route; inbound remains in testing until a real incoming call is answered." : "The inbound route has not been confirmed. Do not treat incoming calls as production-ready until the number is bound and tested."}</p>
         <button onClick={copyInboundNumber} className="mt-3 rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold text-neutral-800">Copy number for inbound test</button>
         {data.inboundMode ? <p className="mt-2 text-xs text-neutral-500">Routing mode: {data.inboundMode}</p> : null}
       </> : <p className="mt-3 text-sm text-neutral-600">No SautiKit number is assigned to this business.</p>}
@@ -203,6 +205,7 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <h2 className="text-lg font-semibold text-neutral-950">Outgoing calls</h2><p className="mt-1 text-sm text-neutral-500">Send an authorised callback using the same published SautiKit agent and voice.</p>
+      <p className="mt-2 text-xs text-neutral-500">Last outbound test: {line?.settings?.last_outbound_test_call_status || "No verified test recorded"}</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <label className="block text-sm font-medium text-neutral-700">Customer phone number<input value={to} onChange={(e) => setTo(e.target.value)} placeholder="+2547XXXXXXXX" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
         <label className="block text-sm font-medium text-neutral-700">Reason for calling<input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Requested booking follow-up, order update…" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
