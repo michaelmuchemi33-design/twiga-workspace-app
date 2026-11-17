@@ -61,7 +61,7 @@ const capabilities = [
   { icon: IconSparkle, label: "Answer FAQs", detail: "Trained on you" },
 ];
 
-export default function Dashboard({ onSetup }: { onSetup: () => void }) {
+export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void; onPayments?: () => void }) {
   const {
     tasks,
     sales,
@@ -74,6 +74,7 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
     businessId,
   } = useStore();
   const [ownerName, setOwnerName] = useState("");
+  const [billingReminder, setBillingReminder] = useState<{ paid_through?: string | null; status?: string } | null>(null);
 
   useEffect(() => {
     if (false || !supabase || !businessId) return;
@@ -89,6 +90,18 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
     });
     return () => { active = false; };
   }, [false, businessId]);
+
+  useEffect(() => {
+    if (!supabase || !businessId) { setBillingReminder(null); return; }
+    let active = true;
+    void supabase.from("businesses").select("paid_through,status").eq("id", businessId).maybeSingle()
+      .then(({ data }) => { if (active) setBillingReminder(data as any); });
+    return () => { active = false; };
+  }, [businessId]);
+
+  const renewalDaysLeft = billingReminder?.paid_through
+    ? Math.ceil((new Date(String(billingReminder.paid_through) + "T23:59:59").getTime() - Date.now()) / 86400000)
+    : null;
 
   const revenue = sales.reduce((s, x) => s + x.total, 0);
   const dueFollowUps = customers.filter((c) => c.followUpIn === 0).length;
@@ -158,6 +171,16 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
           </button>
         </div>
       </div>
+
+      {renewalDaysLeft !== null && renewalDaysLeft <= 7 && (
+        <div className={cn("flex flex-col gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between", renewalDaysLeft < 0 ? "border-red-200 bg-red-50" : "border-orange-200 bg-orange-50")}>
+          <div>
+            <p className="text-sm font-semibold text-neutral-900">{renewalDaysLeft < 0 ? "Your TWIGA subscription has expired" : renewalDaysLeft === 0 ? "Your TWIGA subscription expires today" : "Your TWIGA subscription is due soon"}</p>
+            <p className="mt-1 text-xs text-neutral-600">{renewalDaysLeft < 0 ? "Review your renewal to restore uninterrupted service." : renewalDaysLeft === 0 ? "Review renewal options to avoid service interruption." : renewalDaysLeft + " days remaining. You can review renewal or available account top-up options in Payments."} TWIGA will never charge or purchase anything without your approval.</p>
+          </div>
+          <button onClick={onPayments} className="shrink-0 rounded-xl bg-neutral-950 px-4 py-2.5 text-xs font-semibold text-white">Review in Payments</button>
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((s) => (
