@@ -34,6 +34,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [name, setName] = useState("");
   const [ownerName, setOwnerName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
+  const [businessProfile, setBusinessProfile] = useState<any>(null);
   const [ownerSaving, setOwnerSaving] = useState(false);
   const [avatar, setAvatar] = useState("");
   const [sessionStart, setSessionStart] = useState("");
@@ -215,6 +216,16 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     void load();
     return () => { active = false; };
   }, [userId]);
+
+  useEffect(() => {
+    if (!supabase || !businessId) { setBusinessProfile(null); return; }
+    let active = true;
+    void supabase.from("twiga_business_profiles")
+      .select("business_summary,what_they_sell,what_they_do,products_and_services,target_customers,unique_selling_points,service_area,opening_hours,delivery_and_payment,returns_and_refunds,frequently_asked_questions,brand_voice,reply_language,assistant_instructions")
+      .eq("business_id", businessId).maybeSingle()
+      .then(({ data, error }) => { if (active && !error) setBusinessProfile(data || null); });
+    return () => { active = false; };
+  }, [businessId]);
 
   useEffect(() => {
     if (!supabase || !businessId) {
@@ -419,15 +430,29 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold text-neutral-950">Business workspaces</h2><p className="mt-1 text-sm text-neutral-500">Each business has separate customers, appointments, products, AI instructions and call history.</p></div>{businesses.length > 0 && <select value={businessId || ""} onChange={(e) => onBusinessChange(e.target.value)} className="h-11 min-w-52 rounded-xl border px-3 text-sm"><option value="" disabled>Select workspace</option>{businesses.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>}</div>
       {current ? <p className="mt-3 text-xs text-neutral-500">{current.business_type || "Business"} · {current.role || "owner"} · {current.status || "TRIAL"}</p> : <p className="mt-3 rounded-xl bg-neutral-50 p-4 text-sm text-neutral-600">No workspace yet. Open AI Setup to describe your business and create your first workspace.</p>}
       <div className="mt-3 flex flex-wrap gap-3"><button onClick={onRefreshBusinesses} className="text-xs font-semibold underline">Refresh workspaces</button><button onClick={onCreateBusiness} className="text-xs font-semibold text-orange-700 underline">Create another business</button></div>
+      {current && <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold text-neutral-950">Saved AI business profile</h3><span className="text-[11px] font-medium text-neutral-500">Live data · this workspace only</span></div>
+        {businessProfile ? <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {[
+            ["Business summary", businessProfile.business_summary],
+            ["Products & services", businessProfile.products_and_services || businessProfile.what_they_sell || businessProfile.what_they_do],
+            ["Target customers", businessProfile.target_customers],
+            ["Unique selling points", businessProfile.unique_selling_points],
+            ["Location / service area", businessProfile.service_area],
+            ["Opening hours", businessProfile.opening_hours],
+            ["Payments & delivery", businessProfile.delivery_and_payment],
+            ["Returns & refunds", businessProfile.returns_and_refunds],
+            ["FAQs", businessProfile.frequently_asked_questions],
+            ["Receptionist instructions", businessProfile.assistant_instructions],
+            ["Brand voice", businessProfile.brand_voice],
+            ["Reply language", businessProfile.reply_language],
+          ].filter(([,value]) => String(value || "").trim()).map(([label,value]) => <div key={String(label)}><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">{label}</p><p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-neutral-800">{String(value)}</p></div>)}
+        </div> : <p className="mt-3 text-sm text-neutral-500">No AI business profile has been saved yet. Complete AI Setup to populate these details.</p>}
+      </div>}
     </section>
 
 
-    {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Grok business setup helper</h2><p className="mt-1 text-sm text-neutral-500">One shared Grok API key powers account onboarding only. It is not sent to Retell or exposed to customers. <a className="ml-1 inline-flex font-semibold text-orange-700 underline" href="https://console.x.ai/" target="_blank" rel="noreferrer">Get an xAI API key</a></p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{xaiConfig.keyConfigured ? "Key saved · •••• " + xaiConfig.keyLast4 : "Key not configured"}</span></div>
-      <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={xaiKey} onChange={(e) => setXaiKey(e.target.value)} placeholder={xaiConfig.keyConfigured ? "Enter rotated xAI API key to replace current key" : "xAI API key"} className="h-11 min-w-0 flex-1 rounded-xl border px-3 text-sm" /><button onClick={async () => { setBusy(true); setXaiMessage(""); try { const { data, error } = await supabase!.functions.invoke("twiga-platform-secrets", { body: { action: "save_xai_key", apiKey: xaiKey } }); if (error) throw new Error(error.message); if (data?.error) throw new Error(data.error); setXaiKey(""); setXaiConfig(data); setXaiMessage(data.message || "Grok key saved."); } catch (e) { setXaiMessage(e instanceof Error ? e.message : "Grok key could not be saved."); } finally { setBusy(false); } }} disabled={busy || xaiKey.length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save Grok key</button></div>
-      {xaiConfig.keyConfigured && <p className="mt-3 text-sm text-neutral-600">Grok key is stored in encrypted Vault (•••• {xaiConfig.keyLast4}). Enter a newly rotated key above to replace it.</p>}
-      {xaiMessage && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{xaiMessage}</p>}
-    </section>}
+
     {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Legacy Retell browser-call connection</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">This is a legacy browser-call test provider. It is not the assigned TWIGA phone-line provider. Actual TWIGA PSTN inbound and outbound calls use SautiKit, as shown under Phone & AI. Keep this Retell connection separate from the business phone number. <a className="ml-1 inline-flex font-semibold text-orange-700 underline" href="https://dashboard.retellai.com/" target="_blank" rel="noreferrer">Open Retell dashboard</a></p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{retellPlatformConfig.keyConfigured ? "Connected" : "Needs API key"}</span></div>
       <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="new-password" value={retellPlatformKey} onChange={(e) => setRetellPlatformKey(e.target.value)} placeholder={retellPlatformConfig.keyConfigured ? "Enter a rotated Retell API key to replace it" : "Retell API key from your connected workspace"} className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-200 px-3 text-sm" /><button onClick={saveRetellPlatformKey} disabled={busy || retellPlatformKey.trim().length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save Retell key</button></div>
