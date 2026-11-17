@@ -66,6 +66,16 @@ const moreTabs = [
 
 export default function App({ demo = false, userId, googleAuth, onSignOut }: { demo?: boolean; userId?: string; googleAuth?: GoogleAuthContext; onSignOut?: () => void }) {
   const [tab, setTab] = useState("dashboard");
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    try { return localStorage.getItem("twiga_theme") === "dark" ? "dark" : "light"; }
+    catch { return "light"; }
+  });
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    document.documentElement.style.colorScheme = theme;
+    try { localStorage.setItem("twiga_theme", theme); } catch { /* storage may be unavailable */ }
+  }, [theme]);
+
   const [menuOpen, setMenuOpen] = useState(false);
   const [businesses, setBusinesses] = useState<any[]>([]);
   const [businessId, setBusinessId] = useState("");
@@ -237,6 +247,16 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
                 {googleAuth.profile.avatarUrl ? <img src={googleAuth.profile.avatarUrl} alt="" referrerPolicy="no-referrer" className="h-8 w-8 rounded-full border border-neutral-200 object-cover" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-orange-100 text-xs font-bold text-orange-800">{(googleAuth.profile.fullName || googleAuth.profile.email || "T").slice(0,1).toUpperCase()}</span>}
                 <span className="hidden max-w-[180px] sm:block"><span className="block truncate text-xs font-semibold text-neutral-800">{googleAuth.profile.fullName || "Your account"}</span><span className="block truncate text-[10px] text-neutral-500">{googleAuth.profile.email}</span></span>
               </div>}
+              <button
+                type="button"
+                onClick={() => setTheme((current) => current === "light" ? "dark" : "light")}
+                aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+                aria-pressed={theme === "dark"}
+                className="inline-flex h-10 items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+              >
+                <span aria-hidden="true">{theme === "light" ? "☾" : "☀"}</span>
+                <span>{theme === "light" ? "Dark mode" : "Light mode"}</span>
+              </button>
               <InstallApp />{demo && <DemoInterest />}{!demo && onSignOut && <button onClick={onSignOut} className="h-10 rounded-xl border border-neutral-200 px-4 text-sm font-semibold text-neutral-600 hover:bg-neutral-50">Sign out</button>}
             </div>
           </div>
