@@ -279,7 +279,7 @@ Deno.serve(async (req: Request) => {
       const savedVoicePreference: Row = profileSetup.voice_preference && typeof profileSetup.voice_preference === "object" ? profileSetup.voice_preference : {};
       if (!line) return json({
         phoneLine: null, keyConfigured: !!keyRef, isPlatformAdmin,
-        voicePreference: { voice: savedVoicePreference.voice || "Woman", model: savedVoicePreference.model || "sautikit-flash" },
+        voicePreference: { voice: savedVoicePreference.voice || "Woman", gender: savedVoicePreference.gender || (savedVoicePreference.voice === "Man" ? "male" : "female"), model: savedVoicePreference.model || "sautikit-flash" },
       });
       let models: Row[] = [];
       let agent: Row | null = null;
@@ -325,6 +325,7 @@ Deno.serve(async (req: Request) => {
         providerNumber: String(number?.phone_number || number?.number_e164 || number?.phoneNumber || number?.number || ""),
         voicePreference: {
           voice: settings.inbound_voice || savedVoicePreference.voice || agent?.voice || "Woman",
+          gender: settings.voice_gender || savedVoicePreference.gender || ((settings.inbound_voice || savedVoicePreference.voice || agent?.voice) === "Man" ? "male" : "female"),
           model: settings.inbound_model_id || savedVoicePreference.model || agent?.model || "sautikit-flash",
         },
         phoneLine: {
@@ -375,7 +376,7 @@ Deno.serve(async (req: Request) => {
       const savedAt = new Date().toISOString();
       let savedLine: Row | null = null;
       if (line) {
-        const nextSettings = { ...settings, inbound_voice: selectedVoice, inbound_model_id: selectedModel, voice_preference_saved_at: savedAt };
+        const nextSettings = { ...settings, inbound_voice: selectedVoice, voice_gender: selectedVoice === "Man" ? "male" : "female", inbound_model_id: selectedModel, voice_preference_saved_at: savedAt };
         const { data, error: saveError } = await admin.from("twiga_phone_lines")
           .update({ settings: nextSettings, updated_at: savedAt }).eq("id", line.id).select("*").single();
         if (saveError) throw saveError;
@@ -387,7 +388,7 @@ Deno.serve(async (req: Request) => {
       if (profileRow) {
         const details: Row = profileRow.setup_details && typeof profileRow.setup_details === "object" ? profileRow.setup_details : {};
         const { error: profileSaveError } = await admin.from("twiga_business_profiles")
-          .update({ setup_details: { ...details, voice_preference: { voice: selectedVoice, model: selectedModel, saved_at: savedAt } }, updated_at: savedAt, updated_by: user.id })
+          .update({ setup_details: { ...details, voice_preference: { voice: selectedVoice, gender: selectedVoice === "Man" ? "male" : "female", model: selectedModel, saved_at: savedAt } }, updated_at: savedAt, updated_by: user.id })
           .eq("business_id", businessId);
         if (profileSaveError) throw profileSaveError;
       }
