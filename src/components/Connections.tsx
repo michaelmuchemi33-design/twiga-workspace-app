@@ -27,9 +27,6 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   const [oauthConfig, setOauthConfig] = useState<any>({ serverConfigured: false });
   const [sautikitConfig, setSautikitConfig] = useState<any>({});
   const [openrouterConfig, setOpenrouterConfig] = useState<any>({});
-  const [googleSecretConfig, setGoogleSecretConfig] = useState<any>({});
-  const [googleClientIdInput, setGoogleClientIdInput] = useState("");
-  const [googleClientSecretInput, setGoogleClientSecretInput] = useState("");
   const [sautikitKey, setSautikitKey] = useState("");
   const [openrouterKey, setOpenrouterKey] = useState("");
   const [providerBusy, setProviderBusy] = useState(false);
@@ -63,18 +60,15 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
 
   const refreshProviders = useCallback(async () => {
     if (!businessId || !supabase) return;
-    const [sautikit, openrouter, googleSecrets, sms] = await Promise.allSettled([
+    const [sautikit, openrouter, sms] = await Promise.allSettled([
       supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } }),
       supabase.functions.invoke("twiga-platform-secrets", { body: { action: "get_config" } }),
-      supabase.functions.invoke("twiga-platform-secrets", { body: { action: "google.oauth.status" } }),
       supabase.functions.invoke("twiga-kimisms", { body: { action: "get_config", businessId } }),
     ]);
     if (sautikit.status === "fulfilled" && !sautikit.value.error && !sautikit.value.data?.error) setSautikitConfig(sautikit.value.data || {});
     else setSautikitConfig({ isPlatformAdmin: false, providerError: sautikit.status === "rejected" ? String(sautikit.reason) : sautikit.value.error?.message });
     if (openrouter.status === "fulfilled" && !openrouter.value.error && !openrouter.value.data?.error) setOpenrouterConfig(openrouter.value.data || {});
     else setOpenrouterConfig({ isAdmin: false });
-    if (googleSecrets.status === "fulfilled" && !googleSecrets.value.error && !googleSecrets.value.data?.error) setGoogleSecretConfig(googleSecrets.value.data || {});
-    else setGoogleSecretConfig({ isAdmin: false });
     if (sms.status === "fulfilled" && !sms.value.error && !sms.value.data?.error) {
       setSmsConfig(sms.value.data || { connected: false });
       setSmsSenderName(String(sms.value.data?.senderName || ""));
@@ -95,7 +89,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
         setMessage("Google connected as " + (saved.googleEmail || "your account") + "."); await refresh(); return;
       }
       const cfg = await action("oauth.config");
-      if (!cfg.clientId) throw new Error(googleSecretConfig.isAdmin ? "TWIGA Google credentials are not configured yet. Complete the one-time platform setup." : "Google connection is being prepared by TWIGA. Please try again later.");
+      if (!cfg.clientId) throw new Error("Google access is not ready yet. TWIGA is handling the configuration; please try again shortly.");
       await loadGoogleIdentity();
       const client = (window as any).google.accounts.oauth2.initCodeClient({
         client_id: cfg.clientId, scope: (cfg.scopes || []).join(" "), ux_mode: "popup", access_type: "offline", prompt: "consent", include_granted_scopes: true,
@@ -146,21 +140,6 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       setProviderMessage(data?.message || (provider === "openrouter" ? "OpenRouter key validated and saved in encrypted storage." : "SautiKit key validated and saved in encrypted storage."));
       await refreshProviders();
     } catch (e) { setProviderMessage(e instanceof Error ? e.message : "Could not save provider key."); }
-    finally { setProviderBusy(false); }
-  };
-
-  const saveGoogleOAuth = async () => {
-    if (!supabase) return;
-    if (!googleClientIdInput.trim() || !googleClientSecretInput.trim()) { setProviderMessage("Enter both the Google OAuth Web Client ID and Client Secret."); return; }
-    setProviderBusy(true); setProviderMessage("Saving Google OAuth credentials securely…");
-    try {
-      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "google.oauth.save", clientId: googleClientIdInput.trim(), clientSecret: googleClientSecretInput.trim() } });
-      if (error) throw new Error(error.message);
-      if (data?.error) throw new Error(String(data.error));
-      setGoogleClientIdInput(""); setGoogleClientSecretInput("");
-      setProviderMessage(data?.message || "Google OAuth credentials saved in encrypted Vault.");
-      await Promise.all([refresh(), refreshProviders()]);
-    } catch (e) { setProviderMessage(e instanceof Error ? e.message : "Could not save Google OAuth credentials."); }
     finally { setProviderBusy(false); }
   };
 
@@ -237,10 +216,8 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     <header className="rounded-2xl border border-neutral-200 bg-white p-6">
       <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Workspace integrations</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Connections & permissions</h1>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Connect your business Google account to Calendar, Contacts, Sheets and Drive. TWIGA manages the technical setup securely in the background — you do not need API keys or developer credentials.</p>
-      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{!oauthConfig.serverConfigured && !googleAuth?.tokens?.accessToken ? (googleSecretConfig.isAdmin ? "Google connection needs the TWIGA platform credentials configured below. This is a one-time administrator task; customers never need to enter keys." : "Google connection is being prepared by TWIGA. You do not need to enter any credentials. Please try again later or contact TWIGA support.") : "Your Google account can be connected securely below. TWIGA only receives the permissions you approve."}</div>
-      {googleSecretConfig.isAdmin && <div className="mt-3 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-sm leading-6 text-neutral-700">
-        <strong>Google sign-in domain check:</strong> if Google shows <code>400 origin_mismatch</code>, add <code>https://live.twiga.co.ke</code> and <code>https://app.twiga.co.ke</code> as Authorized JavaScript origins on the same Google OAuth Web client. Add this Authorized redirect URI: <code>https://ztyxxikkposfpxsutnfr.supabase.co/auth/v1/callback</code>. Do not add a path or wildcard to the JavaScript origins. <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="ml-1 font-semibold text-orange-700 underline">Open Google Cloud credentials ↗</a>
-      </div>}
+      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{!oauthConfig.serverConfigured && !googleAuth?.tokens?.accessToken ? "Google access is being prepared by TWIGA. You do not need to enter any keys or credentials." : "Your Google account can be connected securely below. TWIGA only receives the permissions you approve."}</div>
+      
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-800">{status.connected ? "Google connected" : "Google not connected"}</span>
         {status.googleEmail && <span className="text-sm text-neutral-600">{status.googleEmail}</span>}
@@ -250,16 +227,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       </div>
       {!businessId && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Create or select a business in AI Setup first.</p>}
     </header>
-    {googleSecretConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Platform OAuth credentials</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">Google OAuth Web Client</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-600">These are TWIGA's application credentials, not a customer's Google password. Save them once; each business owner separately approves Calendar, Contacts, Sheets and Drive access.</p></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${oauthConfig.serverConfigured ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{oauthConfig.serverConfigured ? "OAuth ready" : "Credentials needed"}</span></div>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <label className="block text-sm font-medium text-neutral-800">Google OAuth Client ID<input value={googleClientIdInput} onChange={e => setGoogleClientIdInput(e.target.value)} placeholder="xxxx.apps.googleusercontent.com" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
-        <label className="block text-sm font-medium text-neutral-800">Google OAuth Client Secret<input type="password" autoComplete="new-password" value={googleClientSecretInput} onChange={e => setGoogleClientSecretInput(e.target.value)} placeholder="Paste Google OAuth client secret" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-600"><span>Client ID: {googleSecretConfig.clientIdConfigured ? `saved ····${googleSecretConfig.clientIdLast4 || ""}` : "missing"}</span><span>Client Secret: {googleSecretConfig.clientSecretConfigured ? `saved ····${googleSecretConfig.clientSecretLast4 || ""}` : "missing"}</span><span>Token encryption: {googleSecretConfig.encryptionReady ? "ready" : "missing"}</span></div>
-      <div className="mt-3 flex flex-wrap items-center gap-3"><button onClick={() => void saveGoogleOAuth()} disabled={providerBusy || !googleClientIdInput.trim() || !googleClientSecretInput.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save Google credentials</button><a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="text-sm font-semibold text-orange-700 underline">Get Google OAuth credentials ↗</a></div>
-      <div className="mt-4 rounded-xl border border-orange-100 bg-orange-50/50 p-3 text-sm leading-6 text-neutral-700"><strong>Google sign-in is a separate setting.</strong> These Vault credentials power Calendar, Contacts, Sheets and Drive consent. To make the Google login button work, paste the same Client ID and Secret into <a href="https://supabase.com/dashboard/project/ztyxxikkposfpxsutnfr/auth/providers" target="_blank" rel="noreferrer" className="font-semibold text-orange-700 underline">Supabase Auth → Providers → Google ↗</a> as well. Add this authorized redirect URI in Google Cloud: <code className="break-all">https://ztyxxikkposfpxsutnfr.supabase.co/auth/v1/callback</code>.</div>
-    </section>}
+    
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <h2 className="text-lg font-semibold text-neutral-950">Google permissions</h2><p className="mt-1 text-sm text-neutral-500">Approve access in Google. You can revoke it from your Google Account at any time.</p>
       <div className="mt-4 divide-y divide-neutral-100">
@@ -273,7 +241,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       </div>
       {status.spreadsheetUrl && <a href={status.spreadsheetUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block text-sm font-semibold text-orange-700 underline">Open business spreadsheet</a>}
     </section>
-    {googleSecretConfig.isAdmin && <section className="grid gap-5 lg:grid-cols-2">
+    {openrouterConfig.isAdmin && <section className="grid gap-5 lg:grid-cols-2">
       <div className="rounded-2xl border border-neutral-200 bg-white p-5">
         <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Business setup assistant</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">OpenRouter · free models</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${openrouterConfig.keyConfigured ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{openrouterConfig.keyConfigured ? "Connected" : openrouterConfig.isAdmin ? "API key needed" : "Managed by TWIGA"}</span></div>
         <p className="mt-2 text-sm leading-6 text-neutral-600">OpenRouter routes business onboarding through available free models only. TWIGA does not silently fall back to paid models. The API key is validated on the server and stored in Supabase Vault; it is never exposed to customer browsers. The model may be rate-limited, so TWIGA does not silently switch to a paid model.</p>
@@ -298,7 +266,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
         </> : <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">The provider key is managed centrally by TWIGA. Your business line and voice settings remain separate.</p>}
       </div>
     </section>}
-    {googleSecretConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+    {openrouterConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Business SMS provider</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">KIMISMS · SMS notifications</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">KIMISMS sends SMS across Kenyan mobile networks. It uses a Client ID and Client Secret plus your approved Sender ID. This is separate from PalPluss M-Pesa and SautiKit voice. Credentials are encrypted per business.</p>
