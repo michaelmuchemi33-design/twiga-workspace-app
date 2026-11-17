@@ -199,6 +199,21 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Choose the receptionist voice</h2><p className="mt-1 text-sm text-neutral-500">All voices and model tiers returned by SautiKit. Your tested Woman voice stays selected by default.</p></div><span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">{catalogOptions.length ? catalogOptions.length + " voice/model options" : "10 catalogue voices"}</span></div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        {(["Man", "Woman"] as const).map((gender) => {
+          const option = catalogOptions.find((v) => v.voice === gender && v.model === model)
+            || catalogOptions.find((v) => v.voice === gender);
+          const selectedGender = voice === gender;
+          return <button key={gender} type="button" disabled={!data.keyConfigured || !option}
+            onClick={() => { if (option) { setVoice(option.voice); setModel(option.model); } }}
+            className={"rounded-xl border-2 px-4 py-3 text-left transition " + (selectedGender ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-orange-300") + (!data.keyConfigured || !option ? " opacity-50" : "")}>
+            <span className="block text-sm font-semibold text-neutral-950">{gender === "Man" ? "Male voice" : "Female voice"}</span>
+            <span className="mt-1 block text-xs text-neutral-600">{option ? option.voice + " · " + (MODEL_LABELS[option.model] || option.model) : "Not available in the connected catalogue"}</span>
+            {selectedGender ? <span className="mt-2 inline-block text-xs font-semibold text-orange-800">Currently selected</span> : <span className="mt-2 inline-block text-xs font-medium text-neutral-500">Choose this voice</span>}
+          </button>;
+        })}
+      </div>
+      <p className="mt-3 text-xs text-neutral-500">Choose Male or Female for a quick switch, or select any named voice below. Changes take effect on incoming and outgoing calls after you save and publish.</p>
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
         {catalogOptions.map((v) => {
           const isSelected = voice === v.voice && model === v.model;
