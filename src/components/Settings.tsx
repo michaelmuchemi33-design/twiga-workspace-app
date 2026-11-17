@@ -462,17 +462,14 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
             <ToggleRow label="Push" desc="In-app notification" checked={s.notifyPush} onChange={(v) => patch("scheduling", { notifyPush: v })} />
           </Section>
 
-          <Section icon={IconSwap} title="Compliance & Call Recording" desc="Recording toggles and legal disclaimer" className="lg:col-span-2">
-            <ToggleRow label="Enable call recording" desc="Store audio for quality and disputes" checked={s.recording} onChange={(v) => patch("scheduling", { recording: v })} />
-            <Field label="Recording disclaimer">
+          <Section icon={IconSwap} title="Compliance & Call Recording" desc="Provider-controlled recording and storage" className="lg:col-span-2">
+            <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-4">
+              <p className="text-sm font-semibold text-neutral-900">Recording is not enabled by this settings page.</p>
+              <p className="mt-2 text-sm leading-6 text-neutral-600">This workspace preference does not switch on SautiKit audio capture or copy audio into TWIGA cloud storage. Check the actual per-business recording status under Phone & AI → Call recordings & cloud storage. Keep recording off until the caller disclosure and provider recording behaviour have been verified.</p>
+            </div>
+            <Field label="Preferred recording disclosure text (draft only)">
               <Input value={s.disclaimer} onChange={(e) => patch("scheduling", { disclaimer: e.target.value })} />
             </Field>
-            <div className="flex items-start gap-2 rounded-xl border border-orange-200 bg-orange-50 p-3">
-              <IconBulb className="mt-0.5 h-4 w-4 shrink-0 text-orange-500" />
-              <p className="text-xs text-orange-700">
-                When recording is on, the AI plays the disclaimer before the greeting.
-              </p>
-            </div>
           </Section>
         </div>
       )}
