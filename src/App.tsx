@@ -66,6 +66,15 @@ const moreTabs = [
 ];
 
 function WorkspaceApp({ demo = false, userId, googleAuth, onSignOut }: { demo?: boolean; userId?: string; googleAuth?: GoogleAuthContext; onSignOut?: () => void }) {
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    try { return localStorage.getItem("twiga_theme") === "light" ? "light" : "dark"; }
+    catch { return "dark"; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("twiga_theme", theme); } catch { /* storage may be unavailable */ }
+    document.documentElement.dataset.twigaTheme = theme;
+    document.documentElement.style.colorScheme = theme;
+  }, [theme]);
   const [tab, setTab] = useState("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
   const [businesses, setBusinesses] = useState<any[]>([]);
@@ -213,7 +222,7 @@ function WorkspaceApp({ demo = false, userId, googleAuth, onSignOut }: { demo?: 
     <StoreProvider demo={demo} userId={userId} businessId={businessId}>
       <div
         className={cn(
-          "twiga-workspace min-h-screen bg-[#090909] text-white transition-all duration-500",
+          cn("twiga-workspace min-h-screen transition-colors duration-300", theme === "dark" ? "theme-dark bg-[#090909] text-white" : "theme-light bg-white text-neutral-950"),
           isSetup ? "pb-10" : isNativeApp ? "pb-32" : "pb-8"
         )}
       >
@@ -232,6 +241,16 @@ function WorkspaceApp({ demo = false, userId, googleAuth, onSignOut }: { demo?: 
                 {googleAuth.profile.avatarUrl ? <img src={googleAuth.profile.avatarUrl} alt="" referrerPolicy="no-referrer" className="h-8 w-8 rounded-full border border-neutral-200 object-cover" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-orange-100 text-xs font-bold text-orange-800">{(googleAuth.profile.fullName || googleAuth.profile.email || "T").slice(0,1).toUpperCase()}</span>}
                 <span className="hidden max-w-[180px] sm:block"><span className="block truncate text-xs font-semibold text-neutral-800">{googleAuth.profile.fullName || "Your account"}</span><span className="block truncate text-[10px] text-neutral-500">{googleAuth.profile.email}</span></span>
               </div>}
+              <button
+                type="button"
+                onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}
+                aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                aria-pressed={theme === "dark"}
+                className="inline-flex h-10 items-center gap-2 rounded-xl border border-neutral-300 bg-transparent px-3 text-sm font-semibold text-current transition-colors duration-300 hover:border-orange-500 hover:bg-orange-500/10"
+              >
+                <span aria-hidden="true">{theme === "dark" ? "☀" : "☾"}</span>
+                <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>
+              </button>
               <InstallApp />{demo && <DemoInterest />}{!demo && onSignOut && <button onClick={onSignOut} className="h-10 rounded-xl border border-neutral-200 px-4 text-sm font-semibold text-neutral-600 hover:bg-neutral-50">Sign out</button>}
             </div>
           </div>
