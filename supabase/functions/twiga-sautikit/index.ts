@@ -31,6 +31,20 @@ async function skRequest(key: string, path: string, method = "GET", body?: unkno
   return data;
 }
 
+function resolveProviderVoice(voices: unknown[], requested: string): string {
+  const values = voices.map((value) => String(value || "")).filter(Boolean);
+  const exact = values.find((value) => value.toLowerCase() === requested.toLowerCase());
+  if (exact) return exact;
+  const isMale = requested === "Man";
+  const matches = values.filter((value) => {
+    const name = value.toLowerCase().replace(/[^a-z]/g, "");
+    return isMale
+      ? name === "man" || name.startsWith("man") || name === "male" || name.startsWith("male") || name.includes("masculine")
+      : name === "woman" || name.startsWith("woman") || name === "female" || name.startsWith("female") || name.includes("feminine");
+  });
+  return matches[0] || "";
+}
+
 function setupDetailLines(value: unknown) {
   const details: Row = value && typeof value === "object" ? value as Row : {};
   const labels: Record<string, string> = {
@@ -366,17 +380,18 @@ Deno.serve(async (req: Request) => {
       const selectedVoice = String(body.voice || "").trim();
       const selectedModel = String(body.model || "sautikit-flash").trim();
       if (!["Woman", "Man"].includes(selectedVoice)) return json({ error: "Choose Woman or Man." }, 400);
+      let providerVoice = selectedVoice;
       if (key) {
         const catalog = await skRequest(key, "/v1/models");
         const model = (Array.isArray(catalog?.data) ? catalog.data : []).find((entry: Row) => String(entry.id || "") === selectedModel);
-        const voices = Array.isArray(model?.voices) ? model.voices.map(String) : [];
         if (!model) return json({ error: "The selected voice model is not available in the connected SautiKit workspace." }, 400);
-        if (!voices.includes(selectedVoice)) return json({ error: "SautiKit does not currently list the " + selectedVoice.toLowerCase() + " voice for this model. Choose a supported model or reconnect the provider." }, 400);
+        providerVoice = resolveProviderVoice(Array.isArray(model.voices) ? model.voices : [], selectedVoice);
+        if (!providerVoice) return json({ error: "SautiKit does not currently list a " + (selectedVoice === "Man" ? "male" : "female") + " voice for this model. Choose another model or reconnect the provider catalogue." }, 400);
       }
       const savedAt = new Date().toISOString();
       let savedLine: Row | null = null;
       if (line) {
-        const nextSettings = { ...settings, inbound_voice: selectedVoice, voice_gender: selectedVoice === "Man" ? "male" : "female", inbound_model_id: selectedModel, voice_preference_saved_at: savedAt };
+        const nextSettings = { ...settings, inbound_voice: providerVoice, voice_gender: selectedVoice === "Man" ? "male" : "female", inbound_model_id: selectedModel, voice_preference_saved_at: savedAt };
         const { data, error: saveError } = await admin.from("twiga_phone_lines")
           .update({ settings: nextSettings, updated_at: savedAt }).eq("id", line.id).select("*").single();
         if (saveError) throw saveError;
@@ -388,11 +403,11 @@ Deno.serve(async (req: Request) => {
       if (profileRow) {
         const details: Row = profileRow.setup_details && typeof profileRow.setup_details === "object" ? profileRow.setup_details : {};
         const { error: profileSaveError } = await admin.from("twiga_business_profiles")
-          .update({ setup_details: { ...details, voice_preference: { voice: selectedVoice, gender: selectedVoice === "Man" ? "male" : "female", model: selectedModel, saved_at: savedAt } }, updated_at: savedAt, updated_by: user.id })
+          .update({ setup_details: { ...details, voice_preference: { voice: providerVoice, gender: selectedVoice === "Man" ? "male" : "female", model: selectedModel, saved_at: savedAt } }, updated_at: savedAt, updated_by: user.id })
           .eq("business_id", businessId);
         if (profileSaveError) throw profileSaveError;
       }
-      return json({ saved: true, voice: selectedVoice, model: selectedModel, phoneLine: savedLine, message: "Your " + selectedVoice.toLowerCase() + " voice preference has been saved." });
+      return json({ saved: true, voice: providerVoice, gender: selectedVoice === "Man" ? "male" : "female", model: selectedModel, phoneLine: savedLine, message: "Your " + (selectedVoice === "Man" ? "male" : "female") + " voice preference has been saved." });
     }
 
     if (!key) return json({ error: "Connect the SautiKit API key in Connections before changing phone routing." }, 409);
@@ -690,8 +705,10 @@ Deno.serve(async (req: Request) => {
       const modelId = String(body.model || agent.model || "");
       const voice = String(body.voice || agent.voice || "");
       const selectedModel = models.find((item) => item.id === modelId);
-      if (!selectedModel || !Array.isArray(selectedModel.voices) || !selectedModel.voices.includes(voice)) {
-        return json({ error: "That voice is not available on the selected SautiKit model." }, 400);
+      const providerVoice = selectedModel && Array.isArray(selectedModel.voices)
+        ? resolveProviderVoice(selectedModel.voices, voice) : "";
+      if (!selectedModel || !providerVoice) {
+        return json({ error: "SautiKit does not list a matching " + (voice === "Man" ? "male" : "female") + " voice for the selected model." }, 400);
       }
       const inbound = number?.routing?.inbound_agent || number?.inbound_agent || number?.routing?.inboundAgent;
       const inboundAgentId = inbound?.agent_id || inbound?.agentId;
@@ -733,7 +750,7 @@ Deno.serve(async (req: Request) => {
         accent: String(agent.accent || "Kenyan English and Kiswahili"),
         speech_style: String(agent.speech_style || "Warm, natural, clear Kenyan English and Kiswahili. Short turns and natural pauses."),
         model: modelId,
-        voice,
+        voice: providerVoice,
         max_call_minutes: Number(agent.max_call_minutes || 8),
       };
       const updated = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId), "PUT", updateBody);
@@ -745,7 +762,8 @@ Deno.serve(async (req: Request) => {
         inbound_agent_name: String(agent.name || "TWIGA Product Demo Guide"),
         inbound_agent_revision: Number(published.revision || (Number(settings.inbound_agent_revision || 0) + 1)),
         inbound_model_id: modelId,
-        inbound_voice: voice,
+        inbound_voice: providerVoice,
+        voice_gender: voice === "Man" ? "male" : "female",
         ai_agent_bound: true,
         provider_status: "active",
         prompt_profile: "twiga-dashboard-managed-v1",
@@ -759,7 +777,8 @@ Deno.serve(async (req: Request) => {
       return json({
         published: true,
         revision: published.revision,
-        voice,
+        voice: providerVoice,
+        gender: voice === "Man" ? "male" : "female",
         model: modelId,
         aiRatePerMinute: Number(selectedModel.rate_per_minute_minor || 0) / 100,
         agent: updated,
