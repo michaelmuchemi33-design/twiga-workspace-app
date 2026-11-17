@@ -14,10 +14,11 @@ async function edgeFunctionError(error: unknown) {
   return err?.message || "The request could not be completed.";
 }
 
-export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
+export default function SetupPage({ demo = false, onDone, onBusinessCreated, onOpenConnections }: {
   demo?: boolean;
   onDone: () => void;
   onBusinessCreated: (id: string) => void;
+  onOpenConnections?: () => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([
     { id: "welcome", role: "ai", text: "Hello! I'm your TWIGA business setup helper. I help you describe your business and build its private workspace. Start with your business name, what you sell or do, and where you operate. I'll ask a few questions and organise the details. I can also draft your receptionist greeting and call-handling instructions. After your workspace is created, use Phone & AI to review them, publish your receptionist and test a call." },
@@ -111,7 +112,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
     <header className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
       <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-500">TWIGA · Business setup assistant</p>
       <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-950">Build your business workspace</h1>
-      <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Describe your business in plain language. The assistant organises your business details and drafts your first phone greeting and receptionist instructions before creating a separate workspace. Grok powers business setup; SautiKit powers the live AI receptionist and outbound calls. If the chat cannot respond because Grok is not configured, a TWIGA platform administrator must save a valid xAI API key in Profile → Grok business setup helper. <a className="font-semibold text-orange-700 underline" href="https://console.x.ai/team/default/api-keys/" target="_blank" rel="noreferrer">Get an xAI API key</a>.</p>
+      <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Describe your business in plain language. The assistant organises your business details and drafts your first phone greeting and receptionist instructions before creating a separate workspace. Grok powers business setup; SautiKit powers the live AI receptionist and outbound calls. The setup chat needs the shared Grok connection. A TWIGA platform administrator can connect it under Connections. This key stays on the server and is never exposed to business customers. <a className="font-semibold text-orange-700 underline" href="https://console.x.ai/team/default/api-keys/" target="_blank" rel="noreferrer">Open xAI API keys</a>.</p>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <label className="block text-sm font-medium text-neutral-700">Business owner name<input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} autoComplete="name" placeholder="Your full name" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
         <label className="block text-sm font-medium text-neutral-700">Business contact email<input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} autoComplete="email" placeholder="you@business.co.ke" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
@@ -148,6 +149,12 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
         <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><h3 className="text-sm font-semibold text-neutral-900">What happens next?</h3><ol className="mt-3 space-y-3 text-xs leading-5 text-neutral-500"><li><strong className="text-neutral-800">1. Create workspace</strong><br/>Your business gets its own private records.</li><li><strong className="text-neutral-800">2. Connect services</strong><br/>Approve Google permissions and connect the existing SautiKit provider in Connections.</li><li><strong className="text-neutral-800">3. Configure receptionist</strong><br/>Choose one of the ten SautiKit voices, set inbound/outbound instructions and test with a real phone call.</li></ol></div>
       </aside>
     </div>
-    {error && <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+    {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+      <p>{error}</p>
+      {/Grok is not connected|xAI API key|setup assistant/i.test(error) && onOpenConnections ? <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button type="button" onClick={onOpenConnections} className="rounded-lg bg-neutral-950 px-4 py-2 text-xs font-semibold text-white">Open Connections</button>
+        <span className="text-xs text-red-700">Connect the shared Grok key, then return here and send your business details again.</span>
+      </div> : null}
+    </div>}
   </div>;
 }
