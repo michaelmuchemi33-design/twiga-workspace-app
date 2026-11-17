@@ -53,8 +53,8 @@ Deno.serve(async(req:Request)=>{
        const {data:keyData,error:keyError}=await db.rpc("twiga_get_provider_secret",{p_business_id:businessId,p_provider:"kimisms"});
        if(keyError||!keyData)throw new Error("Business KIMISMS credentials are not connected.");
        const creds=JSON.parse(String(keyData));
-       const recipient=String(order.customer_phone).replace(/[\\s().-]/g,"").replace(/^\\+/, "");
-       if(!/^254[17]\\d{8}$/.test(recipient))throw new Error("Order phone number is not a valid Kenyan mobile number.");
+       const recipient=String(order.customer_phone).replace(/[\s().-]/g,"").replace(/^\+/, "");
+       if(!/^254[17]\d{8}$/.test(recipient))throw new Error("Order phone number is not a valid Kenyan mobile number.");
        const idempotencyKey=order.id+":payment_confirmation";
        const {data:existingSms}=await db.from("twiga_sms_messages").select("id,status").eq("business_id",businessId).eq("idempotency_key",idempotencyKey).maybeSingle();
        if(existingSms && ["queued","pending","sent","delivered"].includes(String(existingSms.status))){
@@ -75,7 +75,8 @@ Deno.serve(async(req:Request)=>{
         });
         const tokenBody=await tokenResponse.json().catch(()=>({}));
         if(!tokenResponse.ok||!tokenBody.access_token)throw new Error("KIMISMS could not issue a bearer token.");
-        const smsText="Payment received by "+String(order.customer_name||"the business").slice(0,60)+". Order "+String(order.order_number||order.id.slice(0,8))+" · KSh "+Number(order.total_amount||0).toLocaleString("en-KE")+". Thank you.";
+        const {data:business}=await db.from("businesses").select("name").eq("id",businessId).maybeSingle();
+        const smsText="Payment received by "+String(business?.name||"the business").slice(0,60)+". Order "+String(order.order_number||order.id.slice(0,8))+" · KSh "+Number(order.total_amount||0).toLocaleString("en-KE")+". Thank you.";
         const smsResponse=await fetch("https://app.kimisms.com/api/send-sms",{
          method:"POST",
          headers:{Authorization:"Bearer "+tokenBody.access_token,"Content-Type":"application/json",Accept:"application/json","Idempotency-Key":idempotencyKey},
