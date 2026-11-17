@@ -22,6 +22,7 @@ export default function ScheduledCallsPanel({ businessId, defaultPhone, defaultR
   const [repeatCount, setRepeatCount] = useState("4");
   const [triggerType, setTriggerType] = useState("timer");
   const [onlyIfMissed, setOnlyIfMissed] = useState(false);
+  const [retryOnNoAnswer, setRetryOnNoAnswer] = useState(true);
   const [sourceCallId, setSourceCallId] = useState("");
   const [onlyIfUnpaid, setOnlyIfUnpaid] = useState(false);
   const [orderId, setOrderId] = useState("");
@@ -70,7 +71,7 @@ export default function ScheduledCallsPanel({ businessId, defaultPhone, defaultR
       const { data, error } = await supabase!.functions.invoke("twiga-scheduled-calls", {
         body: { action: "schedule", businessId, contacts: validNumbers.map((phone) => ({ phone })),
           reason: reason.trim(), scheduledAt: when.toISOString(), repeat, repeatCount: repeat === "none" ? 1 : repeats, timezone: "Africa/Nairobi", authorised: true,
-          triggerType, onlyIfMissed, sourceCallId: sourceCallId.trim(), onlyIfUnpaid, orderId: orderId.trim(), callingWindowStart: "08:00", callingWindowEnd: "20:00" },
+          triggerType, onlyIfMissed, sourceCallId: sourceCallId.trim(), onlyIfUnpaid, orderId: orderId.trim(), retryOnNoAnswer, callingWindowStart: "08:00", callingWindowEnd: "20:00" },
       });
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(String(data.error));
@@ -141,6 +142,11 @@ export default function ScheduledCallsPanel({ businessId, defaultPhone, defaultR
           <div><label className="flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" checked={onlyIfMissed} onChange={(event) => setOnlyIfMissed(event.target.checked)} className="mt-1" />Only call if the source inbound call is still missed or unanswered</label><select value={sourceCallId} onChange={(event) => setSourceCallId(event.target.value)} className="mt-2 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"><option value="">Select a missed inbound call…</option>{missedCalls.map(call => <option key={call.id} value={call.id}>{new Date(call.created_at).toLocaleString()} · {call.from_number || call.to_number || "Unknown number"} · {call.status}</option>)}</select>{!missedCalls.length && <p className="mt-1 text-xs text-neutral-500">No missed inbound calls are recorded for this business yet.</p>}</div>
           <div><label className="flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" checked={onlyIfUnpaid} onChange={(event) => setOnlyIfUnpaid(event.target.checked)} className="mt-1" />Only call if the related order is still unpaid</label><select value={orderId} onChange={(event) => setOrderId(event.target.value)} className="mt-2 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"><option value="">Select an unpaid order…</option>{unpaidOrders.map(order => <option key={order.id} value={order.id}>#{order.order_number || order.id.slice(0, 8)} · {order.customer_name || order.customer_phone || "Customer"} · KSh {Number(order.total_amount || 0).toLocaleString()}</option>)}</select>{!unpaidOrders.length && <p className="mt-1 text-xs text-neutral-500">No unpaid orders are recorded for this business yet.</p>}</div>
         </div>
+        <div className="rounded-xl border border-neutral-200 p-3">
+          <label className="flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" checked={retryOnNoAnswer} onChange={(event) => setRetryOnNoAnswer(event.target.checked)} className="mt-1" />
+            <span><strong className="font-semibold text-neutral-900">Retry once when unanswered</strong><span className="mt-1 block text-xs text-neutral-500">Wait five minutes, then make one final attempt. If there is still no answer, mark the contact as Unreachable. A no-answer result does not prove the phone number is invalid.</span></span>
+          </label>
+        </div>
         <label className="flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" checked={authorised} onChange={(event) => setAuthorised(event.target.checked)} className="mt-1" />
           <span>I confirm every recipient has authorised these calls and can be contacted for this stated purpose.</span></label>
         <div className="flex flex-wrap items-center gap-3">
@@ -157,7 +163,7 @@ export default function ScheduledCallsPanel({ businessId, defaultPhone, defaultR
               <div className="min-w-0"><p className="font-semibold text-neutral-900">{item.phone_number}</p>
                 <p className="mt-1 text-xs text-neutral-500">{item.task} · {new Date(item.due_at).toLocaleString("en-KE", { timeZone: "Africa/Nairobi" })}</p>
                 <p className="mt-1 text-xs text-neutral-500">{item.metadata?.repeat && item.metadata.repeat !== "none" ? "Repeats " + item.metadata.repeat : "One-time"} · {item.metadata?.dispatch_status || item.status}</p></div>
-              <div className="flex items-center gap-2"><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700">{item.status}</span>
+              <div className="flex items-center gap-2"><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700">{item.metadata?.final_outcome === "unreachable_after_no_answer" ? "Unreachable" : item.status}</span>
                 {["pending", "scheduled", "waiting_for_provider"].includes(item.status) && <button type="button" onClick={() => void cancel(String(item.metadata?.series_id || item.id))} disabled={busy} className="text-xs font-semibold text-orange-700 underline">Cancel</button>}</div>
             </div>
           ))}</div>}
