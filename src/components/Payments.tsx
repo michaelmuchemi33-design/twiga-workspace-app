@@ -277,12 +277,27 @@ export default function Payments() {
 
   const collected = transactions.filter((t) => String(t.status).toUpperCase() === "SUCCESS").reduce((sum, t) => sum + Number(t.amount || 0), 0);
   const pending = transactions.filter((t) => ["PENDING", "PROCESSING"].includes(String(t.status).toUpperCase())).reduce((sum, t) => sum + Number(t.amount || 0), 0);
+  const paymentSetup = [
+    { label: "Connect PalPluss API key", done: connected, tab: "keys" as const },
+    { label: "Add this business's Till or Paybill", done: channels.length > 0, tab: "collect" as const },
+    { label: "Save the public Paylink ID", done: Boolean(paylinkId.trim()), tab: "keys" as const },
+  ];
+  const paymentSetupDone = paymentSetup.every((step) => step.done);
 
   return <div className="space-y-6">
     <header className="flex flex-col gap-4 rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between">
       <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-500">Collections · M-Pesa</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Payments</h1><p className="mt-1 text-sm text-neutral-500">PalPluss verifies M-Pesa payments. After an owner confirms an order, TWIGA sends its secure checkout link by opted-in KIMISMS SMS.</p></div>
       <div className="flex gap-3"><div className="rounded-xl bg-neutral-950 px-4 py-3 text-white"><p className="text-[10px] uppercase tracking-widest text-neutral-400">Collected</p><p className="mt-1 text-xl font-bold">KES {collected.toLocaleString()}</p></div><div className="rounded-xl bg-neutral-950 px-4 py-3 text-white"><p className="text-[10px] uppercase tracking-widest text-neutral-400">Pending</p><p className="mt-1 text-xl font-bold">KES {pending.toLocaleString()}</p></div></div>
     </header>
+
+    <section className={"rounded-2xl border p-5 " + (paymentSetupDone ? "border-neutral-200 bg-white" : "border-orange-200 bg-orange-50/50")}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-700">First-time payment setup</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">{paymentSetupDone ? "Payments setup done" : "Finish connecting payments"}</h2><p className="mt-1 text-sm text-neutral-600">{paymentSetupDone ? "PalPluss is configured for this business. You can send M-Pesa prompts and use hosted Paylink checkout. Payments are only marked paid after PalPluss verification." : "Complete these three steps once. Each business uses its own payment destination and private key."}</p></div>
+        <span className={"rounded-full px-3 py-1 text-xs font-semibold " + (paymentSetupDone ? "bg-neutral-950 text-white" : "bg-white text-neutral-700")}>{paymentSetup.filter((step) => step.done).length}/3 complete</span>
+      </div>
+      <div className="mt-4 grid gap-2 md:grid-cols-3">{paymentSetup.map((step, index) => <div key={step.label} className="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white p-3"><div className="flex min-w-0 items-center gap-3"><span className={"grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold " + (step.done ? "bg-neutral-950 text-white" : "bg-orange-100 text-orange-800")}>{step.done ? "✓" : index + 1}</span><span className="text-sm font-medium text-neutral-800">{step.label}</span></div><button onClick={() => setTab(step.tab)} className="shrink-0 text-xs font-semibold text-orange-700 underline underline-offset-4">{step.done ? "Review" : "Set up"}</button></div>)}</div>
+      <p className="mt-3 text-xs leading-5 text-neutral-500">SMS is configured separately in Connections using the business's KIMISMS credentials. TWIGA only sends customer SMS after the business has enabled the relevant message type and recorded customer consent.</p>
+    </section>
 
     {pendingOrders.length > 0 && <section className="rounded-2xl border border-orange-200 bg-orange-50/50 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-widest text-orange-700">Completed AI calls</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">Orders awaiting payment request</h2><p className="mt-1 text-sm text-neutral-600">These orders were captured after the receptionist finished a call. Review the amount and customer, then confirm the order to send a secure PalPluss checkout link by opted-in SMS.</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-700">{pendingOrders.length} awaiting review</span></div>
