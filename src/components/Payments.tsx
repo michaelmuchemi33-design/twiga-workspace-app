@@ -26,6 +26,7 @@ export default function Payments() {
   const [connected, setConnected] = useState(false);
   const [keyLast4, setKeyLast4] = useState("");
   const [keyDraft, setKeyDraft] = useState("");
+  const [paylinkId, setPaylinkId] = useState("");
   const [balance, setBalance] = useState<any>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
@@ -92,6 +93,7 @@ export default function Payments() {
       const data = await invoke("get_config");
       setConnected(data.keyConfigured === true);
       setKeyLast4(data.keyLast4 || "");
+      setPaylinkId(String(data.paylinkId || ""));
       setBalance(data.balance || null);
       if (data.keyConfigured) { await loadTransactions(); await loadChannels(); }
       else { setTransactions([]); setChannels([]); }
@@ -116,6 +118,58 @@ export default function Payments() {
       await loadChannels();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "PalPluss key could not be saved.");
+    } finally { setBusy(false); }
+  };
+
+  const savePaylinkId = async () => {
+    const value = paylinkId.trim();
+    if (!value) { setMessage("Paste the public PalPluss Paylink ID from your PalPluss console."); return; }
+    setBusy(true); setMessage("Saving the business Paylink ID…");
+    try {
+      const data = await invoke("save_paylink", { paylinkId: value });
+      setPaylinkId(String(data.paylinkId || value));
+      setMessage(data.message || "Public PalPluss Paylink ID saved for this business.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save this business Paylink ID.");
+    } finally { setBusy(false); }
+  };
+
+  const payOrderWithPaylink = async (order: PendingOrder) => {
+    if (!paylinkId.trim()) { setMessage("Add this business's PalPluss Paylink ID in API & connection first."); setTab("keys"); return; }
+    const widget = (window as any).Palpluss;
+    if (!widget?.pay) { setMessage("PalPluss checkout did not load. Refresh the dashboard and try again."); return; }
+    if (!order.customer_phone || Number(order.total_amount) < 1) { setMessage("This order needs a customer phone and valid amount before checkout."); return; }
+    if (!window.confirm("Open PalPluss hosted checkout for " + order.customer_name + " for KES " + Number(order.total_amount).toLocaleString() + "? The M-Pesa prompt will go to " + order.customer_phone + ".")) return;
+    setBusy(true); setMessage("Opening PalPluss hosted M-Pesa checkout…");
+    try {
+      const paid = await widget.pay(paylinkId.trim(), {
+        amount: Number(order.total_amount),
+        phone: order.customer_phone,
+        customerName: order.customer_name,
+        lockPrefill: true,
+      });
+      const transactionId = String(paid?.txId || paid?.transactionId || paid?.tx_id || "").trim();
+      if (!transactionId) throw new Error("PalPluss checkout returned no transaction ID. The order has not been marked paid.");
+      const verification = await invoke("order.verify_paylink_payment", { orderId: order.id, transactionId });
+      if (!verification.verified) throw new Error(verification.message || "PalPluss has not confirmed this order as paid yet.");
+      let smsNote = "";
+      if (order.customer_sms_consent) {
+        try {
+          const { data, error } = await supabase!.functions.invoke("twiga-kimisms", { body: { action: "send_payment_confirmation", businessId, orderId: order.id } });
+          if (error) throw new Error(error.message);
+          if (data?.error) throw new Error(String(data.error));
+          smsNote = " Payment receipt SMS: " + (data?.duplicate ? "already submitted" : "submitted") + ".";
+        } catch (smsError) {
+          smsNote = " Payment is confirmed; the separate SMS receipt could not be sent: " + (smsError instanceof Error ? smsError.message : "SMS failed.");
+        }
+      } else {
+        smsNote = " No receipt SMS was sent because this customer has not opted in to SMS.";
+      }
+      setMessage("PalPluss verified KES " + Number(verification.amount || order.total_amount).toLocaleString() + " for order " + order.order_number + ". TWIGA marked it as paid." + smsNote);
+      await loadPendingOrders();
+      await loadTransactions();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "PalPluss checkout did not complete.");
     } finally { setBusy(false); }
   };
 
@@ -236,7 +290,7 @@ export default function Payments() {
 
     {pendingOrders.length > 0 && <section className="rounded-2xl border border-orange-200 bg-orange-50/50 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-widest text-orange-700">Completed AI calls</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">Orders awaiting payment request</h2><p className="mt-1 text-sm text-neutral-600">These orders were captured after the receptionist finished a call. Review the amount and customer, then approve the M-Pesa prompt to this business's selected Till or Paybill.</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-700">{pendingOrders.length} awaiting review</span></div>
-      <div className="mt-4 grid gap-3 md:grid-cols-2">{pendingOrders.map((order) => <div key={order.id} className="rounded-xl border border-neutral-200 bg-white p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-semibold text-neutral-950">{order.customer_name || "Customer"}</p><p className="mt-1 text-xs text-neutral-500">{order.customer_phone || "No phone captured"} · {order.order_number}</p></div><strong className="whitespace-nowrap text-sm text-neutral-950">KES {Number(order.total_amount).toLocaleString()}</strong></div><p className="mt-2 line-clamp-2 text-xs text-neutral-600">{order.description || "Order captured during AI receptionist call."}</p><div className="mt-3 grid gap-2 sm:grid-cols-2"><button onClick={() => void sendOrderConfirmationSms(order)} disabled={busy || !order.customer_phone} className="rounded-xl border border-neutral-200 px-3 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">{order.customer_sms_consent ? "Send order SMS" : "Confirm SMS consent & send"}</button><button onClick={() => void requestOrderPayment(order)} disabled={!connected || !selectedChannelId || busy || !order.customer_phone || Number(order.total_amount) < 1} className="rounded-xl bg-orange-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Working…" : "Approve & send M-Pesa prompt"}</button></div></div>)}</div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">{pendingOrders.map((order) => <div key={order.id} className="rounded-xl border border-neutral-200 bg-white p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-semibold text-neutral-950">{order.customer_name || "Customer"}</p><p className="mt-1 text-xs text-neutral-500">{order.customer_phone || "No phone captured"} · {order.order_number}</p></div><strong className="whitespace-nowrap text-sm text-neutral-950">KES {Number(order.total_amount).toLocaleString()}</strong></div><p className="mt-2 line-clamp-2 text-xs text-neutral-600">{order.description || "Order captured during AI receptionist call."}</p><div className="mt-3 grid gap-2 sm:grid-cols-3"><button onClick={() => void sendOrderConfirmationSms(order)} disabled={busy || !order.customer_phone} className="rounded-xl border border-neutral-200 px-3 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">{order.customer_sms_consent ? "Send order SMS" : "Confirm SMS consent & send"}</button><button onClick={() => void requestOrderPayment(order)} disabled={!connected || !selectedChannelId || busy || !order.customer_phone || Number(order.total_amount) < 1} className="rounded-xl border border-neutral-200 px-3 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">{busy ? "Working…" : "Send M-Pesa STK"}</button><button onClick={() => void payOrderWithPaylink(order)} disabled={!paylinkId.trim() || busy || !order.customer_phone || Number(order.total_amount) < 1} className="rounded-xl bg-orange-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Working…" : "Hosted Paylink checkout"}</button></div></div>)}</div>
     </section>}
 
     <div className="flex rounded-xl border border-neutral-200 bg-white p-1 shadow-sm"><button onClick={() => setTab("collect")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "collect" ? "bg-neutral-950 text-white" : "text-neutral-500")}>Collect</button><button onClick={() => setTab("keys")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "keys" ? "bg-neutral-950 text-white" : "text-neutral-500")}>API & connection</button></div>
@@ -285,9 +339,16 @@ export default function Payments() {
       </section>
     </div> : <div className="grid gap-6 lg:grid-cols-3">
       <section className="rounded-2xl border border-neutral-200 bg-neutral-950 p-5 text-white shadow-lg lg:col-span-2">
-        <h2 className="text-lg font-semibold">Optional business-specific PalPluss key</h2><p className="mt-1 text-sm text-neutral-400">TWIGA normally uses the central PalPluss account configured by the platform administrator. Add a separate business key only if this business has its own PalPluss account.</p>
-        <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} placeholder="pp_live_…" className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-700 bg-neutral-900 px-3 font-mono text-sm text-white placeholder:text-neutral-500" /><button onClick={saveKey} disabled={busy || keyDraft.trim().length < 20} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Checking…" : "Validate & save"}</button></div>
-        <p className="mt-3 text-xs leading-5 text-neutral-400">The API uses HTTP Basic authentication with the API key as username and an empty password. TWIGA creates the Base64 header server-side; you do not need to paste the separate Base64 token.</p>
+        <h2 className="text-lg font-semibold">Optional business-specific PalPluss API key</h2><p className="mt-1 text-sm text-neutral-400">TWIGA normally uses the central PalPluss account configured by the platform administrator. Add a separate business API key only if this business has its own PalPluss account.</p>
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} placeholder="pk_live_…" className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-700 bg-neutral-900 px-3 font-mono text-sm text-white placeholder:text-neutral-500" /><button onClick={saveKey} disabled={busy || keyDraft.trim().length < 20} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Checking…" : "Validate & save"}</button></div>
+        <p className="mt-3 text-xs leading-5 text-neutral-400">PalPluss uses one API key for server-to-server requests. TWIGA stores it in encrypted Vault and creates the Basic Authorization header server-side. Do not paste the key into the public Paylink field.</p>
+      </section>
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+        <h2 className="font-semibold text-neutral-950">Hosted M-Pesa Paylink</h2>
+        <p className="mt-2 text-sm leading-6 text-neutral-600">Create a Paylink in your PalPluss console, then paste its public ID here. TWIGA uses that ID to open PalPluss's hosted checkout and prefill each order's amount and phone. No extra secret key is needed for the browser widget.</p>
+        <label className="mt-3 block text-sm font-medium text-neutral-800">Public Paylink ID<input value={paylinkId} onChange={e => setPaylinkId(e.target.value)} maxLength={120} placeholder="Paste PalPluss Paylink ID" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 font-mono text-sm" /></label>
+        <button onClick={savePaylinkId} disabled={busy || !paylinkId.trim()} className="mt-3 w-full rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Save business Paylink ID</button>
+        <p className="mt-2 text-xs text-neutral-500">{paylinkId ? "Paylink ID saved or ready to save." : "No Paylink ID configured. Hosted checkout buttons remain disabled."}</p>
       </section>
       <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><h2 className="font-semibold text-neutral-950">Connection</h2><div className="mt-4 flex justify-between border-b pb-3 text-sm"><span className="text-neutral-500">Status</span><strong>{connected ? "Connected" : "Not connected"}</strong></div><div className="mt-3 flex justify-between border-b pb-3 text-sm"><span className="text-neutral-500">Key</span><strong>{connected ? "•••• " + keyLast4 : "Not saved"}</strong></div><div className="mt-3 flex justify-between text-sm"><span className="text-neutral-500">Service wallet</span><strong>{balance?.availableBalance != null ? "KES " + Number(balance.availableBalance).toLocaleString() : "Not checked"}</strong></div><button onClick={refresh} disabled={busy || !connected} className="mt-4 w-full rounded-xl border px-4 py-2.5 text-sm font-semibold disabled:opacity-40">Refresh connection</button></section>
     </div>}
