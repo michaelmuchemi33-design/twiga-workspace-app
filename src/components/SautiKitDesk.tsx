@@ -278,13 +278,15 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <h2 className="text-lg font-semibold text-neutral-950">Incoming calls</h2>
       {line ? <>
-        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <div className="mt-3 grid gap-3 sm:grid-cols-4">
           <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Existing business number</p><p className="mt-1 font-semibold text-neutral-950">{line.line_number}</p></div>
           <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Agent binding</p><p className="mt-1 font-semibold text-neutral-950">{inboundVerified ? "Live route verified" : inboundBound ? "Bound (saved)" : "Needs setup"}</p></div>
           <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Inbound status</p><p className="mt-1 font-semibold text-neutral-950">{line.inbound_status || "Unknown"}</p></div>
+          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Appointment tool</p><p className="mt-1 font-semibold text-neutral-950">{data.bookingToolReady ? "Connected" : Number(currentAgent?.tool_count || 0) > 0 ? "Other tools connected" : "Not connected"}</p></div>
         </div>
         <p className="mt-3 text-sm leading-6 text-neutral-600">{inboundVerified ? "SautiKit confirms this number is routed to the TWIGA agent. It still needs a real incoming call test from another phone before inbound is marked active." : inboundBound ? "TWIGA’s saved phone-line record confirms this number is bound to the TWIGA agent. Connect SautiKit in this dashboard to refresh the provider route; inbound remains in testing until a real incoming call is answered." : "The inbound route has not been confirmed. Do not treat incoming calls as production-ready until the number is bound and tested."}</p>
-        <button onClick={copyInboundNumber} className="mt-3 rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold text-neutral-800">Copy number for inbound test</button>
+        {!data.bookingToolReady ? <p className="mt-2 text-xs text-amber-800">This agent has no appointment-saving tool yet. New business agents get a dedicated booking tool; appointment requests remain pending staff confirmation.</p> : <p className="mt-2 text-xs text-neutral-500">The receptionist can save appointment requests for this business after caller consent; the team still confirms the final slot.</p>}
+         <button onClick={copyInboundNumber} className="mt-3 rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold text-neutral-800">Copy number for inbound test</button>
         {data.inboundMode ? <p className="mt-2 text-xs text-neutral-500">Routing mode: {data.inboundMode}</p> : null}
       </> : <p className="mt-3 text-sm text-neutral-600">No SautiKit number is assigned to this business.</p>}
     </section>

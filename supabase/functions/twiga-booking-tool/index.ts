@@ -35,13 +35,24 @@ Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ error: "POST only." }, 405);
   try {
     if (!BASE || !SERVICE) return json({ error: "TWIGA booking service is not configured." }, 503);
-    const secret = Deno.env.get("TWIGA_BOOKING_TOOL_SECRET") || "";
-    const supplied = req.headers.get("x-twiga-tool-secret") || "";
-    if (!secret || !safeEqual(secret, supplied)) return json({ error: "Booking tool authentication failed." }, 401);
     const body = await req.json().catch(() => ({}));
     const args: Row = body.arguments && typeof body.arguments === "object" ? body.arguments : body;
     const businessId = String(body.business_id || body.businessId || args.business_id || "").trim();
+    const agentId = String(body.agent_id || body.agentId || args.agent_id || "").trim();
     if (!/^[0-9a-f-]{36}$/i.test(businessId)) return json({ error: "This receptionist is not linked to a valid business workspace." }, 400);
+    const supplied = req.headers.get("x-twiga-tool-secret") || "";
+    let expectedSecret = Deno.env.get("TWIGA_BOOKING_TOOL_SECRET") || "";
+    if (agentId) {
+      if (!/^[0-9a-f-]{36}$/i.test(agentId)) return json({ error: "This receptionist agent ID is invalid." }, 400);
+      const lines = await adminRest("twiga_phone_lines?provider=eq.sautikit&business_id=eq." + encodeURIComponent(businessId) +
+        "&settings->>inbound_agent_id=eq." + encodeURIComponent(agentId) + "&select=id&limit=1");
+      if (!Array.isArray(lines) || !lines.length) return json({ error: "This agent is not bound to this business phone line." }, 401);
+      const secretValue = await adminRest("rpc/twiga_get_provider_secret", "POST", {
+        p_business_id: businessId, p_provider: "sautikit_booking_tool_secret",
+      });
+      expectedSecret = String(secretValue || "");
+    }
+    if (!expectedSecret || !safeEqual(expectedSecret, supplied)) return json({ error: "Booking tool authentication failed." }, 401);
     if (args.consent_confirmed !== true) return json({ error: "Caller consent to save the appointment request is required." }, 400);
     const customerName = String(args.customer_name || "").trim().slice(0, 160);
     const phone = normalizePhone(String(args.phone || ""));

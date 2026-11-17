@@ -5,6 +5,7 @@ const dashboard = read("src/components/Dashboard.tsx");
 const phone = read("src/components/PhoneDesk.tsx");
 const sautikit = read("src/components/SautiKitDesk.tsx");
 const sautikitFunction = read("supabase/functions/twiga-sautikit/index.ts");
+const bookingTool = read("supabase/functions/twiga-booking-tool/index.ts");
 const setup = read("src/components/SetupPage.tsx");
 const setupAssistant = read("supabase/functions/twiga-setup-assistant/index.ts");
 const profile = read("src/components/Profile.tsx");
@@ -73,6 +74,9 @@ checks.push(
   ["public payment links are token-hashed, expiring and server verified", publicPaylink.includes("SHA-256") && publicPaylink.includes("expires_at") && publicPaylink.includes("order.total_amount") && publicPaylink.includes("PalPluss")],
   ["public paylink checkout locks the server-supplied amount", publicPaylinkUi.includes("lockPrefill: true") && publicPaylinkUi.includes("twiga-public-paylink")],
   ["orders are not auto-texted before the owner confirms", !paymentUi.includes('row?.status === "pending_confirmation" && row?.payment_status === "unpaid"')],
+);
+checks.push(
+  ["SautiKit business agents receive a tenant-bound appointment tool", sautikitFunction.includes("/tools/") && sautikitFunction.includes("book_appointment") && bookingTool.includes("sautikit_booking_tool_secret") && bookingTool.includes("settings->>inbound_agent_id")],
 );
 let failed = 0;
 for (const [name, pass] of checks) {

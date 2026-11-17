@@ -189,6 +189,8 @@ Deno.serve(async (req: Request) => {
           && liveInboundVerified,
         inboundVerified: liveInboundVerified,
         inboundMode: liveInboundRoute?.mode || null,
+        bookingToolReady: settings.sautikit_booking_tool_ready === true,
+        bookingToolCount: Number(agent?.tool_count || 0),
       });
     }
 
@@ -245,7 +247,7 @@ Deno.serve(async (req: Request) => {
       const corePrompt = [
         "You are the dedicated AI receptionist for " + businessName + ". You serve only this business workspace. Do not mix information with another business.",
         profileFacts.join("\n"),
-        "Use only the profile and verified information for this business. If a price, stock level, booking slot, order status or payment status is not available, say the team will confirm it. Never invent a booking, order or payment. Never request passwords, PINs, OTPs, card numbers or security codes.",
+        "Use only the profile and verified information for this business. If a price, stock level, booking slot, order status or payment status is not available, say the team will confirm it. Never invent a booking, order or payment. Never request passwords, PINs, OTPs, card numbers or security codes. When a caller asks to make an appointment, collect their name, phone, service and preferred date/time with timezone; ask permission to save the request; then use book_appointment. Only say the request was saved if the tool returns success, and explain that the team must confirm the final slot.",
       ].join("\n\n");
       const basePrompt = composePrompt(corePrompt, scripts.greeting, scripts.inbound, scripts.outbound);
       const agentName = businessName + " · TWIGA Receptionist";
@@ -271,18 +273,23 @@ Deno.serve(async (req: Request) => {
         });
         if (secretSaveError) throw new Error("SautiKit created the agent, but TWIGA could not save its private tool-signing secret in Vault. Do not create another agent; contact TWIGA support.");
       }
-      const publishedEnvelope = await skRequest(key, "/v1/agents/" + encodeURIComponent(createdAgentId) + "/publish", "POST", {});
-      const published = publishedEnvelope?.revision || publishedEnvelope?.data?.revision || publishedEnvelope?.data || publishedEnvelope;
-      const revision = Number(published?.revision || published?.current_revision || published?.version || createdAgent?.current_revision || 1);
+      const bookingSecret = Array.from(crypto.getRandomValues(new Uint8Array(32))).map((x) => x.toString(16).padStart(2, "0")).join("");
+      const { error: bookingSecretError } = await admin.rpc("twiga_set_provider_secret", {
+        p_business_id: businessId, p_provider: "sautikit_booking_tool_secret", p_secret: bookingSecret, p_updated_by: user.id,
+      });
+      if (bookingSecretError) throw new Error("SautiKit created the agent, but TWIGA could not save its booking-tool credential in Vault. Do not create another agent; contact TWIGA support.");
+      const toolId = crypto.randomUUID();
       const nextSettings: Row = {
         ...settings,
         inbound_agent_id: createdAgentId,
         inbound_agent_provider: "sautikit-managed",
         inbound_agent_name: agentName,
-        inbound_agent_revision: revision,
+        inbound_agent_revision: 0,
         inbound_voice: voice,
         inbound_model_id: modelId,
         ai_agent_bound: false,
+        sautikit_booking_tool_id: toolId,
+        sautikit_booking_tool_ready: false,
         sautikit_scripts: scripts,
       };
       const { error: saveAgentError } = await admin.from("twiga_phone_lines")
@@ -290,7 +297,34 @@ Deno.serve(async (req: Request) => {
         .eq("id", line.id);
       if (saveAgentError) throw saveAgentError;
 
+      let revision = 0;
       try {
+        await skRequest(key, "/v1/agents/" + encodeURIComponent(createdAgentId) + "/tools/" + encodeURIComponent(toolId), "PUT", {
+          name: "book_appointment",
+          description: "Create a pending appointment request for this business. Ask the caller for their name, phone number, service and preferred date/time with timezone. Ask for explicit consent before saving. The team must confirm the final slot; never claim it is confirmed.",
+          url: "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-booking-tool",
+          method: "POST",
+          headers: { "x-twiga-tool-secret": bookingSecret },
+          body_params: { business_id: businessId, agent_id: createdAgentId },
+          timeout_ms: 12000,
+          parameters: {
+            type: "object",
+            properties: {
+              customer_name: { type: "string", description: "Caller’s full name." },
+              phone: { type: "string", description: "Caller phone number in international format, preferably +254..." },
+              service: { type: "string", description: "The service or appointment type requested." },
+              scheduled_at: { type: "string", description: "Preferred appointment date and time in ISO 8601 format including the timezone offset, for example 2026-11-18T10:00:00+03:00." },
+              duration_minutes: { type: "integer", minimum: 15, maximum: 240, description: "Requested appointment duration in minutes; default 30." },
+              notes: { type: "string", description: "Optional caller notes or preferences." },
+              consent_confirmed: { type: "boolean", description: "True only after the caller explicitly agrees that TWIGA may save the appointment request." },
+            },
+            required: ["customer_name", "phone", "service", "scheduled_at", "consent_confirmed"],
+            additionalProperties: false,
+          },
+        });
+        const publishedEnvelope = await skRequest(key, "/v1/agents/" + encodeURIComponent(createdAgentId) + "/publish", "POST", {});
+        const published = publishedEnvelope?.revision || publishedEnvelope?.data?.revision || publishedEnvelope?.data || publishedEnvelope;
+        revision = Number(published?.revision || published?.current_revision || published?.version || createdAgent?.current_revision || 1);
         await skRequest(key, "/v1/numbers/" + encodeURIComponent(numberId) + "/routing", "PUT", {
           voice_callback_url: callbackUrl,
           events_url: callbackUrl,
@@ -306,27 +340,63 @@ Deno.serve(async (req: Request) => {
             },
           },
         });
-        const boundSettings = { ...nextSettings, ai_agent_bound: true };
+        const boundSettings = { ...nextSettings, ai_agent_bound: true, sautikit_booking_tool_ready: true, inbound_agent_revision: revision };
         const { error: saveBoundError } = await admin.from("twiga_phone_lines")
           .update({ settings: boundSettings, inbound_enabled: true, inbound_status: "testing", updated_at: new Date().toISOString() })
           .eq("id", line.id);
         if (saveBoundError) throw saveBoundError;
         return json({
-          created: true, bound: true, agentId: createdAgentId, revision, voice, model: modelId,
+          created: true, bound: true, bookingToolReady: true, agentId: createdAgentId, revision, voice, model: modelId,
           message: "Created a dedicated " + businessName + " receptionist, published revision " + revision + " and bound it to this business's existing SautiKit number. Inbound remains in testing until a real call is answered.",
         });
       } catch (routeError) {
         const routeMessage = routeError instanceof Error ? routeError.message : "SautiKit did not confirm the inbound route.";
         return json({
-          created: true, bound: false, agentId: createdAgentId, revision,
-          error: "The dedicated agent was created, but the number binding needs to be retried: " + routeMessage,
-          message: "The agent is saved for this business. Use Retry inbound binding; do not create another agent.",
+          created: true, bound: false, bookingToolReady: false, agentId: createdAgentId, revision,
+          error: "The dedicated agent was created, but its appointment tool or inbound binding needs to be retried: " + routeMessage,
+          message: "The agent is saved for this business. Use Retry inbound binding to finish the appointment tool and phone setup; do not create another agent.",
         }, 502);
       }
     }
 
     if (action === "bind_agent") {
       if (!agentId) return json({ error: "Create this business's receptionist first." }, 409);
+      const { data: bookingSecret, error: bookingSecretError } = await admin.rpc("twiga_get_provider_secret", {
+        p_business_id: businessId, p_provider: "sautikit_booking_tool_secret",
+      });
+      if (bookingSecretError || !bookingSecret) return json({ error: "This business's appointment-tool credential is not saved. Recreate the business agent or contact TWIGA support." }, 409);
+      const toolId = String(settings.sautikit_booking_tool_id || crypto.randomUUID());
+      await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/tools/" + encodeURIComponent(toolId), "PUT", {
+        name: "book_appointment",
+        description: "Create a pending appointment request for this business. Ask the caller for their name, phone number, service and preferred date/time with timezone. Ask for explicit consent before saving. The team must confirm the final slot; never claim it is confirmed.",
+        url: "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-booking-tool",
+        method: "POST",
+        headers: { "x-twiga-tool-secret": String(bookingSecret) },
+        body_params: { business_id: businessId, agent_id: agentId },
+        timeout_ms: 12000,
+        parameters: {
+          type: "object",
+          properties: {
+            customer_name: { type: "string", description: "Caller’s full name." },
+            phone: { type: "string", description: "Caller phone number in international format, preferably +254..." },
+            service: { type: "string", description: "The service or appointment type requested." },
+            scheduled_at: { type: "string", description: "Preferred appointment date and time in ISO 8601 format including the timezone offset." },
+            duration_minutes: { type: "integer", minimum: 15, maximum: 240 },
+            notes: { type: "string" },
+            consent_confirmed: { type: "boolean", description: "True only after the caller explicitly agrees that TWIGA may save the appointment request." },
+          },
+          required: ["customer_name", "phone", "service", "scheduled_at", "consent_confirmed"],
+          additionalProperties: false,
+        },
+      });
+      const agentEnvelope = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId));
+      const agentData = agentEnvelope?.agent || agentEnvelope?.data?.agent || agentEnvelope?.data || agentEnvelope;
+      let revision = Number(agentData?.current_revision || 0);
+      if (String(agentData?.status || "").toLowerCase() !== "published" || revision < 1) {
+        const publishedEnvelope = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/publish", "POST", {});
+        const published = publishedEnvelope?.revision || publishedEnvelope?.data?.revision || publishedEnvelope?.data || publishedEnvelope;
+        revision = Number(published?.revision || published?.current_revision || published?.version || revision || 1);
+      }
       await skRequest(key, "/v1/numbers/" + encodeURIComponent(numberId) + "/routing", "PUT", {
         voice_callback_url: callbackUrl,
         events_url: callbackUrl,
@@ -342,12 +412,15 @@ Deno.serve(async (req: Request) => {
           },
         },
       });
-      const nextSettings = { ...settings, ai_agent_bound: true, inbound_agent_provider: "sautikit-managed" };
+      const nextSettings = {
+        ...settings, ai_agent_bound: true, inbound_agent_provider: "sautikit-managed",
+        sautikit_booking_tool_id: toolId, sautikit_booking_tool_ready: true, inbound_agent_revision: revision,
+      };
       const { error: saveError } = await admin.from("twiga_phone_lines")
         .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", updated_at: new Date().toISOString() })
         .eq("id", line.id);
       if (saveError) throw saveError;
-      return json({ bound: true, agentId, message: "SautiKit confirmed the inbound route. Keep it in testing until a real incoming call is answered." });
+      return json({ bound: true, bookingToolReady: true, agentId, revision, message: "The business appointment tool is connected, the agent is published and SautiKit confirmed the inbound route. Keep it in testing until a real incoming call is answered." });
     }
 
     if (action === "configure_forwarding") {
