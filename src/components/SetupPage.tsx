@@ -73,8 +73,8 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
       setMissing(Array.isArray(data.missingFields) ? data.missingFields : []);
       setReady(data.readyToBuild === true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The setup assistant could not reply.");
-      setMessages((m) => [...m, { id: String(Date.now() + 2), role: "ai", text: "I couldn't reach the setup assistant. " + (e instanceof Error ? e.message : "Please try again.") }]);
+      setError("TWIGA’s setup assistant is temporarily unavailable. Please try again shortly.");
+      setMessages((m) => [...m, { id: String(Date.now() + 2), role: "ai", text: "I’m having trouble reaching the setup assistant right now. Your details are safe — please try again shortly." }]);
     } finally {
       setThinking(false);
     }
@@ -98,7 +98,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
       if (data?.error) throw new Error(String(data.error));
       const businessId = String(data?.business?.id || "");
       if (!businessId) throw new Error("The workspace was not created. Please try again.");
-      setMessages((m) => [...m, { id: String(Date.now()), role: "ai", text: "Your private " + profile.business_name + " workspace is ready. Its customers, appointments, business details and receptionist configuration are separated from every other business. Next, connect Google, OpenRouter and SautiKit in Connections." }]);
+      setMessages((m) => [...m, { id: String(Date.now()), role: "ai", text: "Your private " + profile.business_name + " workspace is ready. Its customers, appointments, business details and receptionist configuration are separated from every other business. Next, connect your Google account in Connections. TWIGA manages the technical services securely for you — no API keys or developer setup are needed." }]);
       onBusinessCreated(businessId);
       onDone();
     } catch (e) {
@@ -112,7 +112,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
     <header className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
       <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-500">TWIGA · Business setup assistant</p>
       <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-950">Build your business workspace</h1>
-      <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Describe your business in plain language. The assistant organises your business details and drafts your first phone greeting and receptionist instructions before creating a separate workspace. OpenRouter powers business setup with the free Ling 3.2 Flash model; SautiKit powers live phone calls and outbound voice. The setup chat needs the shared OpenRouter connection. A TWIGA platform administrator can connect it under Connections. This key stays on the server and is never exposed to business customers. <a className="font-semibold text-orange-700 underline" href="https://console.OpenRouter/team/default/api-keys/" target="_blank" rel="noreferrer">Open OpenRouter API keys</a>.</p>
+      <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Describe your business in plain language. The assistant organises your business details and drafts your first phone greeting and receptionist instructions before creating a separate workspace. TWIGA provides the AI and phone services in the background. You do not need to create accounts, find API keys or configure technical settings.</p>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <label className="block text-sm font-medium text-neutral-700">Business owner name<input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} autoComplete="name" placeholder="Your full name" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
         <label className="block text-sm font-medium text-neutral-700">Business contact email<input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} autoComplete="email" placeholder="you@business.co.ke" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
@@ -146,15 +146,12 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
           <button onClick={buildWorkspace} disabled={!ready || building} className="mt-5 w-full rounded-xl bg-neutral-950 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{building ? "Creating workspace…" : "Create my business workspace"}</button>
           <p className="mt-2 text-[11px] leading-5 text-neutral-400">You can refine products, prices, hours and AI instructions after the workspace is created.</p>
         </div>
-        <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><h3 className="text-sm font-semibold text-neutral-900">What happens next?</h3><ol className="mt-3 space-y-3 text-xs leading-5 text-neutral-500"><li><strong className="text-neutral-800">1. Create workspace</strong><br/>Your business gets its own private records.</li><li><strong className="text-neutral-800">2. Connect services</strong><br/>Approve Google permissions and connect the existing SautiKit provider in Connections.</li><li><strong className="text-neutral-800">3. Configure receptionist</strong><br/>Choose one of the ten SautiKit voices, set inbound/outbound instructions and test with a real phone call.</li></ol></div>
+        <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><h3 className="text-sm font-semibold text-neutral-900">What happens next?</h3><ol className="mt-3 space-y-3 text-xs leading-5 text-neutral-500"><li><strong className="text-neutral-800">1. Create workspace</strong><br/>Your business gets its own private records.</li><li><strong className="text-neutral-800">2. Connect Google</strong><br/>Approve access to the Google services your business wants to use. TWIGA handles the rest.</li><li><strong className="text-neutral-800">3. Configure receptionist</strong><br/>Choose one of the ten SautiKit voices, set inbound/outbound instructions and test with a real phone call.</li></ol></div>
       </aside>
     </div>
     {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
       <p>{error}</p>
-      {/OpenRouter is not connected|OpenRouter API key|setup assistant/i.test(error) && onOpenConnections ? <div className="mt-3 flex flex-wrap items-center gap-3">
-        <button type="button" onClick={onOpenConnections} className="rounded-lg bg-neutral-950 px-4 py-2 text-xs font-semibold text-white">Open Connections</button>
-        <span className="text-xs text-red-700">Connect the shared OpenRouter key, then return here and send your business details again.</span>
-      </div> : null}
+      {error.includes("setup assistant") && <p className="mt-2 text-xs text-neutral-700">No action or technical setup is needed from you. Please try again shortly or contact TWIGA support.</p>}
     </div>}
   </div>;
 }
