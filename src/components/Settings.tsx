@@ -57,6 +57,10 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
   const filesApi = String(import.meta.env.VITE_TWIGA_FILES_API_URL || "https://twiga-business-files.twiga-ke.workers.dev").replace(/\/$/, "");
   const [tab, setTab] = useState<Tab>("basic");
   const [saved, setSaved] = useState(false);
+  const [palplussStatus, setPalplussStatus] = useState<any>({ keyConfigured: false, keySource: "missing" });
+  const [palplussKeyDraft, setPalplussKeyDraft] = useState("");
+  const [palplussBusy, setPalplussBusy] = useState(false);
+  const [palplussMessage, setPalplussMessage] = useState("");
 
   const patch = (group: keyof SettingsType, values: Record<string, unknown>) => {
     updateSettings({ [group]: { ...settings[group], ...values } } as Partial<SettingsType>);
@@ -101,6 +105,42 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
   useEffect(() => {
     void refreshStorage();
   }, [businessId, demo]);
+
+  const refreshPalpluss = async () => {
+    if (!businessId || demo || !supabase) {
+      setPalplussStatus({ keyConfigured: false, keySource: "missing" });
+      return;
+    }
+    const { data, error } = await supabase.functions.invoke("twiga-palpluss", { body: { action: "get_config", businessId } });
+    if (error || data?.error) {
+      setPalplussStatus({ keyConfigured: false, keySource: "missing" });
+      setPalplussMessage(error?.message || String(data?.error || "PalPluss status is unavailable."));
+      return;
+    }
+    setPalplussStatus(data || { keyConfigured: false, keySource: "missing" });
+  };
+
+  useEffect(() => { void refreshPalpluss(); }, [businessId, demo]);
+
+  const savePalplussKey = async () => {
+    if (!supabase || !businessId || !palplussKeyDraft.trim()) return;
+    setPalplussBusy(true);
+    setPalplussMessage("Validating the business PalPluss API key…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-palpluss", {
+        body: { action: "save_key", businessId, apiKey: palplussKeyDraft.trim() },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setPalplussKeyDraft("");
+      setPalplussMessage(data?.message || "PalPluss API key saved securely for this business.");
+      await refreshPalpluss();
+    } catch (error) {
+      setPalplussMessage(error instanceof Error ? error.message : "PalPluss key could not be saved.");
+    } finally {
+      setPalplussBusy(false);
+    }
+  };
 
   const testApiConnections = async () => {
     if (demo) { setApiStatus("Sign in to test live API connections."); return; }
@@ -264,7 +304,27 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
       </div>
 
       {tab === "basic" ? (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <section className="rounded-2xl border border-neutral-800 bg-neutral-950 p-5 text-white shadow-none">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-orange-400">Business payment connection</p>
+            <h2 className="mt-1 text-xl font-semibold text-white">PalPluss API key</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-300">Add this business’s own PalPluss key to send M-Pesa prompts and verify payments. The key is checked by the server and stored in encrypted Supabase Vault.</p>
+          </div>
+          <span className="rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-neutral-200">{palplussStatus.keySource === "business" ? "Business key saved" : palplussStatus.keySource === "platform" ? "Using TWIGA connection" : "Not connected"}</span>
+        </div>
+        {palplussStatus.keyConfigured && <p className="mt-3 text-xs text-neutral-300">{palplussStatus.keySource === "business" ? "Business API key saved" : "Using the central TWIGA key"}{palplussStatus.keyLast4 ? " · ending " + palplussStatus.keyLast4 : ""}.</p>}
+        {!demo && <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+          <input type="password" autoComplete="new-password" value={palplussKeyDraft} onChange={(event) => setPalplussKeyDraft(event.target.value)} placeholder="Paste PalPluss API key" className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-700 bg-neutral-900 px-3 text-sm text-white placeholder:text-neutral-500 outline-none focus:border-orange-500" />
+          <button type="button" onClick={() => void savePalplussKey()} disabled={palplussBusy || !businessId || palplussKeyDraft.trim().length < 20} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-neutral-950 hover:bg-orange-400 disabled:opacity-40">{palplussBusy ? "Validating…" : "Validate & save key"}</button>
+        </div>}
+        {demo && <p className="mt-3 text-sm text-neutral-300">Sign in and choose a business workspace to connect payments.</p>}
+        <p className="mt-3 text-xs leading-5 text-neutral-400">PalPluss authenticates with the API key using HTTP Basic authentication. It does not require a separate OAuth access token; TWIGA builds the authorization header on the server. Manage the business Till, Paybill and hosted Paylink in Payments.</p>
+        <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => { void refreshPalpluss(); }} disabled={palplussBusy || demo} className="rounded-lg border border-neutral-700 px-3 py-2 text-xs font-semibold text-neutral-200 hover:bg-neutral-900 disabled:opacity-40">Refresh payment status</button><button type="button" onClick={onOpenProfile} className="rounded-lg border border-neutral-700 px-3 py-2 text-xs font-semibold text-neutral-200 hover:bg-neutral-900">Open Phone & AI</button></div>
+        {palplussMessage && <p role="status" className="mt-3 rounded-xl border border-neutral-700 bg-neutral-900 p-3 text-sm text-neutral-200">{palplussMessage}</p>}
+      </section>
+
+      <div className="grid gap-6 lg:grid-cols-2">
           <Section icon={IconCoin} title="Business & Localization" desc="Currency, time and how the AI reads dates">
             <Field label="Business name">
               <Input value={b.name} onChange={(e) => patch("business", { name: e.target.value })} />
