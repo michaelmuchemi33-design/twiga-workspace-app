@@ -213,7 +213,7 @@ function WorkspaceApp({ demo = false, userId, googleAuth, onSignOut }: { demo?: 
     <StoreProvider demo={demo} userId={userId} businessId={businessId}>
       <div
         className={cn(
-          "min-h-screen bg-neutral-50 text-neutral-900 transition-all duration-500",
+          "twiga-workspace min-h-screen bg-[#090909] text-white transition-all duration-500",
           isSetup ? "pb-10" : isNativeApp ? "pb-32" : "pb-8"
         )}
       >
