@@ -95,7 +95,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
         setMessage("Google connected as " + (saved.googleEmail || "your account") + "."); await refresh(); return;
       }
       const cfg = await action("oauth.config");
-      if (!cfg.clientId) throw new Error("Google OAuth client ID is missing from TWIGA server settings.");
+      if (!cfg.clientId) throw new Error(googleSecretConfig.isAdmin ? "TWIGA Google credentials are not configured yet. Complete the one-time platform setup." : "Google connection is being prepared by TWIGA. Please try again later.");
       await loadGoogleIdentity();
       const client = (window as any).google.accounts.oauth2.initCodeClient({
         client_id: cfg.clientId, scope: (cfg.scopes || []).join(" "), ux_mode: "popup", access_type: "offline", prompt: "consent", include_granted_scopes: true,
@@ -244,13 +244,13 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-800">{status.connected ? "Google connected" : "Google not connected"}</span>
         {status.googleEmail && <span className="text-sm text-neutral-600">{status.googleEmail}</span>}
-        <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-700">{googleOAuthReady ? "OAuth credentials configured" : "Check OAuth configuration"}</span>
+        <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-700">{googleOAuthReady ? "Google ready" : "Google setup in progress"}</span>
         <button onClick={connect} disabled={busy || !businessId} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Please wait…" : status.connected ? "Review / reconnect permissions" : "Connect Google account"}</button>
         <button onClick={() => { void refresh(); void refreshProviders(); }} disabled={busy || providerBusy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700">Refresh status</button>
       </div>
       {!businessId && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Create or select a business in AI Setup first.</p>}
     </header>
-    <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+    {googleSecretConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Platform OAuth credentials</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">Google OAuth Web Client</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-600">These are TWIGA's application credentials, not a customer's Google password. Save them once; each business owner separately approves Calendar, Contacts, Sheets and Drive access.</p></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${oauthConfig.serverConfigured ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{oauthConfig.serverConfigured ? "OAuth ready" : "Credentials needed"}</span></div>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <label className="block text-sm font-medium text-neutral-800">Google OAuth Client ID<input value={googleClientIdInput} onChange={e => setGoogleClientIdInput(e.target.value)} placeholder="xxxx.apps.googleusercontent.com" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
@@ -259,7 +259,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-600"><span>Client ID: {googleSecretConfig.clientIdConfigured ? `saved ····${googleSecretConfig.clientIdLast4 || ""}` : "missing"}</span><span>Client Secret: {googleSecretConfig.clientSecretConfigured ? `saved ····${googleSecretConfig.clientSecretLast4 || ""}` : "missing"}</span><span>Token encryption: {googleSecretConfig.encryptionReady ? "ready" : "missing"}</span></div>
       <div className="mt-3 flex flex-wrap items-center gap-3"><button onClick={() => void saveGoogleOAuth()} disabled={providerBusy || !googleClientIdInput.trim() || !googleClientSecretInput.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save Google credentials</button><a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="text-sm font-semibold text-orange-700 underline">Get Google OAuth credentials ↗</a></div>
       <div className="mt-4 rounded-xl border border-orange-100 bg-orange-50/50 p-3 text-sm leading-6 text-neutral-700"><strong>Google sign-in is a separate setting.</strong> These Vault credentials power Calendar, Contacts, Sheets and Drive consent. To make the Google login button work, paste the same Client ID and Secret into <a href="https://supabase.com/dashboard/project/ztyxxikkposfpxsutnfr/auth/providers" target="_blank" rel="noreferrer" className="font-semibold text-orange-700 underline">Supabase Auth → Providers → Google ↗</a> as well. Add this authorized redirect URI in Google Cloud: <code className="break-all">https://ztyxxikkposfpxsutnfr.supabase.co/auth/v1/callback</code>.</div>
-    </section>
+    </section>}
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <h2 className="text-lg font-semibold text-neutral-950">Google permissions</h2><p className="mt-1 text-sm text-neutral-500">Approve access in Google. You can revoke it from your Google Account at any time.</p>
       <div className="mt-4 divide-y divide-neutral-100">
