@@ -61,7 +61,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
       const settings = next.phoneLine?.settings || {};
       setVoiceModel(settings.inbound_model_id || next.voicePreference?.model || next.agent?.model || "sautikit-flash");
       const savedGender = settings.voice_gender || next.voicePreference?.gender || "";
-      const savedVoice = settings.inbound_voice || next.agent?.voice || "Woman";
+      const savedVoice = settings.inbound_voice || next.voicePreference?.voice || next.agent?.voice || "Woman";
       setVoiceId(savedGender === "male" || savedVoice === "Man" ? "Man" : "Woman");
       setVoiceStep(1);
       setCorePrompt(String(next.agent?.base_prompt || "").split("----- TWIGA FRONT DESK SETTINGS -----")[0].trim());
@@ -199,7 +199,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
             <span className="mt-2 block text-sm text-neutral-600">Warm, clear female receptionist voice</span>
           </button>
           <button type="button" aria-pressed={voiceId === "Man"} onClick={() => setVoiceId("Man")} className={`rounded-2xl border-2 p-5 text-left transition ${voiceId === "Man" ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-neutral-400"}`}>
-            <span className="flex items-center justify-between"><span className="text-lg font-bold text-neutral-950">Man</span><span className={`grid h-5 w-5 place-items-center rounded-full border ${voiceId === "Man" ? "border-orange-500 bg-orange-500 text-white" : "border-neutral-300"}`}>{voiceId === "Man" ? "✓" : ""}</span></span>
+            <span className="flex items-center justify-between"><span className="text-lg font-bold text-neutral-950">Male</span><span className={`grid h-5 w-5 place-items-center rounded-full border ${voiceId === "Man" ? "border-orange-500 bg-orange-500 text-white" : "border-neutral-300"}`}>{voiceId === "Man" ? "✓" : ""}</span></span>
             <span className="mt-2 block text-sm text-neutral-600">Clear, confident male receptionist voice</span>
           </button>
         </div>
