@@ -27,6 +27,9 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   const [oauthConfig, setOauthConfig] = useState<any>({ serverConfigured: false });
   const [sautikitConfig, setSautikitConfig] = useState<any>({});
   const [xaiConfig, setXaiConfig] = useState<any>({});
+  const [openRouterConfig, setOpenRouterConfig] = useState<any>({});
+  const [openRouterKey, setOpenRouterKey] = useState("");
+  const [openRouterTest, setOpenRouterTest] = useState("");
   const [googleSecretConfig, setGoogleSecretConfig] = useState<any>({});
   const [googleClientIdInput, setGoogleClientIdInput] = useState("");
   const [googleClientSecretInput, setGoogleClientSecretInput] = useState("");
@@ -63,9 +66,10 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
 
   const refreshProviders = useCallback(async () => {
     if (!businessId || !supabase) return;
-    const [sautikit, xai, googleSecrets, sms] = await Promise.allSettled([
+    const [sautikit, xai, openrouter, googleSecrets, sms] = await Promise.allSettled([
       supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } }),
       supabase.functions.invoke("twiga-platform-secrets", { body: { action: "get_config" } }),
+      supabase.functions.invoke("twiga-platform-secrets", { body: { action: "openrouter.status" } }),
       supabase.functions.invoke("twiga-platform-secrets", { body: { action: "google.oauth.status" } }),
       supabase.functions.invoke("twiga-kimisms", { body: { action: "get_config", businessId } }),
     ]);
@@ -146,6 +150,32 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       setProviderMessage(data?.message || (provider === "grok" ? "Grok key validated and saved in encrypted storage." : "SautiKit key validated and saved in encrypted storage."));
       await refreshProviders();
     } catch (e) { setProviderMessage(e instanceof Error ? e.message : "Could not save provider key."); }
+    finally { setProviderBusy(false); }
+  };
+
+  const saveOpenRouterKey = async () => {
+    if (!supabase || !openRouterKey.trim()) { setProviderMessage("Paste the OpenRouter API key first."); return; }
+    setProviderBusy(true); setProviderMessage("Validating OpenRouter and checking the free model pool…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "openrouter.save", apiKey: openRouterKey.trim() } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setOpenRouterKey("");
+      setProviderMessage(data?.message || "OpenRouter key saved securely.");
+      await refreshProviders();
+    } catch (e) { setProviderMessage(e instanceof Error ? e.message : "Could not save OpenRouter key."); }
+    finally { setProviderBusy(false); }
+  };
+
+  const testOpenRouter = async () => {
+    if (!supabase) return;
+    setProviderBusy(true); setOpenRouterTest("Testing a live free OpenRouter model…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "openrouter.test" } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setOpenRouterTest("Working · " + data.modelUsed + " · " + data.reply + " · " + data.freeModelCount + " free models detected.");
+    } catch (e) { setOpenRouterTest(e instanceof Error ? e.message : "OpenRouter test failed."); }
     finally { setProviderBusy(false); }
   };
 
@@ -275,14 +305,14 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     </section>
     <section className="grid gap-5 lg:grid-cols-2">
       <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Business setup assistant</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">Grok · xAI</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${xaiConfig.keyConfigured ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{xaiConfig.keyConfigured ? "Connected" : xaiConfig.isAdmin ? "API key needed" : "Managed by TWIGA"}</span></div>
-        <p className="mt-2 text-sm leading-6 text-neutral-600">Grok powers the real business onboarding assistant. The key is validated against xAI and stored in Supabase Vault; it is never exposed to customer browsers.</p>
-        {xaiConfig.isAdmin ? <>
-          {xaiConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Encrypted key saved{xaiConfig.keyLast4 ? ` · ending ${xaiConfig.keyLast4}` : ""}.</p>}
-          <label className="mt-4 block text-sm font-medium text-neutral-800">{xaiConfig.keyConfigured ? "Replace Grok API key" : "Grok API key"}<input type="password" autoComplete="new-password" value={xaiKey} onChange={e => setXaiKey(e.target.value)} placeholder="Paste xAI API key" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
-          <a href="https://console.x.ai/team/default/api-keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Get a Grok API key ↗</a>
-          <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => void saveProviderKey("grok")} disabled={providerBusy || !xaiKey.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save Grok key</button>{xaiConfig.keyConfigured && <button onClick={() => void testGrok()} disabled={providerBusy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">Test Grok</button>}</div>
-          {grokTestMessage && <p role="status" className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{grokTestMessage}</p>}
+        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Business setup assistant</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">OpenRouter · Free AI model pool</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${xaiConfig.keyConfigured ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{xaiConfig.keyConfigured ? "Connected" : xaiConfig.isAdmin ? "API key needed" : "Managed by TWIGA"}</span></div>
+        <p className="mt-2 text-sm leading-6 text-neutral-600">OpenRouter powers the real business onboarding assistant. TWIGA discovers the current zero-priced :free text models, starts with the strongest available models, rotates across 10+ candidates and never falls back to paid models or xAI. The key is validated and stored in encrypted Supabase Vault; it is never exposed to customer browsers.</p>
+        {openRouterConfig.isAdmin ? <>
+          {openRouterConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Encrypted key saved ····{openRouterConfig.keyLast4 || ""} · {openRouterConfig.freeModelCount || 0} eligible free models detected.</p>}
+          <label className="mt-4 block text-sm font-medium text-neutral-800">{openRouterConfig.keyConfigured ? "Replace OpenRouter API key" : "OpenRouter API key"}<input type="password" autoComplete="new-password" value={openRouterKey} onChange={e => setOpenRouterKey(e.target.value)} placeholder="Paste OpenRouter API key" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
+          <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Get an OpenRouter API key ↗</a>
+          <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => void saveOpenRouterKey()} disabled={providerBusy || !openRouterKey.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save OpenRouter key</button>{openRouterConfig.keyConfigured && <button onClick={() => void testOpenRouter()} disabled={providerBusy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">Test free model</button>}</div>
+          {openRouterTest && <p role="status" className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{openRouterTest}</p>}
         </> : <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">Only the TWIGA platform administrator can manage this shared API key.</p>}
       </div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5">
