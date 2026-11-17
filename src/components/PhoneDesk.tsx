@@ -28,6 +28,8 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const [error, setError] = useState("");
   const [voiceModel, setVoiceModel] = useState("sautikit-flash");
   const [voiceId, setVoiceId] = useState("Woman");
+  const [voiceStep, setVoiceStep] = useState(1);
+  const [savingVoiceChoice, setSavingVoiceChoice] = useState(false);
   const [corePrompt, setCorePrompt] = useState("");
   const [greeting, setGreeting] = useState("Hello, karibu! How can I help you today?");
   const [inboundPrompt, setInboundPrompt] = useState("");
@@ -57,8 +59,11 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
       const next = (data || {}) as SautiKitConfig;
       setConfig(next);
       const settings = next.phoneLine?.settings || {};
-      setVoiceModel(settings.inbound_model_id || next.agent?.model || "sautikit-flash");
-      setVoiceId(settings.inbound_voice || next.agent?.voice || "Woman");
+      setVoiceModel(settings.inbound_model_id || next.voicePreference?.model || next.agent?.model || "sautikit-flash");
+      const savedGender = settings.voice_gender || next.voicePreference?.gender || "";
+      const savedVoice = settings.inbound_voice || next.agent?.voice || "Woman";
+      setVoiceId(savedGender === "male" || savedVoice === "Man" ? "Man" : "Woman");
+      setVoiceStep(1);
       setCorePrompt(String(next.agent?.base_prompt || "").split("----- TWIGA FRONT DESK SETTINGS -----")[0].trim());
       setGreeting(next.scripts?.greeting || "Hello, karibu! How can I help you today?");
       setInboundPrompt(next.scripts?.inbound || "");
@@ -84,6 +89,24 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const providerFailed = line?.inbound_status === "failed" || line?.outbound_status === "failed";
   const inboundStatus = config.inboundVerified ? "verified" : config.inboundBound ? "agent bound · live test pending" : line?.inbound_status || "not configured";
   const outboundStatus = line?.outbound_status || (line?.outbound_enabled ? "enabled" : "disabled");
+
+  const continueVoice = async () => {
+    if (!supabase || !businessId) { setError("Sign in and select a business before choosing a voice."); return; }
+    setSavingVoiceChoice(true); setError(""); setMessage("Saving your voice choice…");
+    try {
+      const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", {
+        body: { action: "save_voice_preference", businessId, model: voiceModel, voice: voiceId },
+      });
+      if (invokeError) throw new Error(invokeError.message);
+      if (data?.error) throw new Error(String(data.error));
+      setVoiceStep(2);
+      setMessage(data?.message || "Voice choice saved. Continue setting up your receptionist.");
+      await load();
+      setVoiceStep(2);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save your voice choice.");
+    } finally { setSavingVoiceChoice(false); }
+  };
 
   const publishVoice = async () => {
     if (!supabase || !businessId) return;
@@ -164,23 +187,40 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     {!config.keyConfigured && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><strong>TWIGA voice connection is awaiting central verification.</strong> Your business does not need a SautiKit account or API key. TWIGA must finish connecting the shared voice service before live voice publishing and calls can be enabled.</div>}
     {config.providerError && <div className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">SautiKit status: {config.providerError}</div>}
 
-    <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold text-neutral-950">Voice library & receptionist instructions</h2><p className="mt-1 text-sm text-neutral-500">The available voices are loaded from TWIGA’s centrally managed voice catalogue. Choose a female or male voice when the central connection is active.</p></div><span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-700">{voiceOptions.length} voice options</span></div>
-      {true ? <div className="mt-5 grid gap-4 lg:grid-cols-2">
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5 sm:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Step {voiceStep} of 2</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">{voiceStep === 1 ? "Choose your receptionist's voice" : "Finish your receptionist setup"}</h2><p className="mt-1 max-w-2xl text-sm text-neutral-600">{voiceStep === 1 ? "Pick a female or male voice. You can change it later from this page." : "Your voice choice is saved. Review the model and instructions, then publish when the provider is ready."}</p></div>
+        <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-700">{voiceStep === 1 ? "Voice selection" : "Receptionist settings"}</span>
+      </div>
+      {voiceStep === 1 ? <div className="mt-5">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <button type="button" aria-pressed={voiceId === "Woman"} onClick={() => setVoiceId("Woman")} className={`rounded-2xl border-2 p-5 text-left transition ${voiceId === "Woman" ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-neutral-400"}`}>
+            <span className="flex items-center justify-between"><span className="text-lg font-bold text-neutral-950">Woman</span><span className={`grid h-5 w-5 place-items-center rounded-full border ${voiceId === "Woman" ? "border-orange-500 bg-orange-500 text-white" : "border-neutral-300"}`}>{voiceId === "Woman" ? "✓" : ""}</span></span>
+            <span className="mt-2 block text-sm text-neutral-600">Warm, clear female receptionist voice</span>
+          </button>
+          <button type="button" aria-pressed={voiceId === "Man"} onClick={() => setVoiceId("Man")} className={`rounded-2xl border-2 p-5 text-left transition ${voiceId === "Man" ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-neutral-400"}`}>
+            <span className="flex items-center justify-between"><span className="text-lg font-bold text-neutral-950">Man</span><span className={`grid h-5 w-5 place-items-center rounded-full border ${voiceId === "Man" ? "border-orange-500 bg-orange-500 text-white" : "border-neutral-300"}`}>{voiceId === "Man" ? "✓" : ""}</span></span>
+            <span className="mt-2 block text-sm text-neutral-600">Clear, confident male receptionist voice</span>
+          </button>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-neutral-500">Selected: <strong className="text-neutral-900">{voiceId}</strong></p>
+          <button type="button" onClick={() => void continueVoice()} disabled={savingVoiceChoice} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-bold text-neutral-950 disabled:opacity-50">{savingVoiceChoice ? "Saving…" : "Continue →"}</button>
+        </div>
+      </div> : <div className="mt-5 grid gap-4 lg:grid-cols-2">
         <div className="space-y-4">
-          <label className="block text-sm font-medium text-neutral-800">AI model<select value={voiceModel} onChange={e => { const next = e.target.value; setVoiceModel(next); const model = (config.models || []).find(m => m.id === next); if (model?.voices?.length) setVoiceId(model.voices[0]); }} className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm">{(config.models || []).length ? (config.models || []).map(m => <option key={m.id} value={m.id}>{m.id}{typeof m.rate_per_minute_minor === "number" ? ` · ${(m.rate_per_minute_minor / 100).toFixed(2)} per minute` : ""}</option>) : <option value={voiceModel}>{voiceModel}</option> }</select></label>
-          <label className="block text-sm font-medium text-neutral-800">Voice · all provider options<select value={`${voiceModel}::${voiceId}`} onChange={e => { const [model, voice] = e.target.value.split("::"); setVoiceModel(model); setVoiceId(voice); }} className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm">{allVoices.length ? (config.models || []).map(m => <optgroup key={m.id} label={m.id}>{(m.voices || []).map(v => <option key={`${m.id}::${v}`} value={`${m.id}::${v}`}>{v}</option>)}</optgroup>) : voiceOptions.map(v => <option key={`${v.model}::${v.voice}`} value={`${v.model}::${v.voice}`}>{v.voice} · {v.model}</option>)}</select></label>
-          <p className="text-xs text-neutral-500">Published agent revision: {settings.inbound_agent_revision || config.agent?.revision || "—"}. Publishing updates the bound inbound agent and future outbound calls.</p>
+          <div className="flex items-center justify-between gap-3 rounded-xl bg-orange-50 p-3"><div><p className="text-xs font-semibold uppercase tracking-wide text-orange-800">Selected voice</p><p className="font-bold text-neutral-950">{voiceId}</p></div><button type="button" onClick={() => setVoiceStep(1)} className="rounded-lg border border-orange-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800">Change voice</button></div>
+          <label className="block text-sm font-medium text-neutral-800">AI model<select value={voiceModel} onChange={e => setVoiceModel(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm">{(config.models || []).length ? (config.models || []).map(m => <option key={m.id} value={m.id}>{m.id}{typeof m.rate_per_minute_minor === "number" ? ` · ${(m.rate_per_minute_minor / 100).toFixed(2)} per minute` : ""}</option>) : <option value={voiceModel}>{voiceModel}</option>}</select></label>
           <label className="block text-sm font-medium text-neutral-800">Core receptionist instructions<textarea value={corePrompt} onChange={e => setCorePrompt(e.target.value)} rows={5} maxLength={12000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
         </div>
         <div className="space-y-4">
           <label className="block text-sm font-medium text-neutral-800">What the receptionist says first<textarea value={greeting} onChange={e => setGreeting(e.target.value)} rows={2} maxLength={4000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
           <label className="block text-sm font-medium text-neutral-800">Inbound call instructions<textarea value={inboundPrompt} onChange={e => setInboundPrompt(e.target.value)} rows={4} maxLength={5000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
           <label className="block text-sm font-medium text-neutral-800">Outbound call instructions<textarea value={outboundPrompt} onChange={e => setOutboundPrompt(e.target.value)} rows={4} maxLength={5000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
-          <p className="rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-800">{config.keyConfigured && line && config.agent ? "The selected voice can be published when the SautiKit number and agent are verified." : "Voice choices are visible now. Publishing is locked until TWIGA reconnects the correct SautiKit workspace and verifies the assigned number."}</p>
+          <p className="rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-800">{config.keyConfigured && line && config.agent ? "The selected voice can be published to your SautiKit receptionist." : "Your preference is saved. Publishing is available when the SautiKit account, number and receptionist agent are connected."}</p>
           <button onClick={() => void publishVoice()} disabled={savingVoice || !voiceModel || !voiceId || !config.keyConfigured || !line || !config.agent} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{savingVoice ? "Publishing…" : "Publish voice & instructions"}</button>
         </div>
-      </div> : <p className="mt-4 rounded-xl bg-neutral-50 p-4 text-sm text-neutral-600">TWIGA manages the voice provider credentials. Choose a voice above; publishing and live calls unlock after the correct SautiKit workspace and number are verified.</p>}
+      </div>}
     </section>
 
     <section className="grid gap-5 lg:grid-cols-2">
