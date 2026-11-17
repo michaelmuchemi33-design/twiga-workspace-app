@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GoogleAuthContext } from "@/components/AuthGate";
-import { Capacitor } from "@capacitor/core";
 import { supabase } from "@/lib/supabase";
 import InstallApp from "@/components/InstallApp";
 import DemoInterest from "@/components/DemoInterest";
@@ -76,7 +75,13 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
   const [autoProvisioning, setAutoProvisioning] = useState(false);
   const autoProvisioned = useRef<string | null>(null);
   const googleConnectAttempted = useRef<string | null>(null);
-  const isNativeApp = Capacitor.isNativePlatform();
+  const [isCompactPwaLayout, setIsCompactPwaLayout] = useState(() => window.matchMedia("(max-width: 767px)").matches);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsCompactPwaLayout(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
 
   const refreshBusinesses = useCallback(async () => {
     if (demo || !userId || !supabase) return;
@@ -214,12 +219,12 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
       <div
         className={cn(
           "min-h-screen bg-neutral-50 text-neutral-900 transition-all duration-500",
-          isSetup ? "pb-10" : isNativeApp ? "pb-32" : "pb-8"
+          isSetup ? "pb-10" : isCompactPwaLayout ? "pb-32" : "pb-8"
         )}
       >
-        {!isNativeApp && <SideRail tab={tab} onSelect={go} />}
+        {!isCompactPwaLayout && <SideRail tab={tab} onSelect={go} />}
 
-        <main className={cn("mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8", !isNativeApp && "lg:pl-24")}>
+        <main className={cn("mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8", !isCompactPwaLayout && "lg:pl-24")}>
           <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500 text-lg font-black text-white">T</div>
@@ -227,7 +232,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
               {demo && <span className="rounded-full bg-orange-50 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-700">Demo</span>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {!isNativeApp && <select aria-label="Navigate workspace" value={tab} onChange={(e) => go(e.target.value)} className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 outline-none focus:border-orange-400 lg:hidden"><option value="dashboard">Home</option><option value="setup">AI setup</option><option value="phone">Phone & AI</option><option value="connections">Connections</option><option value="organizer">Organize</option><option value="functions">Functions</option><option value="pos">Sell</option><option value="payments">Payments</option><option value="customers">People</option><option value="whatsapp">Inbox</option><option value="analytics">Stats</option><option value="products">Products</option><option value="reports">Reports</option><option value="alerts">Alerts</option><option value="profile">Profile</option><option value="settings">Settings</option></select>}
+              {!isCompactPwaLayout && <select aria-label="Navigate workspace" value={tab} onChange={(e) => go(e.target.value)} className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 outline-none focus:border-orange-400 lg:hidden"><option value="dashboard">Home</option><option value="setup">AI setup</option><option value="phone">Phone & AI</option><option value="connections">Connections</option><option value="organizer">Organize</option><option value="functions">Functions</option><option value="pos">Sell</option><option value="payments">Payments</option><option value="customers">People</option><option value="whatsapp">Inbox</option><option value="analytics">Stats</option><option value="products">Products</option><option value="reports">Reports</option><option value="alerts">Alerts</option><option value="profile">Profile</option><option value="settings">Settings</option></select>}
               {!demo && googleAuth?.profile && <div className="mr-1 flex items-center gap-2 rounded-xl bg-neutral-50 py-1.5 pl-1.5 pr-2.5">
                 {googleAuth.profile.avatarUrl ? <img src={googleAuth.profile.avatarUrl} alt="" referrerPolicy="no-referrer" className="h-8 w-8 rounded-full border border-neutral-200 object-cover" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-orange-100 text-xs font-bold text-orange-800">{(googleAuth.profile.fullName || googleAuth.profile.email || "T").slice(0,1).toUpperCase()}</span>}
                 <span className="hidden max-w-[180px] sm:block"><span className="block truncate text-xs font-semibold text-neutral-800">{googleAuth.profile.fullName || "Your account"}</span><span className="block truncate text-[10px] text-neutral-500">{googleAuth.profile.email}</span></span>
@@ -265,7 +270,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           />
         )}
 
-        {isNativeApp && <nav
+        {isCompactPwaLayout && <nav
           className={cn(
             "fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-5 transition-all duration-500",
             isSetup
