@@ -58,7 +58,6 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
   const [tab, setTab] = useState<Tab>("basic");
   const [saved, setSaved] = useState(false);
   const [palplussStatus, setPalplussStatus] = useState<any>({ keyConfigured: false, keySource: "missing" });
-  const [palplussKeyDraft, setPalplussKeyDraft] = useState("");
   const [palplussBusy, setPalplussBusy] = useState(false);
   const [palplussMessage, setPalplussMessage] = useState("");
 
@@ -122,25 +121,6 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
 
   useEffect(() => { void refreshPalpluss(); }, [businessId, demo]);
 
-  const savePalplussKey = async () => {
-    if (!supabase || !businessId || !palplussKeyDraft.trim()) return;
-    setPalplussBusy(true);
-    setPalplussMessage("Validating the business PalPluss API key…");
-    try {
-      const { data, error } = await supabase.functions.invoke("twiga-palpluss", {
-        body: { action: "save_key", businessId, apiKey: palplussKeyDraft.trim() },
-      });
-      if (error) throw new Error(error.message);
-      if (data?.error) throw new Error(String(data.error));
-      setPalplussKeyDraft("");
-      setPalplussMessage(data?.message || "PalPluss API key saved securely for this business.");
-      await refreshPalpluss();
-    } catch (error) {
-      setPalplussMessage(error instanceof Error ? error.message : "PalPluss key could not be saved.");
-    } finally {
-      setPalplussBusy(false);
-    }
-  };
 
   const testApiConnections = async () => {
     if (demo) { setApiStatus("Sign in to test live API connections."); return; }
