@@ -292,8 +292,40 @@ Deno.serve(async (req: Request) => {
         if (callRecordError) console.error("Could not record SautiKit call in TWIGA history:", callRecordError.message);
         else callRecordId = callRecord?.id || null;
       }
+      let retryJobId: string | null = null;
+      if (providerCallId) {
+        const { data: retryJob, error: retryJobError } = await admin.from("twiga_scheduled_calls").insert({
+          business_id: businessId,
+          customer_name: "",
+          phone_number: to,
+          reason,
+          scheduled_at: new Date().toISOString(),
+          timezone: "Africa/Nairobi",
+          consent_status: "opted_in",
+          trigger_type: "manual",
+          trigger_conditions: { source: "dashboard_send_call" },
+          calling_window_start: "08:00",
+          calling_window_end: "20:00",
+          status: "submitted",
+          attempt_count: 1,
+          max_attempts: 2,
+          retry_interval_minutes: 5,
+          provider_call_id: providerCallId,
+          created_by: user.id,
+          metadata: {
+            source: "dashboard_send_call",
+            call_record_id: callRecordId,
+            agent_id: agentId,
+            provider_call_ids: [providerCallId],
+            no_answer_retry: { enabled: true, attempts: 0, max_attempts: 2, delay_minutes: 5 },
+            dispatch_status: "submitted",
+          },
+        }).select("id").maybeSingle();
+        if (retryJobError) console.error("Could not track SautiKit callback for no-answer retry:", retryJobError.message);
+        else retryJobId = retryJob?.id || null;
+      }
       await admin.from("twiga_phone_lines").update({ settings: { ...settings, last_outbound_call_id: providerCallId || null, last_outbound_call_status: safe(call?.status || "queued", 40) } }).eq("id", line.id);
-      return json({ submitted: true, call, callRecordId, message: "Your authorised callback was submitted through the published SautiKit receptionist and added to call history." });
+      return json({ submitted: true, call, callRecordId, retryJobId, noAnswerRetry: !!retryJobId, message: "Your authorised callback was submitted through SautiKit. When tracked, one no-answer retry is scheduled for five minutes later." });
     }
 
     return json({ error: "Unknown SautiKit action." }, 404);
