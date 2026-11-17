@@ -220,10 +220,10 @@ export default function Dashboard({ onSetup, onOpenPhone }: { onSetup: () => voi
         <Card className="rounded-2xl border-neutral-900 bg-neutral-950 text-white shadow-lg lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <div>
-              <CardTitle className="flex items-center gap-2 text-xl font-semibold">
+              <CardTitle className="flex items-center gap-2 text-xl font-semibold text-white">
                 <IconMic className="h-5 w-5 text-orange-500" /> {"Recent Calls"}
               </CardTitle>
-              <CardDescription className="text-neutral-400">
+              <CardDescription className="text-neutral-300">
                 {"AI call history for this business. Transcripts are saved only when recording is enabled."}
               </CardDescription>
             </div>
@@ -347,7 +347,7 @@ export default function Dashboard({ onSetup, onOpenPhone }: { onSetup: () => voi
         <div className="space-y-6">
           <Card className="rounded-2xl border-neutral-900 bg-neutral-950 text-white shadow-lg">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold text-white">
                 <IconSwap className="h-5 w-5 text-orange-500" /> What it handles
               </CardTitle>
             </CardHeader>
