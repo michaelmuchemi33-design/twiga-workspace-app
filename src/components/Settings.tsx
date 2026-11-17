@@ -303,8 +303,7 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
         </section>
       </div>
 
-      {tab === "basic" ? (
-        <section className="rounded-2xl border border-neutral-800 bg-neutral-950 p-5 text-white shadow-none">
+      <section className="rounded-2xl border border-neutral-800 bg-neutral-950 p-5 text-white shadow-none">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-orange-400">Business payment connection</p>
@@ -323,6 +322,9 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
         <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => { void refreshPalpluss(); }} disabled={palplussBusy || demo} className="rounded-lg border border-neutral-700 px-3 py-2 text-xs font-semibold text-neutral-200 hover:bg-neutral-900 disabled:opacity-40">Refresh payment status</button><button type="button" onClick={onOpenPayments} className="rounded-lg border border-neutral-700 px-3 py-2 text-xs font-semibold text-neutral-200 hover:bg-neutral-900">Open Payments</button></div>
         {palplussMessage && <p role="status" className="mt-3 rounded-xl border border-neutral-700 bg-neutral-900 p-3 text-sm text-neutral-200">{palplussMessage}</p>}
       </section>
+
+      {tab === "basic" ? (
+        
 
       <div className="grid gap-6 lg:grid-cols-2">
           <Section icon={IconCoin} title="Business & Localization" desc="Currency, time and how the AI reads dates">
