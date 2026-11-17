@@ -97,7 +97,7 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
   const failedTasks = tasks.filter((t) => t.status === "failed").length;
 
   const resolveBusinessTimeZone = (value: string) => {
-    const candidate = String(value || "Africa/Nairobi").split(/\\s+\\(/)[0].trim();
+    const candidate = String(value || "Africa/Nairobi").split(/\s+\(/)[0].trim();
     try { new Intl.DateTimeFormat("en", { timeZone: candidate }).format(new Date()); return candidate; }
     catch { return "Africa/Nairobi"; }
   };
