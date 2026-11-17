@@ -97,7 +97,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
       if (data?.error) throw new Error(String(data.error));
       const businessId = String(data?.business?.id || "");
       if (!businessId) throw new Error("The workspace was not created. Please try again.");
-      setMessages((m) => [...m, { id: String(Date.now()), role: "ai", text: "Your private " + profile.business_name + " workspace is ready. Its customers, appointments, business details and receptionist configuration are separated from every other business. Next, connect Google and your Retell account in Profile." }]);
+      setMessages((m) => [...m, { id: String(Date.now()), role: "ai", text: "Your private " + profile.business_name + " workspace is ready. Its customers, appointments, business details and receptionist configuration are separated from every other business. Next, connect Google and SautiKit in Connections." }]);
       onBusinessCreated(businessId);
       onDone();
     } catch (e) {
@@ -111,7 +111,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
     <header className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
       <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-500">TWIGA · Business setup assistant</p>
       <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-950">Build your business workspace</h1>
-      <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Describe your business in plain language. The assistant organises your business details and drafts your first phone greeting and receptionist instructions before creating a separate workspace. Grok is only used here for setup; Retell runs the receptionist.</p>
+      <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Describe your business in plain language. The assistant organises your business details and drafts your first phone greeting and receptionist instructions before creating a separate workspace. Grok helps complete your business setup; SautiKit powers the live AI receptionist.</p>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <label className="block text-sm font-medium text-neutral-700">Business owner name<input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} autoComplete="name" placeholder="Your full name" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
         <label className="block text-sm font-medium text-neutral-700">Business contact email<input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} autoComplete="email" placeholder="you@business.co.ke" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
@@ -145,7 +145,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated }: {
           <button onClick={buildWorkspace} disabled={!ready || building} className="mt-5 w-full rounded-xl bg-neutral-950 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{building ? "Creating workspace…" : "Create my business workspace"}</button>
           <p className="mt-2 text-[11px] leading-5 text-neutral-400">You can refine products, prices, hours and AI instructions after the workspace is created.</p>
         </div>
-        <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><h3 className="text-sm font-semibold text-neutral-900">What happens next?</h3><ol className="mt-3 space-y-3 text-xs leading-5 text-neutral-500"><li><strong className="text-neutral-800">1. Create workspace</strong><br/>Your business gets its own private records.</li><li><strong className="text-neutral-800">2. Connect services</strong><br/>Approve Google permissions and add your own Retell account.</li><li><strong className="text-neutral-800">3. Configure receptionist</strong><br/>Choose a voice, set instructions and test in the browser before using a phone line.</li></ol></div>
+        <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><h3 className="text-sm font-semibold text-neutral-900">What happens next?</h3><ol className="mt-3 space-y-3 text-xs leading-5 text-neutral-500"><li><strong className="text-neutral-800">1. Create workspace</strong><br/>Your business gets its own private records.</li><li><strong className="text-neutral-800">2. Connect services</strong><br/>Approve Google permissions and connect the SautiKit provider in Connections.</li><li><strong className="text-neutral-800">3. Configure receptionist</strong><br/>Choose a SautiKit voice, set inbound and outbound instructions, then test with a real phone call.</li></ol></div>
       </aside>
     </div>
     {error && <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}

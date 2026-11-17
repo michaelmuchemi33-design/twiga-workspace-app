@@ -203,7 +203,7 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
                 <IconMic className="h-5 w-5 text-orange-500" /> {"Recent Calls"}
               </CardTitle>
               <CardDescription className="text-neutral-400">
-                {"Retell call history for this business. Transcripts are saved only when recording is enabled."}
+                {"AI call history for this business. Transcripts are saved only when recording is enabled."}
               </CardDescription>
             </div>
             <Badge className="border-orange-500/30 bg-orange-500/20 text-orange-400">
@@ -212,7 +212,7 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="live-scroll max-h-64 space-y-3 overflow-y-auto pr-2">
-              {recentCalls.length === 0 && <p className="rounded-xl border border-dashed border-neutral-700 py-8 text-center text-sm text-neutral-500">No Retell calls yet. Publish a receptionist and complete a test call to see real activity here.</p>}
+              {recentCalls.length === 0 && <p className="rounded-xl border border-dashed border-neutral-700 py-8 text-center text-sm text-neutral-500">No AI calls yet. Publish a receptionist in Phone & AI and complete a test call to see real activity here.</p>}
               {recentCalls.map((call) => {
                 const number = call.direction === "outbound" ? (call.to_number || call.from_number) : (call.from_number || call.to_number);
                 const callState = String(call.status || "unknown").toLowerCase();

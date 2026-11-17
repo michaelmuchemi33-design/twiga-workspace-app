@@ -238,7 +238,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           {demo && <div className="mb-6 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-900"><strong>This is a sample workspace.</strong> Explore the screens and test the controls. Demo changes are temporary and are not connected to a real customer's business account.</div>}
           {tab === "dashboard" && <Dashboard onSetup={() => go("setup")} />}
           {tab === "setup" && <SetupPage demo={demo} onDone={() => go("dashboard")} onBusinessCreated={businessCreated} />}
-          {tab === "phone" && <PhoneDesk businessId={businessId} demo={demo} onOpenProfile={() => go("profile")} />}
+          {tab === "phone" && <PhoneDesk businessId={businessId} demo={demo} onOpenProfile={() => go("connections")} />}
           {tab === "connections" && <Connections businessId={businessId} demo={demo} googleAuth={googleAuth} />}
           {tab === "organizer" && <Organizer />}
           {tab === "functions" && <Functions />}
@@ -251,7 +251,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           {tab === "reports" && <Reports />}
           {tab === "alerts" && <Alerts />}
           {tab === "profile" && <Profile userId={userId} businessId={businessId} businesses={businesses} onBusinessChange={setBusinessId} onRefreshBusinesses={refreshBusinesses} onCreateBusiness={() => go("setup")} />}
-          {tab === "settings" && <Settings businessId={businessId} demo={demo} onOpenProfile={() => go("profile")} />}
+          {tab === "settings" && <Settings businessId={businessId} demo={demo} onOpenProfile={() => go("phone")} />}
           {tab === "logout" && <Logout onCancel={() => setTab("dashboard")} />}
         </main>
 

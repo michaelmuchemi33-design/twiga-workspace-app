@@ -1,182 +1,224 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { RetellWebClient } from "retell-client-js-sdk";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-export default function PhoneDesk({ businessId, demo = false, onOpenProfile }: { businessId: string; demo?: boolean; onOpenProfile?: () => void }) {
-  const [config, setConfig] = useState<any>({});
-  const [greeting, setGreeting] = useState("Hello, thank you for calling {{business_name}}. How can I help you today?");
-  const [inboundPrompt, setInboundPrompt] = useState("Greet callers warmly, identify their reason for calling, answer from verified business information, and capture appointment or order requests for staff confirmation. Never invent prices, availability or completed bookings.");
-  const [outboundPrompt, setOutboundPrompt] = useState("Only call people when the business has authorised the follow-up. Identify the business, explain the reason, ask if it is a convenient time, and respect requests not to be contacted.");
-  const [fromNumber, setFromNumber] = useState("");
-  const [carrier, setCarrier] = useState("other");
-  const [connectionMethod, setConnectionMethod] = useState("physical_sim");
-  const [toNumber, setToNumber] = useState("");
-  const [callReason, setCallReason] = useState("Customer follow-up");
-  const [status, setStatus] = useState("Not started");
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
-  const clientRef = useRef<RetellWebClient | null>(null);
-  const timeoutRef = useRef<number | null>(null);
+type Model = { id: string; voices?: string[]; rate_per_minute_minor?: number; currency?: string };
+type SautiKitConfig = { keyConfigured?: boolean; isPlatformAdmin?: boolean; phoneLine?: any; agent?: any; models?: Model[]; scripts?: { greeting?: string; inbound?: string; outbound?: string }; inboundBound?: boolean; inboundVerified?: boolean; providerError?: string };
+type ScheduledCall = { id: string; customer_name: string; phone_number: string; reason: string; scheduled_at: string; trigger_type: string; status: string; last_error?: string | null };
+type CallRecord = { id: string; created_at: string; direction: string; from_number?: string | null; to_number?: string | null; status: string; duration_seconds?: number | null; summary?: string | null; provider?: string | null };
 
-  const action = useCallback(async (name: string, extra: Record<string, unknown> = {}) => {
-    if (!supabase || !businessId) throw new Error("Choose a business workspace first.");
-    const { data, error } = await supabase.functions.invoke("twiga-retell", { body: { action: name, businessId, ...extra } });
-    if (error) throw new Error(error.message);
-    if (data?.error) throw new Error(String(data.error));
-    return data;
-  }, [businessId]);
+function toE164(value: string) {
+  let number = String(value || "").replace(/[\s().-]/g, "");
+  if (/^0[17]\d{8}$/.test(number)) number = "+254" + number.slice(1);
+  else if (/^254[17]\d{8}$/.test(number)) number = "+" + number;
+  return /^\+[1-9]\d{7,14}$/.test(number) ? number : "";
+}
+function defaultDateTime() { const d = new Date(Date.now() + 10 * 60_000); return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16); }
+function fmtDate(value?: string) { if (!value) return "—"; const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleString(); }
+function statusClass(status?: string) { return status === "active" || status === "completed" || status === "submitted" ? "border-orange-200 bg-orange-50 text-orange-800" : "border-neutral-200 bg-neutral-50 text-neutral-700"; }
+
+export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: { businessId: string; onOpenProfile?: () => void; demo?: boolean }) {
+  const [config, setConfig] = useState<SautiKitConfig>({});
+  const [scheduledCalls, setScheduledCalls] = useState<ScheduledCall[]>([]);
+  const [callRecords, setCallRecords] = useState<CallRecord[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [savingVoice, setSavingVoice] = useState(false);
+  const [testingCall, setTestingCall] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [voiceModel, setVoiceModel] = useState("sautikit-flash");
+  const [voiceId, setVoiceId] = useState("Woman");
+  const [corePrompt, setCorePrompt] = useState("");
+  const [greeting, setGreeting] = useState("Hello, karibu! How can I help you today?");
+  const [inboundPrompt, setInboundPrompt] = useState("");
+  const [outboundPrompt, setOutboundPrompt] = useState("");
+  const [testPhone, setTestPhone] = useState("");
+  const [testConsent, setTestConsent] = useState(false);
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [callReason, setCallReason] = useState("");
+  const [triggerType, setTriggerType] = useState("timer");
+  const [scheduledAt, setScheduledAt] = useState(defaultDateTime);
+  const [windowStart, setWindowStart] = useState("08:00");
+  const [windowEnd, setWindowEnd] = useState("20:00");
+  const [sourceCallId, setSourceCallId] = useState("");
+  const [orderId, setOrderId] = useState("");
+  const [onlyIfMissed, setOnlyIfMissed] = useState(false);
+  const [onlyIfUnpaid, setOnlyIfUnpaid] = useState(false);
+  const [callConsent, setCallConsent] = useState(false);
 
   const load = useCallback(async () => {
     if (!businessId || !supabase) return;
+    setLoading(true); setError("");
     try {
-      const data = await action("get_config");
-      setConfig(data);
-      setGreeting(data.greeting || "Hello, thank you for calling {{business_name}}. How can I help you today?");
-      setInboundPrompt(data.config?.inbound_prompt || inboundPrompt);
-      setOutboundPrompt(data.config?.outbound_prompt || outboundPrompt);
-      setFromNumber(String(data.aiBridgeNumber || ""));
-      setCarrier(String(data.phoneLine?.carrier || "other"));
-      setConnectionMethod(String(data.phoneLine?.connection_method || "physical_sim"));
-    } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Could not load phone settings.");
-    }
-  }, [action, businessId, inboundPrompt, outboundPrompt]);
+      const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } });
+      if (invokeError) throw new Error(invokeError.message);
+      if (data?.error) throw new Error(String(data.error));
+      const next = (data || {}) as SautiKitConfig;
+      setConfig(next);
+      const settings = next.phoneLine?.settings || {};
+      setVoiceModel(settings.inbound_model_id || next.agent?.model || "sautikit-flash");
+      setVoiceId(settings.inbound_voice || next.agent?.voice || "Woman");
+      setCorePrompt(String(next.agent?.base_prompt || "").split("----- TWIGA FRONT DESK SETTINGS -----")[0].trim());
+      setGreeting(next.scripts?.greeting || "Hello, karibu! How can I help you today?");
+      setInboundPrompt(next.scripts?.inbound || "");
+      setOutboundPrompt(next.scripts?.outbound || "");
+      const [scheduled, calls] = await Promise.all([
+        supabase.from("twiga_scheduled_calls").select("id,customer_name,phone_number,reason,scheduled_at,trigger_type,status,last_error").eq("business_id", businessId).order("scheduled_at", { ascending: true }).limit(50),
+        supabase.from("twiga_call_records").select("id,created_at,direction,from_number,to_number,status,duration_seconds,summary,provider").eq("business_id", businessId).eq("provider", "sautikit").order("created_at", { ascending: false }).limit(20),
+      ]);
+      if (scheduled.error) throw new Error(scheduled.error.message);
+      if (calls.error) throw new Error(calls.error.message);
+      setScheduledCalls((scheduled.data || []) as ScheduledCall[]);
+      setCallRecords((calls.data || []) as CallRecord[]);
+    } catch (e) { setError(e instanceof Error ? e.message : "Phone desk could not load."); }
+    finally { setLoading(false); }
+  }, [businessId]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => () => {
-    if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
-    if (clientRef.current) { try { clientRef.current.stopCall(); } catch {} }
-  }, []);
+  const allVoices = useMemo(() => (config.models || []).flatMap(m => (m.voices || []).map(voice => ({ model: m.id, voice }))), [config.models]);
+  const line = config.phoneLine;
+  const settings = line?.settings || {};
+  const inboundStatus = config.inboundVerified ? "verified" : config.inboundBound ? "agent bound · live test pending" : line?.inbound_status || "not configured";
+  const outboundStatus = line?.outbound_status || (line?.outbound_enabled ? "enabled" : "disabled");
 
-  const savePhoneLine = async () => {
-    if (!businessId || !fromNumber.trim()) { setMessage("Enter the number this business owns or is authorised to use."); return; }
-    setBusy(true); setMessage("");
+  const publishVoice = async () => {
+    if (!supabase || !businessId) return;
+    setSavingVoice(true); setError(""); setMessage("Publishing the selected SautiKit voice and call instructions…");
     try {
-      const result = await action("save_phone_line", { lineNumber: fromNumber.trim(), carrier, connectionMethod });
-      setMessage(result.message || "Number assigned to this business.");
-      await load();
-    } catch (e) { setMessage(e instanceof Error ? e.message : "Could not assign this phone number."); }
-    finally { setBusy(false); }
-  };
-  const saveAndPublish = async () => {
-    if (!businessId || !greeting.trim()) {
-      setMessage("Write the first greeting before publishing the receptionist.");
-      return;
-    }
-    setBusy(true); setMessage("");
-    try {
-      const voiceId = config.config?.retell_voice_id || "cartesia-Willa";
-      await action("save_settings", { provider: "retell", greeting, inboundPrompt, outboundPrompt, voiceId, voiceModel: config.config?.retell_voice_model || null, model: config.config?.retell_model || "gpt-4.1-mini", recordingEnabled: config.recordingEnabled === true, recordingNotice: config.recordingNotice || "This call may be recorded for service quality." });
-      const published = await action("provision_agent");
-      setMessage(published.message || "Your receptionist greeting and instructions have been published.");
-      await load();
-    } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Could not publish the receptionist.");
-    } finally { setBusy(false); }
-  };
-
-  const startBrowserTest = async () => {
-    if (clientRef.current) {
-      if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
-      try { clientRef.current.stopCall(); } catch {}
-      clientRef.current = null; setStatus("Ended"); return;
-    }
-    setBusy(true); setMessage(""); setStatus("Connecting");
-    try {
-      const { data, error } = await supabase!.functions.invoke("twiga-retell-webcall", { body: { action: "create", businessId } });
-      if (error) throw new Error(error.message);
+      const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "publish_agent", businessId, model: voiceModel, voice: voiceId, corePrompt, greeting, inboundPrompt, outboundPrompt } });
+      if (invokeError) throw new Error(invokeError.message);
       if (data?.error) throw new Error(String(data.error));
-      const client = new RetellWebClient();
-      client.on("call_started", () => setStatus("Live"));
-      client.on("call_ended", () => { clientRef.current = null; if (timeoutRef.current) window.clearTimeout(timeoutRef.current); setStatus("Ended"); });
-      client.on("error", (e: any) => { clientRef.current = null; setStatus(e?.message || "Call error"); });
-      clientRef.current = client;
-      await client.startCall({ accessToken: data.access_token });
-      timeoutRef.current = window.setTimeout(() => {
-        if (clientRef.current) { try { clientRef.current.stopCall(); } catch {} clientRef.current = null; setStatus("10-second test ended"); }
-      }, 10000);
-    } catch (e) {
-      clientRef.current = null; setStatus("Not connected");
-      setMessage(e instanceof Error ? e.message : "Could not start the browser test.");
-    } finally { setBusy(false); }
+      setMessage(data?.message || `Published ${voiceId} on revision ${data?.revision || "latest"}.`);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not publish the voice."); }
+    finally { setSavingVoice(false); }
   };
 
-  const placePhoneCall = async () => {
-    if (!fromNumber.trim() || !toNumber.trim()) { setMessage("Enter both the registered caller ID and the destination number."); return; }
-    if (!window.confirm("Place an AI-assisted outbound phone call to " + toNumber + "?")) return;
-    setBusy(true); setMessage("");
+  const testVoice = async () => {
+    const to = toE164(testPhone);
+    if (!to) { setError("Enter a valid phone number, e.g. +2547XXXXXXXX."); return; }
+    if (!testConsent) { setError("Confirm that you own this number or have permission to call it."); return; }
+    if (!config.keyConfigured || !line || !config.agent) { setError("Connect SautiKit and assign an active AI phone line before placing a test call."); return; }
+    if (!window.confirm(`Place a real AI voice test call to ${to}?`)) return;
+    setTestingCall(true); setError(""); setMessage("Submitting your voice test call…");
     try {
-      const result = await action("create_phone_call", { fromNumber: fromNumber.trim(), toNumber: toNumber.trim(), callReason: callReason.trim() });
-      setMessage("Call submitted to Retell. Call ID: " + result.callId + ". Status: " + result.status + ".");
-      setStatus("Call submitted");
-    } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Phone call could not be placed.");
-    } finally { setBusy(false); }
+      const { data, error: invokeError } = await supabase!.functions.invoke("twiga-sautikit", { body: { action: "send_call", businessId, to, reason: "TWIGA voice preview test requested by the business owner", authorised: true, consent: true } });
+      if (invokeError) throw new Error(invokeError.message);
+      if (data?.error) throw new Error(String(data.error));
+      setMessage(data?.message || `Test call submitted to ${to}.`);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Test call failed."); }
+    finally { setTestingCall(false); }
   };
 
-  if (demo) return <div className="rounded-2xl border border-neutral-200 bg-white p-6"><h1 className="text-2xl font-semibold text-neutral-950">Phone & AI receptionist</h1><p className="mt-2 text-sm text-neutral-500">Sign in to connect a real phone number, configure your receptionist greeting and place calls.</p></div>;
+  const scheduleCall = async () => {
+    if (!supabase || !businessId) return;
+    const phone = toE164(customerPhone);
+    if (!phone) { setError("Enter a valid customer phone number, e.g. +2547XXXXXXXX."); return; }
+    if (!callReason.trim()) { setError("Enter the reason for this call."); return; }
+    if (!scheduledAt || Number.isNaN(new Date(scheduledAt).getTime())) { setError("Choose a valid date and time."); return; }
+    if (!callConsent) { setError("Confirm the customer requested or explicitly consented to this call."); return; }
+    if (windowStart >= windowEnd) { setError("The allowed calling window end must be later than its start."); return; }
+    if ((triggerType === "missed_call" || onlyIfMissed) && !sourceCallId.trim()) { setError("Enter the source call record ID for the missed-call condition."); return; }
+    if (onlyIfUnpaid && !orderId.trim()) { setError("Enter the order ID for the unpaid-order condition."); return; }
+    setSavingSchedule(true); setError(""); setMessage("Saving the scheduled call…");
+    try {
+      const { error: insertError } = await supabase.from("twiga_scheduled_calls").insert({
+        business_id: businessId, customer_name: customerName.trim(), phone_number: phone, reason: callReason.trim(),
+        scheduled_at: new Date(scheduledAt).toISOString(), timezone: "Africa/Nairobi", consent_status: "opted_in", trigger_type: triggerType,
+        trigger_conditions: { only_if_missed_call: onlyIfMissed, only_if_unpaid: onlyIfUnpaid, order_id: orderId.trim() || null },
+        source_call_id: sourceCallId.trim() || null, calling_window_start: windowStart, calling_window_end: windowEnd, max_attempts: 1, retry_interval_minutes: 30, status: "scheduled",
+      });
+      if (insertError) throw new Error(insertError.message);
+      setMessage("Call scheduled. The Supabase worker checks due calls every minute and dispatches only when the SautiKit key and business line are ready.");
+      setCustomerName(""); setCustomerPhone(""); setCallReason(""); setCallConsent(false); setSourceCallId(""); setOrderId(""); setOnlyIfMissed(false); setOnlyIfUnpaid(false);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not schedule the call."); }
+    finally { setSavingSchedule(false); }
+  };
 
-  return <div className="mx-auto max-w-5xl space-y-5">
+  const cancelScheduledCall = async (id: string) => {
+    if (!supabase) return;
+    const { error: updateError } = await supabase.from("twiga_scheduled_calls").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", id).eq("business_id", businessId);
+    if (updateError) setError(updateError.message); else { setMessage("Scheduled call cancelled."); await load(); }
+  };
+
+  if (demo) return <section className="rounded-2xl border border-neutral-200 bg-white p-6"><h1 className="text-2xl font-semibold">Phone & AI receptionist</h1><p className="mt-2 text-sm text-neutral-500">Sign in and select a business to manage its AI phone line, voices and scheduled calls.</p></section>;
+
+  return <div className="mx-auto max-w-6xl space-y-5">
     <header className="rounded-2xl border border-neutral-200 bg-white p-6">
-      <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">TWIGA · Front Desk</p>
-      <h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Phone & AI receptionist</h1>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Set the first words your receptionist speaks, publish its instructions, test the voice in your browser, or place an outbound phone call.</p>
-      {!businessId && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Create or select your business first. Open AI Setup to create a workspace.</p>}
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        <div className="rounded-xl border border-neutral-200 p-3"><p className="text-xs text-neutral-500">AI provider</p><p className="mt-1 font-semibold text-neutral-900">{config.config?.provider || "Not selected"}</p></div>
-        <div className="rounded-xl border border-neutral-200 p-3"><p className="text-xs text-neutral-500">Published agent</p><p className="mt-1 font-semibold text-neutral-900">{config.config?.retell_agent_id ? "Connected" : "Not published"}</p></div>
-        <div className="rounded-xl border border-neutral-200 p-3"><p className="text-xs text-neutral-500">API credentials</p><p className="mt-1 font-semibold text-neutral-900">{config.keyConfigured ? "Configured" : "Missing"}</p></div>
-      </div>
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">SautiKit · AI phone desk</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Phone & AI receptionist</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Manage the live SautiKit voice, inbound route, customer callbacks, reminders and consent-based outreach from one place.</p></div><button onClick={() => void load()} disabled={loading} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700 disabled:opacity-40">{loading ? "Refreshing…" : "Refresh"}</button></div>
     </header>
 
+    <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5 md:col-span-2"><p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Assigned AI phone number</p><div className="mt-2 flex flex-wrap items-center gap-3"><p className="text-3xl font-bold tracking-tight text-neutral-950">{line?.line_number || "No AI line assigned"}</p>{line?.line_number && <button onClick={() => void navigator.clipboard?.writeText(line.line_number)} className="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700">Copy number</button>}</div><p className="mt-2 text-xs leading-5 text-neutral-500">This is the provider-routed AI line. A customer's phone number for a callback is entered separately in the schedule form.</p></div>
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Inbound calls</p><span className={`mt-2 inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold ${statusClass(config.inboundVerified ? "active" : "pending")}`}>{inboundStatus}</span><p className="mt-2 text-xs text-neutral-500">{line?.inbound_enabled ? "Inbound enabled" : "Inbound disabled"}. A real incoming call is still required to verify pickup end-to-end.</p></div>
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Outbound calls</p><span className={`mt-2 inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold ${statusClass(outboundStatus)}`}>{outboundStatus}</span><p className="mt-2 text-xs text-neutral-500">Current voice: {settings.inbound_voice || config.agent?.voice || "Not published"} · {settings.inbound_model_id || config.agent?.model || "No model"}</p></div>
+    </section>
+
+    {settings.last_outbound_test_call_status && <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900"><strong>Latest verified voice test:</strong> {String(settings.last_outbound_test_call_status).replace(/_/g, " ")}. The proven female SautiKit voice remains the default until another voice is published.</div>}
+    {!config.keyConfigured && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><strong>SautiKit API key needed.</strong> Connect the existing SautiKit account in Connections to load the live voice catalogue and dispatch calls.{onOpenProfile && <button onClick={onOpenProfile} className="ml-2 font-semibold underline">Open Connections</button>}</div>}
+    {config.providerError && <div className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">SautiKit status: {config.providerError}</div>}
+
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <h2 className="text-lg font-semibold text-neutral-950">This business phone number</h2>
-      {config.phoneLine && <div className="mt-3 grid gap-3 sm:grid-cols-3">
-        <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Assigned number</p><p className="mt-1 font-semibold text-neutral-950">{config.phoneLine.line_number}</p></div>
-        <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Incoming calls</p><p className="mt-1 font-semibold text-neutral-950">{config.phoneLine.inbound_enabled ? "Enabled" : config.phoneLine.inbound_status || "Not connected"}</p></div>
-        <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Outgoing calls</p><p className="mt-1 font-semibold text-neutral-950">{config.phoneLine.outbound_enabled ? "Enabled" : config.phoneLine.outbound_status || "Not connected"}</p></div>
-      </div>}
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        <label className="block text-sm font-medium text-neutral-800">Business number<input value={fromNumber} onChange={(e) => setFromNumber(e.target.value)} placeholder="+2547XXXXXXXX" className="mt-2 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-500" /></label>
-        <label className="block text-sm font-medium text-neutral-800">Carrier<select value={carrier} onChange={(e) => setCarrier(e.target.value)} className="mt-2 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm"><option value="safaricom">Safaricom</option><option value="airtel">Airtel</option><option value="telkom">Telkom</option><option value="sautikit">SautiKit</option><option value="retell">Retell</option><option value="other">Other</option></select></label>
-        <label className="block text-sm font-medium text-neutral-800">Connection type<select value={connectionMethod} onChange={(e) => setConnectionMethod(e.target.value)} className="mt-2 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm"><option value="physical_sim">Existing physical SIM</option><option value="sautikit">SautiKit number</option><option value="retell_sip">Retell / SIP import</option><option value="other">Other carrier route</option></select></label>
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold text-neutral-950">Voice library & receptionist instructions</h2><p className="mt-1 text-sm text-neutral-500">The options are loaded from the connected SautiKit catalogue. Choose female or male voices from the provider list.</p></div><span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-700">{allVoices.length} voices across catalogue</span></div>
+      {config.keyConfigured && line && config.agent ? <div className="mt-5 grid gap-4 lg:grid-cols-2">
+        <div className="space-y-4">
+          <label className="block text-sm font-medium text-neutral-800">AI model<select value={voiceModel} onChange={e => { const next = e.target.value; setVoiceModel(next); const model = (config.models || []).find(m => m.id === next); if (model?.voices?.length) setVoiceId(model.voices[0]); }} className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm">{(config.models || []).map(m => <option key={m.id} value={m.id}>{m.id}{typeof m.rate_per_minute_minor === "number" ? ` · ${(m.rate_per_minute_minor / 100).toFixed(2)} per minute` : ""}</option>)}</select></label>
+          <label className="block text-sm font-medium text-neutral-800">Voice · all provider options<select value={`${voiceModel}::${voiceId}`} onChange={e => { const [model, voice] = e.target.value.split("::"); setVoiceModel(model); setVoiceId(voice); }} className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm">{(config.models || []).map(m => <optgroup key={m.id} label={m.id}>{(m.voices || []).map(v => <option key={`${m.id}::${v}`} value={`${m.id}::${v}`}>{v}</option>)}</optgroup>)}</select></label>
+          <p className="text-xs text-neutral-500">Published agent revision: {settings.inbound_agent_revision || config.agent?.revision || "—"}. Publishing updates the bound inbound agent and future outbound calls.</p>
+          <label className="block text-sm font-medium text-neutral-800">Core receptionist instructions<textarea value={corePrompt} onChange={e => setCorePrompt(e.target.value)} rows={5} maxLength={12000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+        </div>
+        <div className="space-y-4">
+          <label className="block text-sm font-medium text-neutral-800">What the receptionist says first<textarea value={greeting} onChange={e => setGreeting(e.target.value)} rows={2} maxLength={4000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+          <label className="block text-sm font-medium text-neutral-800">Inbound call instructions<textarea value={inboundPrompt} onChange={e => setInboundPrompt(e.target.value)} rows={4} maxLength={5000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+          <label className="block text-sm font-medium text-neutral-800">Outbound call instructions<textarea value={outboundPrompt} onChange={e => setOutboundPrompt(e.target.value)} rows={4} maxLength={5000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+          <button onClick={() => void publishVoice()} disabled={savingVoice || !voiceModel || !voiceId} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{savingVoice ? "Publishing…" : "Publish voice & instructions"}</button>
+        </div>
+      </div> : <p className="mt-4 rounded-xl bg-neutral-50 p-4 text-sm text-neutral-600">Connect the SautiKit API key and assign a provider-routed AI line to load all available female and male voices. The current saved voice preference is shown above.</p>}
+    </section>
+
+    <section className="grid gap-5 lg:grid-cols-2">
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5">
+        <h2 className="text-lg font-semibold text-neutral-950">Test the selected voice</h2><p className="mt-1 text-sm text-neutral-500">This places a real outbound call to the number you enter.</p>
+        <label className="mt-4 block text-sm font-medium text-neutral-800">Your test phone number<input value={testPhone} onChange={e => setTestPhone(e.target.value)} placeholder="+2547XXXXXXXX" inputMode="tel" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+        <label className="mt-3 flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" checked={testConsent} onChange={e => setTestConsent(e.target.checked)} className="mt-1" />I own this number or have permission to receive this test call.</label>
+        <button onClick={() => void testVoice()} disabled={testingCall || !config.keyConfigured || !line || !config.agent} className="mt-4 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{testingCall ? "Calling…" : "Call my phone to test voice"}</button>
       </div>
-      <button onClick={savePhoneLine} disabled={busy || !businessId || !fromNumber.trim()} className="mt-3 rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">{busy ? "Saving…" : config.phoneLine ? "Update this business number" : "Assign number to this business"}</button>
-      <p className="mt-3 text-xs leading-5 text-neutral-500">Each phone number can belong to only one TWIGA business. Saving assigns the number to this workspace; it does not activate calls. The carrier route must be connected and tested before inbound or outbound calls are enabled. A physical SIM cannot be imported into Retell by itself; it needs a supported carrier/SIP route.</p>
-    </section>
-    <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">First greeting</h2><p className="mt-1 text-sm text-neutral-500">This is the opening sentence callers hear when the AI answers.</p></div><span className="rounded-full border border-neutral-200 px-3 py-1 text-xs text-neutral-600">Business-specific</span></div>
-      <textarea value={greeting} onChange={(e) => setGreeting(e.target.value)} rows={3} maxLength={1200} placeholder="Hello, thank you for calling [Business Name]. My name is [Assistant Name]. How can I help you today?" className="mt-4 w-full rounded-xl border border-neutral-200 p-3 text-sm leading-6 text-neutral-800 outline-none focus:border-orange-500" />
-      <p className="mt-2 text-xs text-neutral-500">Keep it short, natural and clear. The setup assistant can help write this for your business.</p>
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><h2 className="text-lg font-semibold text-neutral-950">Inbound routing check</h2><p className="mt-2 text-sm leading-6 text-neutral-600">{config.inboundVerified ? "The inbound provider route is verified." : config.inboundBound ? "The SautiKit agent is bound to this line, but a real incoming call still needs to be tested." : "No verified inbound agent route is reported for this line yet."}</p><div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Inbound route</p><p className="mt-1 text-sm font-semibold text-neutral-900">{config.inboundBound ? "Agent bound" : "Not bound"}</p></div><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Live verification</p><p className="mt-1 text-sm font-semibold text-neutral-900">{config.inboundVerified ? "Verified" : "Pending"}</p></div></div></div>
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <h2 className="text-lg font-semibold text-neutral-950">What the receptionist should do</h2>
-      <p className="mt-1 text-sm text-neutral-500">These instructions guide its answers, bookings, orders and handovers.</p>
-      <label className="mt-4 block text-sm font-medium text-neutral-800">Incoming calls<textarea value={inboundPrompt} onChange={(e) => setInboundPrompt(e.target.value)} rows={6} className="mt-2 w-full rounded-xl border border-neutral-200 p-3 text-sm leading-6 outline-none focus:border-orange-500" /></label>
-      <label className="mt-4 block text-sm font-medium text-neutral-800">Outgoing calls and follow-ups<textarea value={outboundPrompt} onChange={(e) => setOutboundPrompt(e.target.value)} rows={4} className="mt-2 w-full rounded-xl border border-neutral-200 p-3 text-sm leading-6 outline-none focus:border-orange-500" /></label>
-      <div className="mt-4 flex flex-wrap gap-2"><button onClick={saveAndPublish} disabled={busy || !businessId || !config.keyConfigured} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Saving…" : "Save & publish receptionist"}</button><button onClick={load} disabled={busy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-3 text-sm font-semibold text-neutral-700">Reload settings</button></div>
-      {!config.keyConfigured && <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><span>Add the Retell API key in Profile → AI Front Desk before publishing or calling.</span><button onClick={onOpenProfile} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold">Open Retell settings</button></div>}
-    </section>
-
-    <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <h2 className="text-lg font-semibold text-neutral-950">Test the voice</h2>
-      <p className="mt-1 text-sm text-neutral-500">Start a browser conversation using your microphone. The test automatically ends after 10 seconds.</p>
-      <div className="mt-4 flex flex-wrap items-center gap-3"><button onClick={startBrowserTest} disabled={busy || !businessId || !config.keyConfigured || !config.config?.retell_agent_id} className="rounded-xl bg-orange-600 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{clientRef.current ? "End test" : "Start 10-second voice test"}</button><span className="text-sm text-neutral-600">Status: {status}</span></div>
-    </section>
-
-    <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <h2 className="text-lg font-semibold text-neutral-950">Place a phone call</h2>
-      <p className="mt-1 text-sm text-neutral-500">Call a customer from a phone number already purchased or imported into your Retell account.</p>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <label className="block text-sm font-medium text-neutral-700">Your registered caller ID<input value={fromNumber} onChange={(e) => setFromNumber(e.target.value)} placeholder={config.aiBridgeNumber || "No business number assigned"} readOnly={Boolean(config.aiBridgeNumber)} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
-        <label className="block text-sm font-medium text-neutral-700">Customer phone number<input value={toNumber} onChange={(e) => setToNumber(e.target.value)} placeholder="+2547XXXXXXXX" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
-        <label className="block text-sm font-medium text-neutral-700 sm:col-span-2">Reason for calling<input value={callReason} onChange={(e) => setCallReason(e.target.value)} placeholder="Appointment follow-up, order update, requested callback…" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
+      <h2 className="text-xl font-semibold text-neutral-950">Timer & conditional call scheduler</h2><p className="mt-1 text-sm text-neutral-500">Schedule customer callbacks, appointment reminders and consent-based outreach. The worker checks due calls every minute.</p>
+      {!line && <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">You can save a schedule now; it will wait until this business has an active SautiKit line and key.</p>}
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
+        <label className="block text-sm font-medium text-neutral-800">Customer name<input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Customer or contact name" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+        <label className="block text-sm font-medium text-neutral-800">Customer phone number<input value={customerPhone} onChange={e => setCustomerPhone(e.target.value)} placeholder="+2547XXXXXXXX" inputMode="tel" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+        <label className="block text-sm font-medium text-neutral-800 md:col-span-2">Reason for call<textarea value={callReason} onChange={e => setCallReason(e.target.value)} rows={2} placeholder="Appointment reminder, requested callback, order follow-up…" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+        <label className="block text-sm font-medium text-neutral-800">Trigger<select value={triggerType} onChange={e => setTriggerType(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm"><option value="timer">Timer · call at scheduled time</option><option value="missed_call">Missed-call callback</option><option value="appointment_reminder">Appointment reminder</option><option value="follow_up">Customer follow-up</option><option value="conditional">Conditional outreach</option></select></label>
+        <label className="block text-sm font-medium text-neutral-800">Call date & time (device local time)<input type="datetime-local" value={scheduledAt} onChange={e => setScheduledAt(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+        <label className="block text-sm font-medium text-neutral-800">Allowed calling from<input type="time" value={windowStart} onChange={e => setWindowStart(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+        <label className="block text-sm font-medium text-neutral-800">Allowed calling until<input type="time" value={windowEnd} onChange={e => setWindowEnd(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
       </div>
-      <p className="mt-2 text-xs leading-5 text-neutral-500">Both numbers must use international format. Retell validates that the caller ID belongs to your account. A Retell-purchased US number may only dial US destinations; to call +254 numbers, the imported line or SIP carrier must support Kenya. Your ordinary SIM is not automatically a Retell caller ID.</p>
-      <button onClick={placePhoneCall} disabled={busy || !businessId || !config.keyConfigured || !config.config?.retell_agent_id || !config.phoneLine?.outbound_enabled} className="mt-4 rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">Call customer</button>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div className="rounded-xl border border-neutral-200 p-3"><label className="flex items-start gap-2 text-sm text-neutral-800"><input type="checkbox" checked={onlyIfMissed} onChange={e => setOnlyIfMissed(e.target.checked)} className="mt-1" />Only call if the source call is still missed/unanswered</label><input value={sourceCallId} onChange={e => setSourceCallId(e.target.value)} placeholder="Source missed-call record ID" className="mt-3 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm" /></div>
+        <div className="rounded-xl border border-neutral-200 p-3"><label className="flex items-start gap-2 text-sm text-neutral-800"><input type="checkbox" checked={onlyIfUnpaid} onChange={e => setOnlyIfUnpaid(e.target.checked)} className="mt-1" />Only call if the order is still unpaid</label><input value={orderId} onChange={e => setOrderId(e.target.value)} placeholder="Order ID for unpaid-order condition" className="mt-3 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm" /></div>
+      </div>
+      <label className="mt-4 flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" checked={callConsent} onChange={e => setCallConsent(e.target.checked)} className="mt-1" />The person requested this callback or explicitly consented to receive this call. I have permission to contact this number.</label>
+      <button onClick={() => void scheduleCall()} disabled={savingSchedule || !businessId} className="mt-4 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{savingSchedule ? "Saving…" : "Schedule AI call"}</button>
     </section>
 
-    {message && <p role="status" className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">{message}</p>}
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+      <h2 className="text-lg font-semibold text-neutral-950">Scheduled calls</h2><p className="mt-1 text-sm text-neutral-500">Timer and conditional calls queued for this business.</p>
+      <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead><tr className="border-b border-neutral-100 text-xs uppercase tracking-wide text-neutral-500"><th className="py-3 pr-3">When</th><th className="py-3 pr-3">Contact</th><th className="py-3 pr-3">Reason</th><th className="py-3 pr-3">Trigger</th><th className="py-3 pr-3">Status</th><th className="py-3">Action</th></tr></thead><tbody>{scheduledCalls.length ? scheduledCalls.map(call => <tr key={call.id} className="border-b border-neutral-50"><td className="py-3 pr-3 text-neutral-700">{fmtDate(call.scheduled_at)}</td><td className="py-3 pr-3"><div className="font-medium text-neutral-900">{call.customer_name || call.phone_number}</div><div className="text-xs text-neutral-500">{call.phone_number}</div></td><td className="py-3 pr-3 text-neutral-700">{call.reason}</td><td className="py-3 pr-3 text-neutral-600">{call.trigger_type.replace(/_/g, " ")}</td><td className="py-3 pr-3"><span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(call.status)}`}>{call.status}</span>{call.last_error && <div className="mt-1 max-w-xs text-xs text-orange-800">{call.last_error}</div>}</td><td className="py-3">{["scheduled", "waiting_for_provider"].includes(call.status) && <button onClick={() => void cancelScheduledCall(call.id)} className="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700">Cancel</button>}</td></tr>) : <tr><td colSpan={6} className="py-8 text-center text-sm text-neutral-500">No scheduled calls yet.</td></tr>}</tbody></table></div>
+    </section>
+
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+      <h2 className="text-lg font-semibold text-neutral-950">Recent SautiKit calls</h2><p className="mt-1 text-sm text-neutral-500">Completed, failed and submitted AI calls for this business.</p>
+      <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead><tr className="border-b border-neutral-100 text-xs uppercase tracking-wide text-neutral-500"><th className="py-3 pr-3">Time</th><th className="py-3 pr-3">Direction</th><th className="py-3 pr-3">Number</th><th className="py-3 pr-3">Status</th><th className="py-3 pr-3">Duration</th><th className="py-3">Summary</th></tr></thead><tbody>{callRecords.length ? callRecords.map(call => <tr key={call.id} className="border-b border-neutral-50"><td className="py-3 pr-3 text-neutral-600">{fmtDate(call.created_at)}</td><td className="py-3 pr-3 text-neutral-700">{call.direction}</td><td className="py-3 pr-3 text-neutral-700">{call.direction === "inbound" ? call.from_number : call.to_number}</td><td className="py-3 pr-3"><span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(call.status)}`}>{call.status}</span></td><td className="py-3 pr-3 text-neutral-600">{call.duration_seconds ? `${call.duration_seconds}s` : "—"}</td><td className="py-3 text-neutral-600">{call.summary || "—"}</td></tr>) : <tr><td colSpan={6} className="py-8 text-center text-sm text-neutral-500">No SautiKit call records yet. Your scheduled calls will appear here after the provider accepts them.</td></tr>}</tbody></table></div>
+    </section>
+    {message && <p role="status" className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900">{message}</p>}
+    {error && <p role="alert" className="rounded-xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-800">{error}</p>}
   </div>;
 }
