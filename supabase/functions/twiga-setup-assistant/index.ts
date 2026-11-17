@@ -17,31 +17,21 @@ Deno.serve(async(req:Request)=>{
  const {data:authData,error:authError}=await admin.auth.getUser(auth.slice(7).trim());
  if(authError||!authData.user) return json({error:"Session expired. Sign in again."},401);
  try{
-  const {data:vaultXaiKey,error:keyError}=await admin.rpc("twiga_get_platform_secret",{p_provider:"xai"});
-  const xaiKey=String(vaultXaiKey||Deno.env.get("XAI_API_KEY")||"");
-  if(keyError&&!xaiKey) console.error("xAI Vault lookup failed",keyError.message);
-  if(!xaiKey) return json({error:"Grok is not connected yet. Open Connections → Grok business setup helper and add the xAI API key. A TWIGA platform administrator must complete this shared connection."},503);
-  const body=await req.json().catch(()=>({}));
-  const messages=Array.isArray(body.messages)?body.messages.slice(-16):[];
+  const {data:openrouterSecret,error:keyError}=await admin.rpc("twiga_get_platform_secret",{p_provider:"openrouter"});
+  const openrouterKey=String(openrouterSecret||Deno.env.get("OPENROUTER_API_KEY")||"");
+  if(keyError&&!openrouterKey) console.error("OpenRouter Vault lookup failed",keyError.message);
+  if(!openrouterKey) return json({error:"TWIGA free AI setup is not connected. A platform administrator must add the OpenRouter API key in Connections. No xAI/Grok key is used."},503);
+  const body=await req.json().catch(()=>({})); const messages=Array.isArray(body.messages)?body.messages.slice(-16):[];
   const ownerName=String(body.ownerProfile?.name||authData.user.user_metadata?.full_name||authData.user.user_metadata?.name||"").slice(0,160);
   const ownerEmail=String(body.ownerProfile?.email||authData.user.email||"").slice(0,254);
-  const ownerContext="Authenticated account owner: "+(ownerName||"not supplied")+"; business contact email: "+(ownerEmail||"not supplied")+". Treat these as the account profile values and confirm them with the owner.";
-  const transcript=messages.map((m:any)=>{
-   const role=m?.role==="assistant"||m?.role==="ai"?"TWIGA assistant":"Business owner";
-   return role+": "+String(m?.content||m?.text||"").slice(0,5000);
-  }).join("\n");
-  const response=await fetch("https://api.x.ai/v1/responses",{
-   method:"POST",
-   headers:{Authorization:"Bearer "+String(xaiKey),"Content-Type":"application/json"},
-   body:JSON.stringify({model:"grok-4.7",input:SYSTEM_PROMPT+"\n\n"+ownerContext+"\n\nConversation so far:\n"+transcript+"\n\nContinue the conversation. Return the required JSON object only.",temperature:0.7,top_p:0.95,max_output_tokens:1800,store:false})
-  });
+  const ownerContext="Authenticated account owner: "+(ownerName||"not supplied")+"; business contact email: "+(ownerEmail||"not supplied")+". Treat these as account profile values and confirm them with the owner.";
+  const transcript=messages.map((m:any)=>{const role=m?.role==="assistant"||m?.role==="ai"?"TWIGA assistant":"Business owner";return role+": "+String(m?.content||m?.text||"").slice(0,5000);}).join("\n");
+  const response=await fetch("https://openrouter.ai/api/v1/chat/completions",{method:"POST",headers:{Authorization:"Bearer "+openrouterKey,"Content-Type":"application/json","HTTP-Referer":"https://app.twiga.co.ke","X-OpenRouter-Title":"TWIGA Business Setup"},body:JSON.stringify({model:"inclusionai/ling-3.2-flash:free",messages:[{role:"system",content:SYSTEM_PROMPT+"\n\n"+ownerContext},{role:"user",content:"Conversation so far:\n"+transcript+"\n\nContinue the conversation. Return the required JSON object only."}],temperature:0.3,max_tokens:3000,include_reasoning:false,response_format:{type:"json_object"}})});
   const raw=await response.text();let result:any={};try{result=raw?JSON.parse(raw):{};}catch{}
-  if(!response.ok){console.error("xAI request failed",response.status);return json({error:"Grok could not process that message. Check the xAI key and account quota."},502);}
-  let output=String(result.output_text||"");
-  if(!output&&Array.isArray(result.output)) output=result.output.flatMap((item:any)=>Array.isArray(item.content)?item.content:[]).filter((part:any)=>part.type==="output_text"||part.type==="text").map((part:any)=>String(part.text||"")).join("\n");
-  let parsed:any;
+  if(!response.ok){console.error("OpenRouter request failed",response.status);return json({error:response.status===401?"OpenRouter rejected the saved key. Check Connections.":response.status===429?"The free model is temporarily rate-limited. Try again shortly.":"The free AI setup model could not process that message (HTTP "+response.status+")."},502);}
+  const output=String(result.choices?.[0]?.message?.content||""); let parsed:any;
   try{parsed=JSON.parse(output.replace(/^\s*```(?:json)?/i,"").replace(/```\s*$/,"").trim());}
-  catch{console.error("Grok returned invalid JSON");return json({error:"The setup assistant returned an unreadable response. Please try again."},502);}
+  catch{console.error("OpenRouter free model returned invalid JSON",result.choices?.[0]?.finish_reason||"unknown");return json({error:"The free AI model returned an incomplete setup response. Please send your message again."},502);}
   const p=parsed.business_profile&&typeof parsed.business_profile==="object"?parsed.business_profile:{};
   return json({reply:String(parsed.reply||"Tell me a little more about your business."),readyToBuild:parsed.ready_to_build===true&&!!String(p.business_name||"").trim()&&!!String(p.business_type||"").trim()&&!!String(p.business_summary||p.what_they_sell||p.what_they_do||p.products_and_services||"").trim(),missingFields:Array.isArray(parsed.missing_fields)?parsed.missing_fields.map((x:unknown)=>String(x).slice(0,100)).slice(0,12):[],businessProfile:p});
  }catch(e){console.error("twiga-setup-assistant",e);return json({error:"The setup assistant could not complete that request."},500);}

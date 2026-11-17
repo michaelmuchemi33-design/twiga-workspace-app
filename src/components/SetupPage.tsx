@@ -98,7 +98,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
       if (data?.error) throw new Error(String(data.error));
       const businessId = String(data?.business?.id || "");
       if (!businessId) throw new Error("The workspace was not created. Please try again.");
-      setMessages((m) => [...m, { id: String(Date.now()), role: "ai", text: "Your private " + profile.business_name + " workspace is ready. Its customers, appointments, business details and receptionist configuration are separated from every other business. Next, connect Google, Grok and SautiKit in Connections." }]);
+      setMessages((m) => [...m, { id: String(Date.now()), role: "ai", text: "Your private " + profile.business_name + " workspace is ready. Its customers, appointments, business details and receptionist configuration are separated from every other business. Next, connect Google, OpenRouter and SautiKit in Connections." }]);
       onBusinessCreated(businessId);
       onDone();
     } catch (e) {
@@ -112,7 +112,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
     <header className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
       <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-500">TWIGA · Business setup assistant</p>
       <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-950">Build your business workspace</h1>
-      <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Describe your business in plain language. The assistant organises your business details and drafts your first phone greeting and receptionist instructions before creating a separate workspace. Grok powers business setup; SautiKit powers the live AI receptionist and outbound calls. The setup chat needs the shared Grok connection. A TWIGA platform administrator can connect it under Connections. This key stays on the server and is never exposed to business customers. <a className="font-semibold text-orange-700 underline" href="https://console.x.ai/team/default/api-keys/" target="_blank" rel="noreferrer">Open xAI API keys</a>.</p>
+      <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Describe your business in plain language. The assistant organises your business details and drafts your first phone greeting and receptionist instructions before creating a separate workspace. OpenRouter powers business setup; SautiKit powers the live AI receptionist and outbound calls. The setup chat needs the shared OpenRouter connection. A TWIGA platform administrator can connect it under Connections. This key stays on the server and is never exposed to business customers. <a className="font-semibold text-orange-700 underline" href="https://console.OpenRouter/team/default/api-keys/" target="_blank" rel="noreferrer">Open OpenRouter API keys</a>.</p>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <label className="block text-sm font-medium text-neutral-700">Business owner name<input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} autoComplete="name" placeholder="Your full name" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
         <label className="block text-sm font-medium text-neutral-700">Business contact email<input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} autoComplete="email" placeholder="you@business.co.ke" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
@@ -151,9 +151,9 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
     </div>
     {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
       <p>{error}</p>
-      {/Grok is not connected|xAI API key|setup assistant/i.test(error) && onOpenConnections ? <div className="mt-3 flex flex-wrap items-center gap-3">
+      {/OpenRouter is not connected|OpenRouter API key|setup assistant/i.test(error) && onOpenConnections ? <div className="mt-3 flex flex-wrap items-center gap-3">
         <button type="button" onClick={onOpenConnections} className="rounded-lg bg-neutral-950 px-4 py-2 text-xs font-semibold text-white">Open Connections</button>
-        <span className="text-xs text-red-700">Connect the shared Grok key, then return here and send your business details again.</span>
+        <span className="text-xs text-red-700">Connect the shared OpenRouter key, then return here and send your business details again.</span>
       </div> : null}
     </div>}
   </div>;

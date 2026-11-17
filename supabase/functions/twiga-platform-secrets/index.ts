@@ -16,8 +16,8 @@ Deno.serve(async(req:Request)=>{
  try{
   const body=await req.json().catch(()=>({})),action=String(body.action||"get_config");
   if(action==="get_config"){
-   const {data:ref}=await admin.from("twiga_platform_secret_refs").select("secret_last4,updated_at").eq("provider","xai").maybeSingle();
-   return json({isAdmin:true,keyConfigured:!!ref||!!Deno.env.get("XAI_API_KEY"),keySource:ref?"vault":Deno.env.get("XAI_API_KEY")?"environment":"missing",keyLast4:ref?.secret_last4||"",updatedAt:ref?.updated_at||null});
+   const {data:ref}=await admin.from("twiga_platform_secret_refs").select("secret_last4,updated_at").eq("provider","openrouter").maybeSingle();
+   return json({isAdmin:true,keyConfigured:!!ref||!!Deno.env.get("OPENROUTER_API_KEY"),keySource:ref?"vault":Deno.env.get("OPENROUTER_API_KEY")?"environment":"missing",keyLast4:ref?.secret_last4||"",updatedAt:ref?.updated_at||null});
   }
   if(action==="retell.platform.status"){
    const {data:ref,error:refError}=await admin.from("twiga_platform_secret_refs").select("secret_last4,updated_at").eq("provider","retell_platform_api_key").maybeSingle();
@@ -74,13 +74,13 @@ Deno.serve(async(req:Request)=>{
    if(secretError){console.error("Google OAuth client secret save failed",secretError.message);return json({error:"Client ID saved, but the Google OAuth client secret could not be stored."},500);}
    return json({isAdmin:true,clientIdConfigured:true,clientSecretConfigured:true,message:"Google OAuth credentials saved in encrypted Supabase Vault. Business owners will authorize their own Google accounts.",clientSecretLast4:last4});
   }
-  if(action==="save_xai_key"){
-   const apiKey=String(body.apiKey||"").trim(); if(apiKey.length<20||apiKey.length>500) return json({error:"Enter a valid xAI API key."},400);
-   const check=await fetch("https://api.x.ai/v1/models",{headers:{Authorization:"Bearer "+apiKey,Accept:"application/json"}});
-   if(!check.ok) return json({error:check.status===401?"xAI rejected this API key. Check it and try again.":"Could not validate the xAI key or account."},400);
-   const {data:last4,error}=await admin.rpc("twiga_set_platform_secret",{p_provider:"xai",p_secret:apiKey,p_updated_by:user.id});
-   if(error){console.error("xAI Vault save failed",error.message);return json({error:"Key validated but could not be stored in Vault."},500);}
-   return json({isAdmin:true,keyConfigured:true,keyLast4:last4,message:"Grok setup key validated and saved in encrypted Supabase Vault."});
+  if(action==="save_openrouter_key"){
+   const apiKey=String(body.apiKey||"").trim(); if(apiKey.length<20||apiKey.length>500) return json({error:"Enter a valid OpenRouter API key."},400);
+   const check=await fetch("https://openrouter.ai/api/v1/models",{headers:{Authorization:"Bearer "+apiKey,Accept:"application/json"}});
+   if(!check.ok) return json({error:check.status===401?"OpenRouter rejected this API key. Check it and try again.":"Could not validate the OpenRouter key or account."},400);
+   const {data:last4,error}=await admin.rpc("twiga_set_platform_secret",{p_provider:"openrouter",p_secret:apiKey,p_updated_by:user.id});
+   if(error){console.error("OpenRouter Vault save failed",error.message);return json({error:"Key validated but could not be stored in Vault."},500);}
+   return json({isAdmin:true,keyConfigured:true,keyLast4:last4,message:"OpenRouter setup key validated and saved in encrypted Supabase Vault."});
   }
   return json({error:"Unknown platform secret action."},404);
  }catch(e){console.error("twiga-platform-secrets",e);return json({error:"Platform secret operation failed."},500);}
