@@ -119,7 +119,7 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
     const { data, error } = await supabase.functions.invoke("twiga-palpluss", { body: { action: "get_config", businessId } });
     if (error || data?.error) {
       setPalplussStatus({ keyConfigured: false, keySource: "missing" });
-      setPalplussMessage(error?.message || String(data?.error || "PalPluss status is unavailable."));
+      setPalplussMessage(error?.message || String(data?.error || "TWIGA payments status is unavailable."));
       return;
     }
     setPalplussStatus(data || { keyConfigured: false, keySource: "missing" });
@@ -169,7 +169,7 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
   const testApiConnections = async () => {
     if (demo) { setApiStatus("Sign in to test live API connections."); return; }
     if (!supabase || !businessId) { setApiStatus("Select a live business workspace first."); return; }
-    setApiStatus("Testing Supabase, Cloudflare and SautiKit…");
+    setApiStatus("Testing Supabase, Cloudflare and TWIGA voice service…");
     try {
       await getAccessToken();
       const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -180,12 +180,12 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
       const health = await response.json().catch(() => ({}));
       if (!response.ok || health.ok !== true) throw new Error("Cloudflare file API health check failed.");
       const { data: voiceConfig, error: voiceError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } });
-      if (voiceError) throw new Error("SautiKit configuration check failed: " + voiceError.message);
+      if (voiceError) throw new Error("TWIGA voice service configuration check failed: " + voiceError.message);
       if (voiceConfig?.error) throw new Error(String(voiceConfig.error));
-      if (!voiceConfig?.keyConfigured) { setApiStatus("Supabase authentication and business access: OK · Cloudflare storage API: OK · SautiKit API key still needs to be saved in Connections."); return; }
-      if (!voiceConfig?.phoneLine) { setApiStatus("Supabase: OK · Cloudflare storage: OK · SautiKit key: OK · This business still needs an assigned AI phone line."); return; }
+      if (!voiceConfig?.keyConfigured) { setApiStatus("Supabase authentication and business access: OK · Cloudflare storage API: OK · TWIGA voice service API key still needs to be saved in Connections."); return; }
+      if (!voiceConfig?.phoneLine) { setApiStatus("Supabase: OK · Cloudflare storage: OK · TWIGA voice service key: OK · This business still needs an assigned AI phone line."); return; }
       const inbound = voiceConfig.inboundVerified ? "provider route confirmed; physical call test pending" : "inbound route needs attention";
-      setApiStatus("Supabase: OK · Cloudflare storage: OK · SautiKit key: OK · AI line " + (voiceConfig.phoneLine.line_number || "assigned") + " · inbound " + inbound + " · outbound " + (voiceConfig.phoneLine.outbound_status || "unknown"));
+      setApiStatus("Supabase: OK · Cloudflare storage: OK · TWIGA voice service key: OK · AI line " + (voiceConfig.phoneLine.line_number || "assigned") + " · inbound " + inbound + " · outbound " + (voiceConfig.phoneLine.outbound_status || "unknown"));
     } catch (e) { setApiStatus(e instanceof Error ? e.message : "API connection test failed."); }
   };
 
@@ -292,7 +292,7 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
           </h1>
           <p className="mt-1 text-sm text-neutral-500">
             Tune how your AI receptionist runs the front desk
-          </p>\n          <p className="mt-3 max-w-3xl text-xs leading-5 text-neutral-500">Live SautiKit voice, model and receptionist instructions are configured in Phone & AI. The settings below are saved as workspace defaults; they do not silently change a published voice.</p>
+          </p>\n          <p className="mt-3 max-w-3xl text-xs leading-5 text-neutral-500">Live TWIGA voice service voice, model and receptionist instructions are configured in Phone & AI. The settings below are saved as workspace defaults; they do not silently change a published voice.</p>
         </div>
         <div className="flex items-center gap-3">
           {saved && (
@@ -313,7 +313,7 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
 
       <div className="grid gap-5 xl:grid-cols-2">
         <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">SautiKit phone controls</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Voice, inbound & scheduled calls</h2><p className="mt-1 text-sm leading-6 text-neutral-500">Manage the proven female voice, choose provider-listed male voices, edit receptionist instructions, test a real phone call and schedule customer callbacks in Phone & AI.</p></div><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">SautiKit</span></div>
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">TWIGA voice service phone controls</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Voice, inbound & scheduled calls</h2><p className="mt-1 text-sm leading-6 text-neutral-500">Manage the proven female voice, choose provider-listed male voices, edit receptionist instructions, test a real phone call and schedule customer callbacks in Phone & AI.</p></div><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">TWIGA voice service</span></div>
           <div className="mt-4 flex flex-wrap items-center gap-2"><button onClick={onOpenProfile} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Open Phone & AI</button><button onClick={testApiConnections} disabled={callBusy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700">Test API connections</button>{apiStatus && <span className="text-xs text-neutral-500">{apiStatus}</span>}</div>
         </section>
 
@@ -440,8 +440,8 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
             </Field>
           </Section>
 
-          <Section icon={IconMic} title="SautiKit voice & call settings" desc="Manage the published phone receptionist in Phone & AI">
-            <p className="text-sm leading-6 text-neutral-600">Choose from the live SautiKit catalogue, including the preferred Woman voice and available male options. Publish greetings and inbound/outbound instructions, test a real phone call, and schedule consent-based callbacks from Phone & AI.</p>
+          <Section icon={IconMic} title="TWIGA voice service voice & call settings" desc="Manage the published phone receptionist in Phone & AI">
+            <p className="text-sm leading-6 text-neutral-600">Choose from the live TWIGA voice service catalogue, including the preferred Woman voice and available male options. Publish greetings and inbound/outbound instructions, test a real phone call, and schedule consent-based callbacks from Phone & AI.</p>
             <button onClick={onOpenProfile} className="mt-3 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Open Phone & AI</button>
           </Section>
 
@@ -568,7 +568,7 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
           <Section icon={IconSwap} title="Compliance & Call Recording" desc="Provider-controlled recording and storage" className="lg:col-span-2">
             <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-4">
               <p className="text-sm font-semibold text-neutral-900">Recording is not enabled by this settings page.</p>
-              <p className="mt-2 text-sm leading-6 text-neutral-600">This workspace preference does not switch on SautiKit audio capture or copy audio into TWIGA cloud storage. Check the actual per-business recording status under Phone & AI → Call recordings & cloud storage. Keep recording off until the caller disclosure and provider recording behaviour have been verified.</p>
+              <p className="mt-2 text-sm leading-6 text-neutral-600">This workspace preference does not switch on TWIGA voice service audio capture or copy audio into TWIGA cloud storage. Check the actual per-business recording status under Phone & AI → Call recordings & cloud storage. Keep recording off until the caller disclosure and provider recording behaviour have been verified.</p>
             </div>
             <Field label="Preferred recording disclosure text (draft only)">
               <Input value={s.disclaimer} onChange={(e) => patch("scheduling", { disclaimer: e.target.value })} />
