@@ -74,7 +74,7 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
     businessId,
   } = useStore();
   const [ownerName, setOwnerName] = useState("");
-  const [billingReminder, setBillingReminder] = useState<{ paid_through?: string | null; status?: string } | null>(null);
+  const [billingReminder, setBillingReminder] = useState<{ paid_through?: string | null; current_period_end?: string | null; status?: string } | null>(null);
 
   useEffect(() => {
     if (false || !supabase || !businessId) return;
@@ -94,13 +94,27 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
   useEffect(() => {
     if (!supabase || !businessId) { setBillingReminder(null); return; }
     let active = true;
-    void supabase.from("businesses").select("paid_through,status").eq("id", businessId).maybeSingle()
-      .then(({ data }) => { if (active) setBillingReminder(data as any); });
+    void Promise.all([
+      supabase.from("businesses").select("paid_through,status").eq("id", businessId).maybeSingle(),
+      supabase.from("twiga_subscriptions").select("current_period_end").eq("business_id", businessId).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+    ]).then(([businessResult, subscriptionResult]) => {
+      if (!active) return;
+      setBillingReminder({
+        paid_through: businessResult.data?.paid_through ?? null,
+        status: businessResult.data?.status ?? null,
+        current_period_end: subscriptionResult.data?.current_period_end ?? null,
+      });
+    });
     return () => { active = false; };
   }, [businessId]);
 
-  const renewalDaysLeft = billingReminder?.paid_through
-    ? Math.ceil((new Date(String(billingReminder.paid_through) + "T23:59:59").getTime() - Date.now()) / 86400000)
+  const renewalDeadline = billingReminder?.current_period_end
+    ? new Date(billingReminder.current_period_end).getTime()
+    : billingReminder?.paid_through
+      ? new Date(String(billingReminder.paid_through) + "T23:59:59").getTime()
+      : null;
+  const renewalDaysLeft = renewalDeadline !== null
+    ? Math.ceil((renewalDeadline - Date.now()) / 86400000)
     : null;
 
   const revenue = sales.reduce((s, x) => s + x.total, 0);
