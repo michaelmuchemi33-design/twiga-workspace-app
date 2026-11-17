@@ -86,7 +86,10 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
 
   useEffect(() => {
     const recheck = () => {
-      if (document.visibilityState === "visible") void refresh();
+      if (document.visibilityState === "visible") {
+        void refresh();
+        void refreshProviders();
+      }
     };
     window.addEventListener("focus", recheck);
     document.addEventListener("visibilitychange", recheck);
@@ -96,7 +99,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       document.removeEventListener("visibilitychange", recheck);
       window.clearInterval(timer);
     };
-  }, [refresh]);
+  }, [refresh, refreshProviders]);
 
   const connect = async () => {
     if (!businessId || !supabase) { setMessage("Create or select a business first."); return; }
