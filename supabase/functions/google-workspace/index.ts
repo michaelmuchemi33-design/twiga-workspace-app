@@ -454,6 +454,69 @@ Deno.serve(async (req: Request) => {
       const data = await googleJson(token, "https://people.googleapis.com/v1/people/me/connections?" + q);
       return reply(req, { connections: data.connections || [], nextPageToken: data.nextPageToken || null });
     }
+    if (action === "contacts.import") {
+      const limit = Math.min(500, Math.max(1, Number(body.limit || 500)));
+      const importedRows: any[] = [];
+      let pageToken = "";
+      let read = 0;
+      do {
+        const q = new URLSearchParams({ pageSize: String(Math.min(100, limit - read)), personFields: "names,emailAddresses,phoneNumbers" });
+        if (pageToken) q.set("pageToken", pageToken);
+        const page = await googleJson(token, "https://people.googleapis.com/v1/people/me/connections?" + q);
+        const people = Array.isArray(page.connections) ? page.connections : [];
+        for (const person of people) {
+          if (read >= limit) break;
+          read++;
+          const nameItem = (person.names || []).find((x: any) => x.displayName) || (person.names || [])[0] || {};
+          const displayName = String(nameItem.displayName || [nameItem.givenName, nameItem.familyName].filter(Boolean).join(" ") || "").trim().slice(0, 160);
+          const phoneItem = (person.phoneNumbers || []).find((x: any) => x.value) || {};
+          const emailItem = (person.emailAddresses || []).find((x: any) => x.value) || {};
+          const rawPhone = String(phoneItem.value || "").trim();
+          const email = String(emailItem.value || "").trim().toLowerCase().slice(0, 254);
+          const phone = rawPhone.replace(/[\\s().-]/g, "").slice(0, 40);
+          if (!displayName || (!phone && !email)) continue;
+          importedRows.push({
+            name: displayName,
+            phone: phone || null,
+            email: email || null,
+            notes: "Imported from connected Google Contacts",
+            external_resource_name: String(person.resourceName || "").slice(0, 200),
+          });
+        }
+        pageToken = String(page.nextPageToken || "");
+      } while (pageToken && read < limit);
+
+      const { data: existing, error: existingError } = await admin.from("twiga_customers")
+        .select("phone,email").eq("business_id", businessId).limit(10000);
+      if (existingError) throw new HttpError(500, "Could not check existing TWIGA contacts before importing.");
+      const phoneSet = new Set((existing || []).map((row: any) => String(row.phone || "").replace(/[\\s().-]/g, "").toLowerCase()).filter(Boolean));
+      const emailSet = new Set((existing || []).map((row: any) => String(row.email || "").toLowerCase()).filter(Boolean));
+      const seenPhones = new Set<string>();
+      const seenEmails = new Set<string>();
+      const newRows = importedRows.filter((row) => {
+        const p = String(row.phone || "").toLowerCase();
+        const e = String(row.email || "").toLowerCase();
+        if ((p && (phoneSet.has(p) || seenPhones.has(p))) || (e && (emailSet.has(e) || seenEmails.has(e)))) return false;
+        if (p) seenPhones.add(p);
+        if (e) seenEmails.add(e);
+        return true;
+      }).map((row) => ({
+        business_id: businessId,
+        created_by: user.id,
+        name: row.name,
+        phone: row.phone,
+        email: row.email,
+        notes: row.notes,
+      }));
+      let inserted = 0;
+      for (let i = 0; i < newRows.length; i += 100) {
+        const { error: insertError, data: insertedRows } = await admin.from("twiga_customers").insert(newRows.slice(i, i + 100)).select("id");
+        if (insertError) throw new HttpError(500, "Google contacts were read but TWIGA could not save the import.");
+        inserted += (insertedRows || []).length;
+      }
+      await admin.from("twiga_google_connections").update({ last_sync_at: new Date().toISOString() }).eq("business_id", businessId);
+      return reply(req, { imported: inserted, skipped: Math.max(0, importedRows.length - inserted), scanned: read, message: inserted + " Google contact(s) imported into this business. Existing phone or email matches were skipped." });
+    }
     if (action === "sheets.ensure") {
       const sheet = await ensureSheet(admin, connection, token);
       return reply(req, { ...sheet, ready: true });
