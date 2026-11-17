@@ -237,8 +237,8 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   return <div className="mx-auto max-w-5xl space-y-5">
     <header className="rounded-2xl border border-neutral-200 bg-white p-6">
       <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Workspace integrations</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Connections & permissions</h1>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Connect your business Google account to Calendar, Contacts, Sheets and Drive. TWIGA manages the technical setup securely in the background — you do not need API keys or developer credentials.</p>
-      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{!oauthConfig.serverConfigured && !googleAuth?.tokens?.accessToken ? "Google access is being prepared by TWIGA. You do not need to enter any keys or credentials." : "Your Google account can be connected securely below. TWIGA only receives the permissions you approve."}</div>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Connect Google Calendar, Contacts, Sheets and Drive with one button. TWIGA handles the technical setup for you.</p>
+      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{!oauthConfig.serverConfigured && !googleAuth?.tokens?.accessToken ? "Google is ready to connect. No API keys or developer settings are needed." : "Your Google account can be connected securely below. TWIGA only receives the permissions you approve."}</div>
       
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-800">{status.connected ? (status.permissionsComplete === false ? "Google connected · permissions incomplete" : "Google connected · verified") : status.reconnectRequired ? "Reconnect Google" : "Google not connected"}</span>
@@ -264,60 +264,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       </div>
       {status.spreadsheetUrl && <a href={status.spreadsheetUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block text-sm font-semibold text-orange-700 underline">Open business spreadsheet</a>}
     </section>
-    {openrouterConfig.isAdmin && <section className="grid gap-5 lg:grid-cols-2">
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Business setup assistant</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">OpenRouter · free models</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${openrouterConfig.keyConfigured ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{openrouterConfig.keyConfigured ? "Connected" : openrouterConfig.isAdmin ? "API key needed" : "Managed by TWIGA"}</span></div>
-        <p className="mt-2 text-sm leading-6 text-neutral-600">OpenRouter routes business onboarding through available free models only. TWIGA does not silently fall back to paid models. The API key is validated on the server and stored in Supabase Vault; it is never exposed to customer browsers. The model may be rate-limited, so TWIGA does not silently switch to a paid model.</p>
-        {openrouterConfig.isAdmin ? <>
-          {openrouterConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Encrypted key saved{openrouterConfig.keyLast4 ? ` · ending ${openrouterConfig.keyLast4}` : ""}.</p>}
-          <label className="mt-4 block text-sm font-medium text-neutral-800">{openrouterConfig.keyConfigured ? "Replace OpenRouter API key" : "OpenRouter API key"}<input type="password" autoComplete="new-password" value={openrouterKey} onChange={e => setOpenrouterKey(e.target.value)} placeholder="Paste OpenRouter API key" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
-          <a href="https://openrouter.ai/keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Get an OpenRouter API key ↗</a>
-          <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => void saveProviderKey("openrouter")} disabled={providerBusy || !openrouterKey.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save OpenRouter key</button>{openrouterConfig.keyConfigured && <button onClick={() => void testOpenRouter()} disabled={providerBusy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">Test free setup model</button>}</div>
-          {openrouterTestMessage && <p role="status" className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{openrouterTestMessage}</p>}
-        </> : <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">Only the TWIGA platform administrator can manage this shared API key.</p>}
-      </div>
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">AI phone provider</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">SautiKit</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${sautikitConfig.keyConfigured ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{sautikitConfig.keyConfigured ? "Connected" : "API key needed"}</span></div>
-        <p className="mt-2 text-sm leading-6 text-neutral-600">SautiKit powers the proven female voice, male voice options, inbound agent and outbound customer calls. Voice selection and call scheduling are in Phone & AI.</p>
-        {sautikitConfig.phoneLine?.line_number && <p className="mt-2 text-sm font-semibold text-neutral-900">Assigned AI line: {sautikitConfig.phoneLine.line_number}</p>}
-        {sautikitConfig.isPlatformAdmin ? <>
-          {sautikitConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Encrypted API key saved{sautikitConfig.keyLast4 ? ` · ending ${sautikitConfig.keyLast4}` : ""}.</p>}
-          <label className="mt-4 block text-sm font-medium text-neutral-800">{sautikitConfig.keyConfigured ? "Replace SautiKit API key" : "SautiKit API key"}<input type="password" autoComplete="new-password" value={sautikitKey} onChange={e => setSautikitKey(e.target.value)} placeholder="Paste SautiKit API key" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
-          <p className="mt-2 text-xs text-neutral-500">Use the key from your existing SautiKit account. It is validated and stored securely when connected.</p>
-          <a href="https://app.sautikit.com/developers/api-keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Get a SautiKit API key ↗</a>
-          <button onClick={() => void saveProviderKey("sautikit")} disabled={providerBusy || !sautikitKey.trim()} className="mt-3 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save SautiKit key</button>
-        </> : <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">The provider key is managed centrally by TWIGA. Your business line and voice settings remain separate.</p>}
-      </div>
-    </section>}
-    {openrouterConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Business SMS provider</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">KIMISMS · SMS notifications</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">KIMISMS sends SMS across Kenyan mobile networks. It uses a Client ID and Client Secret plus your approved Sender ID. This is separate from PalPluss M-Pesa and SautiKit voice. Credentials are encrypted per business.</p>
-        </div>
-        <span className={"rounded-full px-3 py-1 text-xs font-semibold " + (smsConfig.connected ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600")}>{smsConfig.connected ? "Connected" : "Not connected"}</span>
-      </div>
-      {smsConfig.connected && <p className="mt-2 text-xs text-neutral-500">Encrypted SMS credentials saved {smsConfig.keyLast4 ? "· ending " + smsConfig.keyLast4 : ""}. Sender ID: {smsConfig.senderName || smsSenderName || "not set"}.</p>}
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <label className="block text-sm font-medium text-neutral-800">KIMISMS Client ID<input value={smsClientId} onChange={e => setSmsClientId(e.target.value)} autoComplete="off" placeholder="KIMISMS Client ID" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
-        <label className="block text-sm font-medium text-neutral-800">{smsConfig.connected ? "Rotate Client Secret" : "KIMISMS Client Secret"}<input type="password" value={smsClientSecret} onChange={e => setSmsClientSecret(e.target.value)} autoComplete="new-password" placeholder="Paste Client Secret" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
-        <label className="block text-sm font-medium text-neutral-800">Approved Sender ID<input value={smsSenderName} onChange={e => setSmsSenderName(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0,11))} placeholder="Your approved Sender ID" maxLength={11} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm uppercase" /></label>
-        <div className="flex items-end"><a href="https://kimipay.co.ke/api/docs/swagger-ui/" target="_blank" rel="noreferrer" className="text-sm font-semibold text-orange-700 underline">KIMISMS API credentials & documentation ↗</a></div>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => void saveSmsCredentials()} disabled={providerBusy || !smsClientId.trim() || !smsClientSecret.trim() || !smsSenderName.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save SMS credentials</button></div>
-      {smsConfig.connected && <div className="mt-4 rounded-xl border border-neutral-200 p-4">
-        <p className="text-sm font-semibold text-neutral-900">Automatic notifications</p>
-        <label className="mt-3 flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" className="mt-1" checked={smsOrderEnabled} onChange={e => setSmsOrderEnabled(e.target.checked)} /><span><strong>Order confirmation SMS</strong><span className="block text-xs text-neutral-500">Send an order reference and amount after the business confirms the order, only when the customer has opted in.</span></span></label>
-        <label className="mt-3 flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" className="mt-1" checked={smsPaymentEnabled} onChange={e => setSmsPaymentEnabled(e.target.checked)} /><span><strong>Payment receipt SMS</strong><span className="block text-xs text-neutral-500">Send a receipt only after PalPluss reports SUCCESS and the customer has opted in.</span></span></label>
-        <button onClick={() => void saveSmsSettings()} disabled={providerBusy || !smsSenderName.trim()} className="mt-3 rounded-xl border border-neutral-200 px-4 py-2 text-sm font-semibold text-neutral-800 disabled:opacity-40">Save SMS notification settings</button>
-      </div>}
-      {smsConfig.connected && <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_2fr_auto]">
-        <label className="text-sm font-medium text-neutral-800">Test number<input value={smsTestTo} onChange={e => setSmsTestTo(e.target.value)} placeholder="+2547…" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
-        <label className="text-sm font-medium text-neutral-800">Test message<input value={smsTestMessage} onChange={e => setSmsTestMessage(e.target.value)} maxLength={1000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
-        <div className="flex items-end"><button onClick={() => void sendSmsTest()} disabled={providerBusy || !smsTestTo.trim()} className="h-10 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-40">Send test SMS</button></div>
-      </div>}
-      {smsMessage && <p role="status" className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{smsMessage}</p>}
-      <p className="mt-3 text-xs leading-5 text-neutral-500">A customer SMS consent record is required before an order or payment message can be sent. Sending a test message may incur provider charges.</p>
-    </section>}
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5"><h2 className="text-lg font-semibold text-neutral-950">Your TWIGA services</h2><p className="mt-2 text-sm leading-6 text-neutral-600">Your phone service, payment collection and customer notifications are managed by TWIGA. You do not need separate SautiKit, PalPluss or SMS provider accounts, API keys or external dashboards. Choose your receptionist voice in Phone & AI and manage your payment options in Payments.</p><div className="mt-4 flex flex-wrap gap-2"><button onClick={() => window.dispatchEvent(new CustomEvent("twiga:navigate", { detail: "phone" }))} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Choose receptionist voice</button><button onClick={() => window.dispatchEvent(new CustomEvent("twiga:navigate", { detail: "payments" }))} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800">Payment settings</button></div></section>
     {providerMessage && <p role="status" className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">{providerMessage}</p>}
     {message && <p role="status" className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">{message}</p>}
   </div>;
