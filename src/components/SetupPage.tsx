@@ -146,13 +146,13 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
           <button onClick={buildWorkspace} disabled={!ready || building} className="mt-5 w-full rounded-xl bg-neutral-950 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{building ? "Creating workspace…" : "Create my business workspace"}</button>
           <p className="mt-2 text-[11px] leading-5 text-neutral-400">You can refine products, prices, hours and AI instructions after the workspace is created.</p>
         </div>
-        <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><h3 className="text-sm font-semibold text-neutral-900">What happens next?</h3><ol className="mt-3 space-y-3 text-xs leading-5 text-neutral-500"><li><strong className="text-neutral-800">1. Create workspace</strong><br/>Your business gets its own private records.</li><li><strong className="text-neutral-800">2. Connect services</strong><br/>Approve Google permissions and connect the existing SautiKit provider in Connections.</li><li><strong className="text-neutral-800">3. Configure receptionist</strong><br/>Choose one of the ten SautiKit voices, set inbound/outbound instructions and test with a real phone call.</li></ol></div>
+        <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><h3 className="text-sm font-semibold text-neutral-900">What happens next?</h3><ol className="mt-3 space-y-3 text-xs leading-5 text-neutral-500"><li><strong className="text-neutral-800">1. Create workspace</strong><br/>Your business gets its own private records.</li><li><strong className="text-neutral-800">2. Connect Google</strong><br/>Approve access to the Google services your business wants to use. TWIGA handles the rest.</li><li><strong className="text-neutral-800">3. Configure receptionist</strong><br/>Choose one of the ten SautiKit voices, set inbound/outbound instructions and test with a real phone call.</li></ol></div>
       </aside>
     </div>
     {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
       <p>{error}</p>
-      {/OpenRouter is not connected|OpenRouter API key|setup assistant/i.test(error) ? <div className="mt-3 rounded-lg bg-neutral-50 p-3 text-xs text-neutral-700">TWIGA’s setup service is temporarily unavailable. Your business details are safe. Please try again shortly or contact TWIGA support — no keys or technical setup are required from you.</div>
-      </div> : null}
+      {/OpenRouter is not connected|OpenRouter API key|setup assistant/i.test(error) && <div className="mt-3 rounded-lg bg-neutral-50 p-3 text-xs text-neutral-700">TWIGA’s setup service is temporarily unavailable. Your business details are safe. Please try again shortly or contact TWIGA support — no keys or technical setup are required from you.</div>}
+    </div>}
     </div>}
   </div>;
 }
