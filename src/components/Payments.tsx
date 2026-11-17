@@ -278,25 +278,23 @@ export default function Payments() {
   const collected = transactions.filter((t) => String(t.status).toUpperCase() === "SUCCESS").reduce((sum, t) => sum + Number(t.amount || 0), 0);
   const pending = transactions.filter((t) => ["PENDING", "PROCESSING"].includes(String(t.status).toUpperCase())).reduce((sum, t) => sum + Number(t.amount || 0), 0);
   const paymentSetup = [
-    { label: "Connect PalPluss API key", done: connected, tab: "keys" as const },
-    { label: "Add this business's Till or Paybill", done: channels.length > 0, tab: "collect" as const },
-    { label: "Save the public Paylink ID", done: Boolean(paylinkId.trim()), tab: "keys" as const },
+    { label: "Add your business Till or Paybill", done: channels.length > 0, tab: "collect" as const },
   ];
   const paymentSetupDone = paymentSetup.every((step) => step.done);
 
   return <div className="space-y-6">
     <header className="flex flex-col gap-4 rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-      <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-500">Collections · M-Pesa</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Payments</h1><p className="mt-1 text-sm text-neutral-500">PalPluss verifies M-Pesa payments. After an owner confirms an order, TWIGA sends its secure checkout link by opted-in KIMISMS SMS.</p></div>
+      <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-500">Collections · M-Pesa</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Payments</h1><p className="mt-1 text-sm text-neutral-500">TWIGA manages M-Pesa collection and customer payment notifications in one place.</p></div>
       <div className="flex gap-3"><div className="rounded-xl bg-neutral-950 px-4 py-3 text-white"><p className="text-[10px] uppercase tracking-widest text-neutral-400">Collected</p><p className="mt-1 text-xl font-bold">KES {collected.toLocaleString()}</p></div><div className="rounded-xl bg-neutral-950 px-4 py-3 text-white"><p className="text-[10px] uppercase tracking-widest text-neutral-400">Pending</p><p className="mt-1 text-xl font-bold">KES {pending.toLocaleString()}</p></div></div>
     </header>
 
     <section className={"rounded-2xl border p-5 " + (paymentSetupDone ? "border-neutral-200 bg-white" : "border-orange-200 bg-orange-50/50")}>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-700">First-time payment setup</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">{paymentSetupDone ? "Payments setup done" : "Finish connecting payments"}</h2><p className="mt-1 text-sm text-neutral-600">{paymentSetupDone ? "PalPluss is configured for this business. You can send M-Pesa prompts and use hosted Paylink checkout. Payments are only marked paid after PalPluss verification." : "Complete these three steps once. Each business uses its own payment destination and private key."}</p></div>
+        <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-700">First-time payment setup</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">{paymentSetupDone ? "Payments setup done" : "Finish connecting payments"}</h2><p className="mt-1 text-sm text-neutral-600">{paymentSetupDone ? "Your business collection account is ready. Send M-Pesa prompts from this page; TWIGA verifies payment status automatically." : "Add your business Till or Paybill once. TWIGA handles the payment connection for you."}</p></div>
         <span className={"rounded-full px-3 py-1 text-xs font-semibold " + (paymentSetupDone ? "bg-neutral-950 text-white" : "bg-white text-neutral-700")}>{paymentSetup.filter((step) => step.done).length}/3 complete</span>
       </div>
       <div className="mt-4 grid gap-2 md:grid-cols-3">{paymentSetup.map((step, index) => <div key={step.label} className="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white p-3"><div className="flex min-w-0 items-center gap-3"><span className={"grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold " + (step.done ? "bg-neutral-950 text-white" : "bg-orange-100 text-orange-800")}>{step.done ? "✓" : index + 1}</span><span className="text-sm font-medium text-neutral-800">{step.label}</span></div><button onClick={() => setTab(step.tab)} className="shrink-0 text-xs font-semibold text-orange-700 underline underline-offset-4">{step.done ? "Review" : "Set up"}</button></div>)}</div>
-      <p className="mt-3 text-xs leading-5 text-neutral-500">SMS is configured separately in Connections using the business's KIMISMS credentials. TWIGA only sends customer SMS after the business has enabled the relevant message type and recorded customer consent.</p>
+      <p className="mt-3 text-xs leading-5 text-neutral-500">TWIGA sends customer payment notifications when the business has enabled them and the customer has given consent.</p>
     </section>
 
     {pendingOrders.length > 0 && <section className="rounded-2xl border border-orange-200 bg-orange-50/50 p-5">
@@ -304,7 +302,7 @@ export default function Payments() {
       <div className="mt-4 grid gap-3 md:grid-cols-2">{pendingOrders.map((order) => <div key={order.id} className="rounded-xl border border-neutral-200 bg-white p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-semibold text-neutral-950">{order.customer_name || "Customer"}</p><p className="mt-1 text-xs text-neutral-500">{order.customer_phone || "No phone captured"} · {order.order_number}</p></div><strong className="whitespace-nowrap text-sm text-neutral-950">KES {Number(order.total_amount).toLocaleString()}</strong></div><p className="mt-2 line-clamp-2 text-xs text-neutral-600">{order.description || "Order captured during AI receptionist call."}</p><div className="mt-3 grid gap-2 sm:grid-cols-3"><button onClick={() => void sendOrderConfirmationSms(order)} disabled={busy || !order.customer_phone} className="rounded-xl border border-neutral-200 px-3 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">{order.customer_sms_consent ? "Confirm order & send paylink" : "Confirm SMS consent & send paylink"}</button><button onClick={() => void requestOrderPayment(order)} disabled={!connected || !selectedChannelId || busy || !order.customer_phone || Number(order.total_amount) < 1} className="rounded-xl border border-neutral-200 px-3 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">{busy ? "Working…" : "Send M-Pesa STK"}</button><button onClick={() => void payOrderWithPaylink(order)} disabled={!connected || !paylinkId.trim() || busy || !order.customer_phone || Number(order.total_amount) < 1} className="rounded-xl bg-orange-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Working…" : "Hosted Paylink checkout"}</button></div></div>)}</div>
     </section>}
 
-    <div className="flex rounded-xl border border-neutral-200 bg-white p-1 shadow-sm"><button onClick={() => setTab("collect")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "collect" ? "bg-neutral-950 text-white" : "text-neutral-500")}>Collect</button><button onClick={() => setTab("keys")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "keys" ? "bg-neutral-950 text-white" : "text-neutral-500")}>API & connection</button></div>
+    <div className="flex rounded-xl border border-neutral-200 bg-white p-1 shadow-sm"><button onClick={() => setTab("collect")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "collect" ? "bg-neutral-950 text-white" : "text-neutral-500")}>Collect</button></div>
 
     {tab === "collect" ? <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
       <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm lg:col-span-2">
@@ -334,9 +332,9 @@ export default function Payments() {
         </div>
       </section>
       <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Payment transactions</h2><p className="mt-1 text-sm text-neutral-500">PalPluss is the source of truth for payment status.</p></div><button onClick={checkPending} disabled={!connected || busy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold disabled:opacity-40">Refresh pending</button></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Payment transactions</h2><p className="mt-1 text-sm text-neutral-500">TWIGA verifies payment status before marking an order as paid.</p></div><button onClick={checkPending} disabled={!connected || busy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold disabled:opacity-40">Refresh pending</button></div>
         <div className="mt-4 space-y-3">
-          {transactions.length === 0 && <div className="rounded-xl border border-dashed border-neutral-200 bg-neutral-50 p-8 text-center text-sm text-neutral-500">No PalPluss transactions yet.</div>}
+          {transactions.length === 0 && <div className="rounded-xl border border-dashed border-neutral-200 bg-neutral-50 p-8 text-center text-sm text-neutral-500">No payment transactions yet.</div>}
           {transactions.map((tx) => {
             const status = String(tx.status || "PENDING").toUpperCase();
             const success = status === "SUCCESS";
