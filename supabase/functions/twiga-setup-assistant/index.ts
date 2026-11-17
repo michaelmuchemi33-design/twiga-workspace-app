@@ -67,7 +67,7 @@ Deno.serve(async(req:Request)=>{
   const ownerEmail=String(body.ownerProfile?.email||authData.user.email||"").slice(0,254);
   const ownerContext="Authenticated account owner: "+(ownerName||"not supplied")+"; business contact email: "+(ownerEmail||"not supplied")+". Treat these as account profile values and confirm them with the owner.";
   const transcript=incoming.map((m:any)=>({role:m?.role==="assistant"||m?.role==="ai"?"assistant":"user",content:String(m?.content||m?.text||"").slice(0,5000)})).filter((m:any)=>m.content.trim());
-  const messages=[{role:"system",content:SYSTEM_PROMPT+"\n\n"+ownerContext},{role:"user",content:"Continue the conversation and return the required JSON object only."},...transcript];
+  const messages=[{role:"system",content:SYSTEM_PROMPT+"\n\n"+ownerContext},...transcript,{role:"user",content:"Continue the conversation. Return the required JSON object only."}];
   let models:string[]=[];
   try{models=await getFreeModels(apiKey);}catch(e){console.error("OpenRouter free model discovery failed",e instanceof Error?e.message:"unknown");return json({error:"Could not load the current free OpenRouter model list. Please retry shortly."},503);}
   if(models.length===0)return json({error:"OpenRouter did not return any currently available $0 :free text models. No paid model will be used."},503);
