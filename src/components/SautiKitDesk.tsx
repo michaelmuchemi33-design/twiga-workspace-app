@@ -10,14 +10,6 @@ const MODEL_LABELS: Record<string, string> = {
   "sautikit-pro": "Pro",
   "sautikit-reason": "Reason",
 };
-// Last verified SautiKit catalogue snapshot. Live catalogue data replaces this after the key is connected.
-const CATALOG_FALLBACK = [
-  { id: "sautikit-flash", voices: ["Man", "Woman"], rate_per_minute_minor: 400 },
-  { id: "sautikit-flash-large", voices: ["Man", "Woman"], rate_per_minute_minor: 1500 },
-  { id: "sautikit-voice-2", voices: ["Man", "Woman", "Neema", "Zuri", "Amani", "Furaha", "Baraka", "Jabari", "Tumaini", "Simba"], rate_per_minute_minor: 700 },
-  { id: "sautikit-pro", voices: ["Man", "Woman"], rate_per_minute_minor: 3000 },
-  { id: "sautikit-reason", voices: ["Man", "Woman"], rate_per_minute_minor: 1200 },
-];
 const DEFAULTS = {
   greeting: "Hello, karibu! Thank you for calling {{business_name}}. How can I help you today?",
   inbound: "Answer in the caller's language (Kenyan English or Kiswahili). Identify why they are calling, use verified business information, and capture booking or order requests for the team to confirm. Never say that a booking, order or payment is complete until TWIGA confirms it was saved.",
@@ -38,6 +30,7 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [call, setCall] = useState<any>(null);
+  const [showAllVoiceOptions, setShowAllVoiceOptions] = useState(false);
 
   const invoke = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
     if (!supabase) throw new Error("TWIGA Supabase connection is not configured.");
@@ -72,44 +65,37 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  // Only expose voice/model pairs returned by the connected SautiKit API.
+  // This prevents fallback/demo names from appearing as selectable production voices.
   const catalogOptions: Option[] = (() => {
-    const availableModels = models.length ? models : CATALOG_FALLBACK;
     const list: Option[] = [];
-    const knownNames = new Set<string>();
-    for (const entry of availableModels) {
+    const seenPairs = new Set<string>();
+    for (const entry of models) {
       const modelId = String(entry.id || "");
+      if (!modelId) continue;
       const modelLabel = MODEL_LABELS[modelId] || modelId;
       const rate = Number(entry.rate_per_minute_minor || 0) / 100;
       const voices = Array.isArray(entry.voices) ? entry.voices.map(String) : [];
       for (const name of voices) {
-        if (name === "Either") continue;
-        if (name === "Man" || name === "Woman") {
-          list.push({
-            voice: name,
-            model: modelId,
-            rate,
-            label: name + " · " + modelLabel,
-            note: name === "Woman" && modelId === "sautikit-flash"
-              ? "Female · your tested voice"
-              : name === "Man"
-                ? "Male voice · " + modelLabel + " model"
-                : "Female voice · " + modelLabel + " model",
-            tested: name === "Woman" && modelId === "sautikit-flash",
-          });
-        } else if (!knownNames.has(name)) {
-          knownNames.add(name);
-          list.push({
-            voice: name,
-            model: modelId,
-            rate,
-            label: name + " · " + modelLabel,
-            note: "Named SautiKit catalogue voice · gender not specified by provider",
-          });
-        }
+        if (!name || name === "Either") continue;
+        const pair = modelId + ":" + name;
+        if (seenPairs.has(pair)) continue;
+        seenPairs.add(pair);
+        const isBinaryVoice = name === "Man" || name === "Woman";
+        list.push({
+          voice: name,
+          model: modelId,
+          rate,
+          label: name + " · " + modelLabel,
+          note: isBinaryVoice
+            ? (name === "Man" ? "Male voice · provider-listed option" : "Female voice · provider-listed option")
+            : "Named SautiKit catalogue voice · gender not specified by provider",
+        });
       }
     }
     return list;
   })();
+  const visibleVoiceOptions = showAllVoiceOptions ? catalogOptions : catalogOptions.slice(0, 25);
 
   const line = data.phoneLine;
   const currentAgent = data.agent;
@@ -181,35 +167,36 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Choose the receptionist voice</h2><p className="mt-1 text-sm text-neutral-500">All voices and model tiers returned by SautiKit. Your tested Woman voice stays selected by default.</p></div><span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">{catalogOptions.length ? catalogOptions.length + " voice/model options" : "10 catalogue voices"}</span></div>
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Choose the receptionist voice</h2><p className="mt-1 text-sm text-neutral-500">Available voices are loaded directly from the connected SautiKit catalogue. Only provider-returned voice/model pairs can be selected.</p></div><span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">{catalogOptions.length ? catalogOptions.length + " live voice/model options" : "Waiting for live catalogue"}</span></div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {(["Man", "Woman"] as const).map((gender) => {
           const option = catalogOptions.find((v) => v.voice === gender && v.model === model)
             || catalogOptions.find((v) => v.voice === gender);
           const selectedGender = voice === gender;
-          return <button key={gender} type="button" disabled={!data.keyConfigured || !option}
+          return <button key={gender} type="button" disabled={!data.keyConfigured || !models.length || !option}
             onClick={() => { if (option) { setVoice(option.voice); setModel(option.model); } }}
-            className={"rounded-xl border-2 px-4 py-3 text-left transition " + (selectedGender ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-orange-300") + (!data.keyConfigured || !option ? " opacity-50" : "")}>
+            className={"rounded-xl border-2 px-4 py-3 text-left transition " + (selectedGender ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-orange-300") + (!data.keyConfigured || !models.length || !option ? " opacity-50" : "")}>
             <span className="block text-sm font-semibold text-neutral-950">{gender === "Man" ? "Male voice" : "Female voice"}</span>
             <span className="mt-1 block text-xs text-neutral-600">{option ? option.voice + " · " + (MODEL_LABELS[option.model] || option.model) : "Not available in the connected catalogue"}</span>
             {selectedGender ? <span className="mt-2 inline-block text-xs font-semibold text-orange-800">Currently selected</span> : <span className="mt-2 inline-block text-xs font-medium text-neutral-500">Choose this voice</span>}
           </button>;
         })}
       </div>
-      <p className="mt-3 text-xs text-neutral-500">Choose Male or Female for a quick switch, or select any named voice below. Changes take effect on incoming and outgoing calls after you save and publish.</p>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        {catalogOptions.map((v) => {
+      <p className="mt-3 text-xs text-neutral-500">Choose Male or Female for a quick switch, or select a named provider voice below. The selected voice is applied to inbound and outbound calls only after SautiKit accepts the publish request.</p>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        {visibleVoiceOptions.map((v) => {
           const isSelected = voice === v.voice && model === v.model;
-          const disabled = !data.keyConfigured;
+          const disabled = !data.keyConfigured || !models.length;
           return <button key={v.model + ":" + v.voice} type="button" disabled={disabled} onClick={() => { setVoice(v.voice); setModel(v.model); }} className={"rounded-xl border p-3 text-left transition " + (isSelected ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-neutral-400") + (disabled ? " opacity-60" : "")}>
             <div className="flex items-center justify-between gap-2"><span className="font-semibold text-neutral-900">{v.label}</span><span className="shrink-0 text-xs text-neutral-500">KSh {v.rate}/min AI</span></div>
             <p className="mt-1 text-xs text-neutral-500">{v.note}</p>
             {isSelected ? <p className="mt-2 text-xs font-semibold text-orange-800">Selected{v.tested ? " · your tested voice" : ""}</p> : null}
           </button>;
         })}
-        {!catalogOptions.length ? <p className="rounded-xl border border-dashed border-neutral-300 p-4 text-sm text-neutral-600 sm:col-span-2">{data.keyConfigured ? "Loading the SautiKit voice catalogue…" : "These are the last verified SautiKit voices and prices. Connect the SautiKit API key above to refresh live availability. Voice choices remain locked until connected."}</p> : null}
+        {!catalogOptions.length ? <p className="rounded-xl border border-dashed border-neutral-300 p-4 text-sm text-neutral-600 sm:col-span-2 xl:col-span-5">{data.providerError ? "SautiKit catalogue could not be loaded: " + data.providerError : data.keyConfigured ? "Loading the live SautiKit voice catalogue…" : "Connect the SautiKit API key above to load the live voice catalogue. No unverified or sample voices are selectable."}</p> : null}
       </div>
-      <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">The catalogue has 10 named voice choices: Man, Woman and eight additional named voices. Man and Woman are available across Flash, Flash Large, Voice 2, Pro and Reason model tiers, giving you more male voice/model choices. The eight named voices are shown exactly as SautiKit lists them; SautiKit does not publish their gender labels. AI prices are per minute; carrier charges are separate.</p>
+      {catalogOptions.length > 25 ? <button type="button" onClick={() => setShowAllVoiceOptions((v) => !v)} className="mt-3 rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700">{showAllVoiceOptions ? "Show first 25 voices" : "Show all " + catalogOptions.length + " voice/model options"}</button> : null}
+      <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">This is a 5-column list showing up to 25 voice/model combinations at a time. TWIGA displays the actual names and model combinations returned by SautiKit; it does not invent extra voices. Man and Woman are labelled according to the provider's catalogue. Other named voices are not assigned a gender unless SautiKit specifies one. AI usage rates are per minute; carrier charges are separate.</p>
       <div className="mt-4 flex flex-wrap items-center gap-3"><p className="text-sm text-neutral-600">Selected: <strong className="text-neutral-900">{voice}</strong> · {model}</p><button onClick={publish} disabled={busy || !data.keyConfigured || !active || !inboundBound || !selected} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Publishing…" : "Save voice & publish"}</button></div>
       {!inboundBound ? <p className="mt-2 text-xs text-amber-800">The existing inbound binding is not confirmed in TWIGA records. Publishing is paused to protect the current line.</p> : null}{inboundBound && !inboundVerified ? <p className="mt-2 text-xs text-amber-800">TWIGA records the agent as bound, but SautiKit has not yet confirmed the route. Publishing remains paused until the API key is connected and the live binding is verified.</p> : null}
     </section>
