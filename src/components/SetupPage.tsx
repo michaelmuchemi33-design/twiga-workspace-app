@@ -27,6 +27,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
   const [ownerName, setOwnerName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [profile, setProfile] = useState<any>({});
+  const [lastModel, setLastModel] = useState("");
   const [missing, setMissing] = useState<string[]>(["business name", "business type", "what your business does or sells"]);
   const [ready, setReady] = useState(false);
   const [thinking, setThinking] = useState(false);
@@ -70,6 +71,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
       if (data?.error) throw new Error(String(data.error));
       setMessages((m) => [...m, { id: String(Date.now() + 1), role: "ai", text: String(data.reply || "Tell me a little more about the business.") }]);
       setProfile(data.businessProfile || {});
+      setLastModel(String(data.modelUsed || ""));
       setMissing(Array.isArray(data.missingFields) ? data.missingFields : []);
       setReady(data.readyToBuild === true);
     } catch (e) {
@@ -98,7 +100,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
       if (data?.error) throw new Error(String(data.error));
       const businessId = String(data?.business?.id || "");
       if (!businessId) throw new Error("The workspace was not created. Please try again.");
-      setMessages((m) => [...m, { id: String(Date.now()), role: "ai", text: "Your private " + profile.business_name + " workspace is ready. Its customers, appointments, business details and receptionist configuration are separated from every other business. Next, connect Google, Grok and SautiKit in Connections." }]);
+      setMessages((m) => [...m, { id: String(Date.now()), role: "ai", text: "Your private " + profile.business_name + " workspace is ready. Its customers, appointments, business details and receptionist configuration are separated from every other business. Next, connect Google and configure your SautiKit receptionist in Connections and Phone & AI." }]);
       onBusinessCreated(businessId);
       onDone();
     } catch (e) {
@@ -112,7 +114,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
     <header className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
       <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-500">TWIGA · Business setup assistant</p>
       <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-950">Build your business workspace</h1>
-      <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Describe your business in plain language. The assistant organises your business details and drafts your first phone greeting and receptionist instructions before creating a separate workspace. Grok powers business setup; SautiKit powers the live AI receptionist and outbound calls. The setup chat needs the shared Grok connection. A TWIGA platform administrator can connect it under Connections. This key stays on the server and is never exposed to business customers. <a className="font-semibold text-orange-700 underline" href="https://console.x.ai/team/default/api-keys/" target="_blank" rel="noreferrer">Open xAI API keys</a>.</p>
+      <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Describe your business in plain language. The assistant organises your business details and drafts your first phone greeting and receptionist instructions before creating a separate workspace. TWIGA uses a rotating pool of 10+ currently available zero-priced OpenRouter models for business setup. Paid models and xAI are excluded. The shared OpenRouter key is managed by a TWIGA platform administrator under Connections and stays on the server.</p>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <label className="block text-sm font-medium text-neutral-700">Business owner name<input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} autoComplete="name" placeholder="Your full name" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
         <label className="block text-sm font-medium text-neutral-700">Business contact email<input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} autoComplete="email" placeholder="you@business.co.ke" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
@@ -121,7 +123,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
 
     <div className="grid gap-5 lg:grid-cols-[1fr_300px]">
       <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4"><div><h2 className="font-semibold text-neutral-950">Business setup chat</h2><p className="text-xs text-neutral-500">Ask questions and build the profile together</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{thinking ? "Thinking…" : ready ? "Ready to build" : "Collecting details"}</span></div>
+        <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4"><div><h2 className="font-semibold text-neutral-950">Business setup chat</h2><p className="text-xs text-neutral-500">Ask questions and build the profile together</p></div><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{thinking ? "Thinking…" : ready ? "Ready to build" : "Collecting details"}</span>{lastModel && <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-medium text-orange-800">Model · {lastModel}</span>}</div></div>
         <div ref={scrollRef} className="max-h-[55vh] min-h-[360px] space-y-4 overflow-y-auto p-5">
           {messages.map((m) => <div key={m.id} className={m.role === "user" ? "ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-neutral-950 px-4 py-3 text-sm leading-6 text-white" : "mr-auto max-w-[90%] rounded-2xl rounded-bl-md bg-neutral-100 px-4 py-3 text-sm leading-6 text-neutral-800"}>{m.text}</div>)}
           {thinking && <div className="rounded-2xl bg-neutral-100 px-4 py-3 text-sm text-neutral-500">Your setup assistant is organising the business details…</div>}
@@ -140,7 +142,13 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
           <div className="mt-4 space-y-3 text-sm">
             <div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Business name</p><p className="mt-1 font-medium text-neutral-900">{profile.business_name || "Not added yet"}</p></div>
             <div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Business type</p><p className="mt-1 font-medium text-neutral-900">{profile.business_type || "Not added yet"}</p></div>
-            <div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">What it does / sells</p><p className="mt-1 text-neutral-700">{profile.business_summary || profile.what_they_do || profile.what_they_sell || "Waiting for details…"}</p></div><div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">First phone greeting</p><p className="mt-1 text-neutral-700">{profile.receptionist_greeting || "The assistant will draft this with you."}</p></div>
+            <div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">What it does / sells</p><p className="mt-1 text-neutral-700">{profile.business_summary || profile.what_they_do || profile.what_they_sell || "Waiting for details…"}</p></div><div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">First phone greeting</p><p className="mt-1 text-neutral-700">{profile.receptionist_greeting || "The assistant will draft this with you."}</p></div><div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Products & services</p><p className="mt-1 text-neutral-700">{profile.products_and_services || profile.what_they_sell || "Not collected yet"}</p></div>
+            <div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Target customers</p><p className="mt-1 text-neutral-700">{profile.target_customers || "Not collected yet"}</p></div>
+            <div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Location / service area</p><p className="mt-1 text-neutral-700">{profile.service_area || "Not collected yet"}</p></div>
+            <div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Opening hours</p><p className="mt-1 text-neutral-700">{profile.opening_hours || "Not collected yet"}</p></div>
+            <div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Payments & delivery</p><p className="mt-1 text-neutral-700">{profile.delivery_and_payment || "Not collected yet"}</p></div>
+            <div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">FAQs</p><p className="mt-1 whitespace-pre-wrap text-neutral-700">{profile.frequently_asked_questions || "Not collected yet"}</p></div>
+            <div><p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Receptionist instructions</p><p className="mt-1 whitespace-pre-wrap text-neutral-700">{profile.assistant_instructions || "The assistant will draft these with you."}</p></div>
           </div>
           {missing.length > 0 && <div className="mt-4 rounded-xl bg-neutral-50 p-3"><p className="text-xs font-semibold text-neutral-700">Still useful to add</p><ul className="mt-2 list-inside list-disc space-y-1 text-xs text-neutral-500">{missing.map((x) => <li key={x}>{x}</li>)}</ul></div>}
           <button onClick={buildWorkspace} disabled={!ready || building} className="mt-5 w-full rounded-xl bg-neutral-950 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{building ? "Creating workspace…" : "Create my business workspace"}</button>
@@ -151,9 +159,9 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
     </div>
     {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
       <p>{error}</p>
-      {/Grok is not connected|xAI API key|setup assistant/i.test(error) && onOpenConnections ? <div className="mt-3 flex flex-wrap items-center gap-3">
+      {/OpenRouter is not connected|OpenRouter API key|setup assistant/i.test(error) && onOpenConnections ? <div className="mt-3 flex flex-wrap items-center gap-3">
         <button type="button" onClick={onOpenConnections} className="rounded-lg bg-neutral-950 px-4 py-2 text-xs font-semibold text-white">Open Connections</button>
-        <span className="text-xs text-red-700">Connect the shared Grok key, then return here and send your business details again.</span>
+        <span className="text-xs text-red-700">Connect the shared OpenRouter key, then return here and send your business details again.</span>
       </div> : null}
     </div>}
   </div>;
