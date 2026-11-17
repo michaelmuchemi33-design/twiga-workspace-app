@@ -12,6 +12,18 @@ const connections = read("src/components/Connections.tsx");
 const app = read("src/App.tsx");
 const readme = read("README.md");
 const pkg = JSON.parse(read("package.json"));
+const scheduledCalls = read("supabase/functions/twiga-scheduled-calls/index.ts");
+const scheduledUi = read("src/components/ScheduledCallsPanel.tsx");
+const paylinkFunction = read("supabase/functions/twiga-palpluss/index.ts");
+const paymentUi = read("src/components/Payments.tsx");
+const kimisms = read("supabase/functions/twiga-kimisms/index.ts");
+const palplussWebhook = read("supabase/functions/twiga-palpluss-webhook/index.ts");
+const googleWorkspace = read("supabase/functions/google-workspace/index.ts");
+const install = read("src/components/InstallApp.tsx");
+const manifest = JSON.parse(read("public/manifest.webmanifest"));
+const smsMigration = read("supabase/migrations/20261117184000_twiga_business_sms_provider_and_consent.sql");
+const contactsMigration = read("supabase/migrations/20261117184500_twiga_google_contacts_email_field.sql");
+const paylinkMigration = read("supabase/migrations/20261117185000_twiga_palpluss_paylinks_and_order_payment_verification.sql");
 const migration1 = read("supabase/migrations/20261116214034_lock_down_legacy_erp_objects_and_pin_definer_paths.sql");
 const migration2 = read("supabase/migrations/20261116214731_fix_device_line_assignment_and_remaining_function_paths.sql");
 const migration3 = read("supabase/migrations/20261116214935_optimize_twiga_rls_and_foreign_key_indexes.sql");
@@ -31,6 +43,19 @@ const checks = [
   ["setup assistant reads the encrypted xAI key", setupAssistant.includes('p_provider:"xai"') && setupAssistant.includes("api.x.ai/v1/responses")],
   ["Retell voice catalogue loads after provider connection", profile.includes('retellAction("list_voices")') && profile.includes("setVoiceOptions(voices)") && profile.includes("setSelectedVoice(")],
   ["Google origin mismatch guidance", connections.includes("origin_mismatch")],
+  ["no-answer retry defaults to one five-minute second attempt", scheduledCalls.includes("delay_minutes: 5") && scheduledCalls.includes("unreachable_after_no_answer") && scheduledUi.includes("Retry once when unanswered")],
+  ["direct callbacks enter the no-answer retry queue", sautikitFunction.includes("no_answer_retry") && sautikitFunction.includes("retryJobId")],
+  ["direct and after-hours forwarding is provider guarded", sautikitFunction.includes("configure_forwarding") && sautikitFunction.includes("hours:") && sautikit.includes("Call forwarding")],
+  ["PalPluss Paylink is public ID only and server verified", paylinkFunction.includes("save_paylink") && paylinkFunction.includes("order.verify_paylink_payment") && paymentUi.includes("Palpluss.pay")],
+  ["PalPluss checkout requires server verification key", paymentUi.includes("window as any).Palpluss") && paymentUi.includes("order.verify_paylink_payment") && paymentUi.includes("!connected || !paylinkId.trim()")],
+  ["KIMISMS SMS is consented, per-business and idempotent", kimisms.includes("customer_sms_consent") && kimisms.includes("twiga_set_kimisms_secret") && kimisms.includes("idempotencyKey") && smsMigration.includes("twiga_sms_messages")],
+  ["successful PalPluss payments can send opted-in SMS receipts", palplussWebhook.includes("payment_confirmation_enabled") && palplussWebhook.includes("customer_sms_consent")],
+  ["Google Contacts import is paginated and deduplicated", googleWorkspace.includes('action === "contacts.import"') && googleWorkspace.includes("phoneSet") && googleWorkspace.includes("emailSet") && contactsMigration.includes("add column if not exists email")],
+  ["Paylink ID and transaction verification schema are present", paylinkMigration.includes("palpluss_paylink_id") && paylinkMigration.includes("palpluss_transaction_id")],
+  ["app install is described as PWA, not APK", install.includes("Install TWIGA PWA") && install.includes("Add to Home Screen") && manifest.display === "standalone"],
+  ["recording UI does not claim local preference records provider audio", sautikit.includes("Google Cloud Storage") && sautikit.includes("24 hours") && sautikit.includes("not currently copying audio")],
+  ["Retell is clearly identified as a legacy browser-call provider", profile.includes("Legacy Retell browser-call connection") && dashboard.includes("Provider:")],
+  ["dashboard KPI cards use aligned, non-shrinking icons", dashboard.includes("grid items-stretch") && dashboard.includes("h-full min-h-[132px]") && dashboard.includes("shrink-0")],
   ["business_id architecture documented", readme.includes("twiga_business_workspace_data") && readme.includes("business_id")],
   ["trial and Starter price documented", readme.includes("seven days") && readme.includes("KSh 1,500 monthly")],
   ["legacy public data lock-down migration", migration1.includes("analytics_customer_value") && migration1.includes("search_path = pg_catalog, public, private")],
