@@ -78,13 +78,13 @@ export default function CustomerSupport({ businessId }: { businessId: string }) 
         type="button"
         onClick={() => setOpen(value => !value)}
         aria-label="Open TWIGA customer support"
-        className="twiga-support-float fixed bottom-6 right-5 z-[60] inline-flex items-center gap-2 rounded-xl border border-orange-400/40 bg-neutral-950 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-orange-900/20 hover:bg-neutral-900 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2"
+        className="twiga-support-float fixed right-4 top-4 z-[70] inline-flex items-center gap-2 rounded-xl border border-orange-400/40 bg-neutral-950 px-3 py-2.5 text-xs font-bold text-white shadow-lg shadow-orange-900/20 hover:bg-neutral-900 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 sm:right-5 sm:top-5 sm:px-4 sm:py-3 sm:text-sm"
       >
         <span aria-hidden="true" className="text-base">✦</span> Support
       </button>
 
       {open && (
-        <section className="fixed bottom-24 right-5 z-[60] flex max-h-[min(640px,calc(100vh-8rem))] w-[min(420px,calc(100vw-2.5rem))] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white text-neutral-900 shadow-2xl">
+        <section className="fixed right-4 top-16 z-[70] flex max-h-[calc(100dvh-5.5rem)] w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white text-neutral-900 shadow-2xl sm:right-5 sm:top-20 sm:max-h-[min(640px,calc(100dvh-7rem))]">
           <header className="flex items-center justify-between border-b border-neutral-200 bg-neutral-950 px-4 py-3 text-white">
             <div><p className="text-sm font-bold">TWIGA Support</p><p className="text-xs text-neutral-300">Message the support team</p></div>
             <button type="button" onClick={() => setOpen(false)} className="rounded-lg px-2 py-1 text-sm text-white hover:bg-neutral-800">Close</button>
