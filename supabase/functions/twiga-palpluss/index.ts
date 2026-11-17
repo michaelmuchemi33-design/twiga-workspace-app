@@ -140,7 +140,7 @@ Deno.serve(async(req:Request)=>{
    const expected=Number(order.total_amount||0),paid=Number(tx.amount||0);
    if(!Number.isFinite(paid)||Math.abs(paid-expected)>0.001)
     return reply({error:"The verified PalPluss amount does not match this order. The order remains unpaid."},409);
-   const normalPhone=(value:string)=>String(value||"").replace(/[\\s().-]/g,"").replace(/^\\+/,"").replace(/^0([17])/,"254$1");
+   const normalPhone=(value:string)=>String(value||"").replace(/[\s().-]/g,"").replace(/^\+/,"").replace(/^0([17])/,"254$1");
    const orderPhone=normalPhone(String(order.customer_phone||""));
    const paymentPhone=normalPhone(String(tx.phone_number||tx.phone||""));
    if(orderPhone && paymentPhone && orderPhone!==paymentPhone)
