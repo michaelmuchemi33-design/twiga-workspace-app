@@ -38,6 +38,34 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
   const [forwardBusy, setForwardBusy] = useState(false);
   const [recordingEnabled, setRecordingEnabled] = useState(false);
   const [recordingNotice, setRecordingNotice] = useState("");
+  const [callHistory, setCallHistory] = useState<any[]>([]);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+
+  const refreshCallHistory = useCallback(async () => {
+    if (demo || !businessId || !supabase) {
+      setCallHistory([]);
+      return;
+    }
+    setHistoryBusy(true);
+    setHistoryError("");
+    try {
+      const { data: rows, error } = await supabase
+        .from("twiga_call_records")
+        .select("id,provider,channel,direction,from_number,to_number,status,started_at,ended_at,duration_seconds,transcript,summary,created_at")
+        .eq("business_id", businessId)
+        .order("created_at", { ascending: false })
+        .limit(30);
+      if (error) throw error;
+      setCallHistory(rows || []);
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : "Call history could not be loaded.");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }, [businessId, demo]);
+
+  useEffect(() => { void refreshCallHistory(); }, [refreshCallHistory]);
 
   const invoke = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
     if (!supabase) throw new Error("TWIGA Supabase connection is not configured.");
@@ -322,6 +350,48 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
          <button onClick={copyInboundNumber} className="mt-3 rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold text-neutral-800">Copy number for inbound test</button>
         {data.inboundMode ? <p className="mt-2 text-xs text-neutral-500">Routing mode: {data.inboundMode}</p> : null}
       </> : <p className="mt-3 text-sm text-neutral-600">No SautiKit number is assigned to this business.</p>}
+    </section>
+
+    <section className="rounded-2xl border border-neutral-800 bg-neutral-950 p-5 text-white shadow-none">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-widest text-orange-400">Call activity</p>
+          <h2 className="mt-1 text-lg font-semibold text-white">Recent call history</h2>
+          <p className="mt-1 text-sm text-neutral-300">Calls saved to this business workspace.</p>
+        </div>
+        <button type="button" onClick={() => void refreshCallHistory()} disabled={historyBusy || demo} className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm font-semibold text-neutral-100 hover:bg-neutral-800 disabled:opacity-40">
+          {historyBusy ? "Refreshing…" : "Refresh history"}
+        </button>
+      </div>
+      {historyError && <p role="alert" className="mt-3 rounded-lg border border-red-900 bg-neutral-900 px-3 py-2 text-sm text-red-300">{historyError}</p>}
+      {historyBusy && callHistory.length === 0 && <p className="mt-4 rounded-lg bg-neutral-900 px-4 py-5 text-center text-sm text-neutral-300">Loading saved calls…</p>}
+      {!historyBusy && callHistory.length === 0 && !historyError && <p className="mt-4 rounded-lg border border-dashed border-neutral-700 bg-neutral-900 px-4 py-6 text-center text-sm text-neutral-300">No calls have been saved for this business yet.</p>}
+      {callHistory.length > 0 && <div className="mt-4 space-y-2">
+        {callHistory.map((record) => {
+          const phone = record.direction === "inbound" ? (record.from_number || record.to_number) : (record.to_number || record.from_number);
+          const status = String(record.status || "unknown").replace(/_/g, " ");
+          const duration = Number(record.duration_seconds || 0);
+          const date = record.started_at || record.created_at;
+          return <article key={record.id} className="rounded-xl border border-neutral-800 bg-neutral-900 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-white">{phone || "Number unavailable"}</p>
+                <p className="mt-1 text-xs text-neutral-300">{record.direction || "Call"} · {record.provider || "Phone provider"} · {date ? new Date(date).toLocaleString("en-KE", { timeZone: "Africa/Nairobi" }) : "Time unavailable"}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-neutral-800 px-2.5 py-1 text-xs font-semibold capitalize text-neutral-200">{status}</span>
+                <span className="text-xs tabular-nums text-neutral-300">{Math.floor(duration / 60)}:{String(duration % 60).padStart(2, "0")}</span>
+              </div>
+            </div>
+            {record.summary && <p className="mt-2 text-sm leading-5 text-neutral-200">{record.summary}</p>}
+            {recordingEnabled && record.transcript && <details className="mt-3 border-t border-neutral-800 pt-2">
+              <summary className="cursor-pointer text-xs font-semibold text-orange-300">View transcript</summary>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-200">{record.transcript}</p>
+            </details>}
+            {!record.summary && !(recordingEnabled && record.transcript) && <p className="mt-2 text-xs text-neutral-400">Call record saved. No transcript or summary is available.</p>}
+          </article>;
+        })}
+      </div>}
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
