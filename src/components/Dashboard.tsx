@@ -177,7 +177,7 @@ export default function Dashboard({ onSetup, onOpenPhone }: { onSetup: () => voi
               s.accent ? "border-orange-200 bg-orange-50" : "border-neutral-200"
             )}
           >
-            <CardContent className="flex w-full items-start justify-between gap-4 p-5">
+            <CardContent className="flex w-full items-center justify-between gap-4 p-5">
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium uppercase tracking-wide text-neutral-500">
                   {s.label}

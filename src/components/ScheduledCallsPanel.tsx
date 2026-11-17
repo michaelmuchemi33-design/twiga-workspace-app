@@ -162,8 +162,8 @@ export default function ScheduledCallsPanel({ businessId, defaultPhone, defaultR
             <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
               <div className="min-w-0"><p className="font-semibold text-neutral-900">{item.phone_number}</p>
                 <p className="mt-1 text-xs text-neutral-500">{item.task} · {new Date(item.due_at).toLocaleString("en-KE", { timeZone: "Africa/Nairobi" })}</p>
-                <p className="mt-1 text-xs text-neutral-500">{item.metadata?.repeat && item.metadata.repeat !== "none" ? "Repeats " + item.metadata.repeat : "One-time"} · {item.metadata?.dispatch_status || item.status}</p></div>
-              <div className="flex items-center gap-2"><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700">{item.metadata?.final_outcome === "unreachable_after_no_answer" ? "Unreachable" : item.status}</span>
+                <p className="mt-1 text-xs text-neutral-500">{item.metadata?.repeat && item.metadata.repeat !== "none" ? "Repeats " + item.metadata.repeat : "One-time"} · {item.metadata?.dispatch_status || item.status}</p>{item.last_error && <p className="mt-1 text-xs text-neutral-600">{item.last_error}</p>}</div>
+              <div className="flex items-center gap-2"><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700">{item.metadata?.final_outcome === "unreachable_after_no_answer" ? "Unreachable" : item.metadata?.final_outcome === "invalid_number" ? "Invalid number" : item.status}</span>
                 {["pending", "scheduled", "waiting_for_provider"].includes(item.status) && <button type="button" onClick={() => void cancel(String(item.metadata?.series_id || item.id))} disabled={busy} className="text-xs font-semibold text-orange-700 underline">Cancel</button>}</div>
             </div>
           ))}</div>}

@@ -207,16 +207,21 @@ Deno.serve(async (req: Request) => {
         const rawStatus = await statusResponse.text();
         let callStatus: any = {};
         try { callStatus = rawStatus ? JSON.parse(rawStatus) : {}; } catch { callStatus = {}; }
-        const callData = callStatus.data && typeof callStatus.data === "object" ? callStatus.data : callStatus;
-        const providerStatus = String(callData.status || "").toLowerCase();
-        if (!["completed", "failed", "no_answer", "busy", "canceled", "cancelled"].includes(providerStatus)) continue;
+        const callData = callStatus.call || callStatus.data?.call || (callStatus.data && typeof callStatus.data === "object" ? callStatus.data : callStatus);
+        const rawProviderStatus = String(callData.status || callData.state || "").toLowerCase().replace(/-/g, "_");
+        const failureCode = String(callData.failure_code || callData.failureCode || callData.error_code || "").toLowerCase();
+        const noAnswer = rawProviderStatus === "no_answer" || /no.?answer/.test(failureCode);
+        const invalidNumber = ["invalid_number", "invalid_destination", "invalid_phone"].includes(rawProviderStatus)
+          || /invalid.*(number|destination|phone|e164)|(?:number|destination|phone|e164).*invalid/.test(failureCode);
+        const providerStatus = invalidNumber ? "invalid_number" : noAnswer ? "no_answer" : rawProviderStatus;
+        if (!["completed", "failed", "no_answer", "busy", "canceled", "cancelled", "invalid_number"].includes(providerStatus)) continue;
         const finalStatus = providerStatus === "completed" ? "completed" : "failed";
         const finishedAt = callData.ended_at || callData.completed_at || new Date().toISOString();
         const retryConfig = item.metadata?.no_answer_retry && typeof item.metadata.no_answer_retry === "object"
           ? item.metadata.no_answer_retry : { enabled: false, attempts: 0, max_attempts: 2, delay_minutes: 5 };
         const noAnswerAttempts = Math.max(0, Number(retryConfig.attempts || 0));
         const noAnswerMaxAttempts = Math.min(2, Math.max(1, Number(retryConfig.max_attempts || 2)));
-        const shouldRetryNoAnswer = providerStatus === "no_answer" && retryConfig.enabled === true && noAnswerAttempts + 1 < noAnswerMaxAttempts;
+        const shouldRetryNoAnswer = noAnswer && retryConfig.enabled === true && noAnswerAttempts + 1 < noAnswerMaxAttempts;
         if (shouldRetryNoAnswer) {
           const retryDelayMinutes = Math.min(60, Math.max(1, Number(retryConfig.delay_minutes || 5)));
           const retryAt = new Date(Date.now() + retryDelayMinutes * 60000).toISOString();
@@ -234,21 +239,27 @@ Deno.serve(async (req: Request) => {
             },
           });
         } else {
-          const unreachable = providerStatus === "no_answer" && retryConfig.enabled === true && noAnswerAttempts + 1 >= noAnswerMaxAttempts;
+          const unreachable = noAnswer && retryConfig.enabled === true && noAnswerAttempts + 1 >= noAnswerMaxAttempts;
           await setJob(admin, item.id, {
             status: finalStatus,
             completed_at: finishedAt,
             last_error: finalStatus === "failed"
-              ? (unreachable
-                ? "Unreachable after two unanswered call attempts. The number has not been verified as invalid."
-                : providerStatus === "no_answer" ? "The contact did not answer."
-                : providerStatus === "busy" ? "The contact's line was busy."
-                : "The provider did not complete the call.")
+              ? (invalidNumber
+                ? "Invalid number confirmed by SautiKit. Check the number and country code before trying again."
+                : unreachable
+                  ? "Unreachable after two unanswered call attempts. The number has not been verified as invalid."
+                  : noAnswer ? "The contact did not answer."
+                  : providerStatus === "busy" ? "The contact's line was busy."
+                  : "The provider did not complete the call.")
               : null,
             metadata: {
               ...(item.metadata || {}),
-              ...(unreachable ? { final_outcome: "unreachable_after_no_answer", dispatch_status: "unreachable" } : { last_provider_outcome: providerStatus }),
-              ...(retryConfig.enabled === true ? { no_answer_retry: { ...retryConfig, attempts: Math.min(noAnswerMaxAttempts, noAnswerAttempts + (providerStatus === "no_answer" ? 1 : 0)) } } : {}),
+              ...(invalidNumber
+                ? { final_outcome: "invalid_number", dispatch_status: "invalid_number", last_provider_outcome: providerStatus }
+                : unreachable
+                  ? { final_outcome: "unreachable_after_no_answer", dispatch_status: "unreachable", last_provider_outcome: providerStatus }
+                  : { last_provider_outcome: providerStatus }),
+              ...(retryConfig.enabled === true ? { no_answer_retry: { ...retryConfig, attempts: Math.min(noAnswerMaxAttempts, noAnswerAttempts + (noAnswer ? 1 : 0)) } } : {}),
             },
           });
         }
@@ -268,13 +279,15 @@ Deno.serve(async (req: Request) => {
           });
           if (repeatError) console.error("Could not create next repeat call:", repeatError.message);
         }
+        const { data: existingCallRecord } = await admin.from("twiga_call_records").select("metadata")
+          .eq("provider_call_id", item.provider_call_id).eq("business_id", item.business_id).maybeSingle();
         await admin.from("twiga_call_records").update({
           status: providerStatus,
           ended_at: finishedAt,
           duration_seconds: Number(callData.duration_seconds || callData.duration_s || 0),
           transcript: typeof callData.transcript === "string" ? callData.transcript.slice(0, 30000) : undefined,
           summary: typeof callData.summary === "string" ? callData.summary.slice(0, 4000) : undefined,
-          metadata: { scheduled_call_id: item.id, provider_status: providerStatus },
+          metadata: { ...(existingCallRecord?.metadata || {}), scheduled_call_id: item.id, provider_status: providerStatus, ...(failureCode ? { provider_failure_code: failureCode } : {}) },
         }).eq("provider_call_id", item.provider_call_id).eq("business_id", item.business_id);
         polledCalls++;
       } catch (pollError) { console.error("Could not refresh SautiKit call status:", pollError instanceof Error ? pollError.message : "unknown error"); }
@@ -349,7 +362,12 @@ Deno.serve(async (req: Request) => {
         const raw = await response.text();
         let call: any = {};
         try { call = raw ? JSON.parse(raw) : {}; } catch { call = {}; }
-        if (!response.ok) throw new Error("SautiKit call request failed (HTTP " + response.status + ").");
+        if (!response.ok) {
+          const providerError = call.error && typeof call.error === "object"
+            ? safe(call.error.code, 80) + ": " + safe(call.error.message, 300)
+            : safe(call.error || call.message || call.detail, 400);
+          throw new Error("SautiKit call request failed (HTTP " + response.status + ")." + (providerError ? " " + providerError : ""));
+        }
         const providerCallId = safe(call.call_id || call.id || call.data?.call_id || call.data?.id, 120);
         await setJob(admin, job.id, {
           status: "submitted",
@@ -383,7 +401,17 @@ Deno.serve(async (req: Request) => {
           const retryAt = new Date(Date.now() + Number(job.retry_interval_minutes || 30) * 60000).toISOString();
           await setJob(admin, job.id, { status: "scheduled", scheduled_at: retryAt, last_error: message });
         } else {
-          await setJob(admin, job.id, { status: "failed", last_error: message });
+          const invalidNumber = /invalid.*(number|destination|phone|e164)|(?:number|destination|phone|e164).*invalid|not in international format/i.test(message);
+          await setJob(admin, job.id, {
+            status: "failed",
+            last_error: message,
+            metadata: {
+              ...(job.metadata || {}),
+              ...(invalidNumber
+                ? { final_outcome: "invalid_number", dispatch_status: "invalid_number" }
+                : { dispatch_status: "failed" }),
+            },
+          });
         }
         summary.failed++;
       }
