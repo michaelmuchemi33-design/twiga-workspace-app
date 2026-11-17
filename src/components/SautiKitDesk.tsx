@@ -31,6 +31,11 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
   const [notice, setNotice] = useState("");
   const [call, setCall] = useState<any>(null);
   const [showAllVoiceOptions, setShowAllVoiceOptions] = useState(false);
+  const [forwardMode, setForwardMode] = useState<"always" | "after_hours">("after_hours");
+  const [forwardTo, setForwardTo] = useState("");
+  const [forwardOpening, setForwardOpening] = useState("08:00");
+  const [forwardClosing, setForwardClosing] = useState("18:00");
+  const [forwardBusy, setForwardBusy] = useState(false);
 
   const invoke = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
     if (!supabase) throw new Error("TWIGA Supabase connection is not configured.");
@@ -47,6 +52,11 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
     try {
       const result = await invoke("get_config");
       setData(result);
+      const savedForward = result.phoneLine?.settings?.forwarding_config || {};
+      if (savedForward.mode === "always" || savedForward.mode === "after_hours") setForwardMode(savedForward.mode);
+      if (savedForward.to) setForwardTo(String(savedForward.to));
+      if (savedForward.openingTime) setForwardOpening(String(savedForward.openingTime));
+      if (savedForward.closingTime) setForwardClosing(String(savedForward.closingTime));
       setModels(Array.isArray(result.models) ? result.models : []);
       setScripts({ ...DEFAULTS, ...(result.scripts || {}) });
       if (result.agent) {
@@ -134,6 +144,24 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
       setAuthorised(false);
     } catch (e) { setNotice(e instanceof Error ? e.message : "Could not submit callback."); }
     finally { setBusy(false); }
+  }
+
+  async function saveForwarding() {
+    const target = forwardTo.trim().replace(/[()\\s-]/g, "");
+    if (!/^\\+[1-9]\\d{7,14}$/.test(target)) return setNotice("Enter the forwarding number with country code, for example +2547XXXXXXXX.");
+    if (forwardMode === "always" && !window.confirm("Forward ALL calls on this number directly to " + target + "? This takes incoming calls away from the AI receptionist.")) return;
+    if (forwardMode === "after_hours" && !window.confirm("Forward calls outside " + forwardOpening + "–" + forwardClosing + " (Nairobi time) to " + target + "? The AI will keep handling calls during the opening hours.")) return;
+    setForwardBusy(true); setNotice("");
+    try {
+      const result = await invoke("configure_forwarding", {
+        mode: forwardMode, to: target, openingTime: forwardOpening, closingTime: forwardClosing,
+        sequential: true, ringTimeout: 20,
+      });
+      setNotice(result.message || "SautiKit accepted the forwarding configuration.");
+      await refresh();
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "Forwarding was not applied. Check the provider number and SautiKit workspace.");
+    } finally { setForwardBusy(false); }
   }
 
   async function copyInboundNumber() {
@@ -224,6 +252,17 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
         <button onClick={copyInboundNumber} className="mt-3 rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold text-neutral-800">Copy number for inbound test</button>
         {data.inboundMode ? <p className="mt-2 text-xs text-neutral-500">Routing mode: {data.inboundMode}</p> : null}
       </> : <p className="mt-3 text-sm text-neutral-600">No SautiKit number is assigned to this business.</p>}
+    </section>
+
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Call forwarding</h2><p className="mt-1 text-sm leading-6 text-neutral-500">Choose whether the existing SautiKit number rings a staff member directly or forwards only outside your normal business hours. The provider must confirm the number before the route can be changed.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold text-neutral-700">{line?.settings?.forwarding_config?.providerConfirmed ? "Provider confirmed" : "Not configured"}</span></div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="block text-sm font-medium text-neutral-700">Forwarding rule<select value={forwardMode} onChange={e => setForwardMode(e.target.value as "always" | "after_hours")} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm"><option value="after_hours">After-hours only · AI answers during business hours</option><option value="always">Direct forwarding · staff receives all calls</option></select></label>
+        <label className="block text-sm font-medium text-neutral-700">Staff phone number<input value={forwardTo} onChange={e => setForwardTo(e.target.value)} placeholder="+2547XXXXXXXX" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
+      </div>
+      {forwardMode === "after_hours" ? <div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="block text-sm font-medium text-neutral-700">Business opens (Nairobi time)<input type="time" value={forwardOpening} onChange={e => setForwardOpening(e.target.value)} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label><label className="block text-sm font-medium text-neutral-700">Business closes (Nairobi time)<input type="time" value={forwardClosing} onChange={e => setForwardClosing(e.target.value)} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label></div> : <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">Direct forwarding sends all incoming calls to the staff number instead of letting the AI receptionist answer first.</p>}
+      <button onClick={saveForwarding} disabled={forwardBusy || !data.keyConfigured || !line?.provider_reference || !forwardTo.trim()} className="mt-4 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{forwardBusy ? "Applying routing…" : "Save forwarding rule"}</button>
+      {!line?.provider_reference ? <p className="mt-2 text-xs text-amber-800">The provider number ID is not linked in this workspace. Connect the SautiKit account that owns the existing number before applying forwarding.</p> : null}
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
