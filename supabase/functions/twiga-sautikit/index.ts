@@ -192,9 +192,55 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    if (!key) return json({ error: "Connect the SautiKit API key in Phone & AI before managing voices." }, 409);
-    if (!line || !agentId || !numberId) return json({ error: "This business does not yet have a linked SautiKit phone line and published agent." }, 409);
-    if (!canManage && ["publish_agent", "send_call"].includes(action)) return json({ error: "Only the business owner, admin or TWIGA platform administrator can change or call from this receptionist." }, 403);
+    if (!key) return json({ error: "Connect the SautiKit API key in Connections before changing phone routing." }, 409);
+    if (!line || !numberId) return json({ error: "This business does not yet have a SautiKit number ID linked to its phone line. Verify the number in the same SautiKit workspace first." }, 409);
+    if (!canManage && ["publish_agent", "send_call", "configure_forwarding"].includes(action)) return json({ error: "Only the business owner, admin or TWIGA platform administrator can change or call from this receptionist." }, 403);
+
+    if (action === "configure_forwarding") {
+      const mode = String(body.mode || "");
+      const to = String(body.to || "").trim();
+      if (!/^\\+[1-9]\\d{7,14}$/.test(to)) return json({ error: "Enter a forwarding destination in international format, such as +2547XXXXXXXX." }, 400);
+      const sequential = body.sequential !== false;
+      const ringTimeout = Math.min(60, Math.max(10, Number(body.ringTimeout || 20)));
+      const forward = { destinations: [to], sequential, first_answer_wins: true, ring_timeout: ringTimeout };
+      const payload: Row = {};
+      let config: Row = {};
+      if (mode === "always") {
+        payload.forward = forward;
+        config = { mode: "always", to, ringTimeout, sequential, updatedAt: new Date().toISOString() };
+      } else if (mode === "after_hours") {
+        const start = String(body.openingTime || "08:00");
+        const end = String(body.closingTime || "18:00");
+        if (!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(start) || !/^([01]\\d|2[0-3]):[0-5]\\d$/.test(end) || start >= end) {
+          return json({ error: "Choose a valid opening and closing time; closing must be later than opening." }, 400);
+        }
+        payload.hours = {
+          enabled: true,
+          timezone: "Africa/Nairobi",
+          weekly: [{ days: [1,2,3,4,5,6], start, end }],
+          closed: { mode: "forward", forward },
+        };
+        config = { mode: "after_hours", to, openingTime: start, closingTime: end, ringTimeout, sequential, updatedAt: new Date().toISOString() };
+      } else {
+        return json({ error: "Choose direct forwarding or after-hours forwarding." }, 400);
+      }
+      // Verify this provider number exists in the API-key's own workspace before changing it.
+      await skRequest(key, "/v1/numbers/" + encodeURIComponent(numberId));
+      const result = await skRequest(key, "/v1/numbers/" + encodeURIComponent(numberId) + "/routing", "PUT", payload);
+      const updatedSettings = { ...settings, forwarding_config: { ...config, providerConfirmed: true } };
+      const { error: saveError } = await admin.from("twiga_phone_lines")
+        .update({ settings: updatedSettings, updated_at: new Date().toISOString() }).eq("id", line.id);
+      if (saveError) throw saveError;
+      return json({
+        configured: true, mode, destination: to, provider: "sautikit",
+        routing: result?.routing || result,
+        message: mode === "always"
+          ? "Direct forwarding was accepted by SautiKit. Calls to this number will be routed to the selected staff number."
+          : "After-hours forwarding was accepted by SautiKit. Calls during the saved Nairobi business hours continue on the AI route; calls outside those hours are forwarded.",
+      });
+    }
+
+    if (["publish_agent", "send_call"].includes(action) && !agentId) return json({ error: "This business has no SautiKit receptionist agent linked to its number. Link an agent in the correct SautiKit workspace first." }, 409);
 
     if (action === "publish_agent") {
       const [catalog, agentResponse, numberResponse] = await Promise.all([
