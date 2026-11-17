@@ -59,6 +59,12 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
   const [saved, setSaved] = useState(false);
   const [palplussStatus, setPalplussStatus] = useState<any>({ keyConfigured: false, keySource: "missing" });
   const [palplussBusy, setPalplussBusy] = useState(false);
+  const [providerAdmin, setProviderAdmin] = useState(false);
+  const [sautikitKeyDraft, setSautikitKeyDraft] = useState("");
+  const [sautikitKeyStatus, setSautikitKeyStatus] = useState<any>({ keyConfigured: false });
+  const [centralPalKey, setCentralPalKey] = useState("");
+  const [centralPalStatus, setCentralPalStatus] = useState<any>({ keyConfigured: false });
+  const [providerSaveMessage, setProviderSaveMessage] = useState("");
   const [palplussMessage, setPalplussMessage] = useState("");
 
   const patch = (group: keyof SettingsType, values: Record<string, unknown>) => {
@@ -120,6 +126,44 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
   };
 
   useEffect(() => { void refreshPalpluss(); }, [businessId, demo]);
+  
+  const refreshManagedProviders = async () => {
+    if (!supabase || demo || !businessId) return;
+    const [voice, payments] = await Promise.all([
+      supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } }),
+      supabase.functions.invoke("twiga-platform-secrets", { body: { action: "palpluss.platform.status" } }),
+    ]);
+    const isAdmin = !!voice.data?.isPlatformAdmin;
+    setProviderAdmin(isAdmin);
+    setSautikitKeyStatus(voice.data || { keyConfigured: false });
+    if (payments.data && !payments.error) setCentralPalStatus(payments.data);
+  };
+  useEffect(() => { void refreshManagedProviders(); }, [businessId, demo]);
+
+  const saveManagedSautikit = async () => {
+    if (!supabase || !businessId || !sautikitKeyDraft.trim()) return;
+    setPalplussBusy(true); setProviderSaveMessage("Validating the voice service connection…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "save_key", businessId, apiKey: sautikitKeyDraft.trim() } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setSautikitKeyDraft(""); setProviderSaveMessage(data?.message || "Voice service connected securely.");
+      await refreshManagedProviders();
+    } catch (e) { setProviderSaveMessage(e instanceof Error ? e.message : "Voice connection could not be saved."); }
+    finally { setPalplussBusy(false); }
+  };
+
+  const saveManagedPalpluss = async () => {
+    if (!supabase || !centralPalKey.trim()) return;
+    setPalplussBusy(true); setProviderSaveMessage("Validating the TWIGA payment connection…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "palpluss.platform.save", apiKey: centralPalKey.trim() } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setCentralPal(""); setCentralPalStatus(data); setProviderSaveMessage(data?.message || "TWIGA payment connection saved securely.");
+    } catch (e) { setProviderSaveMessage(e instanceof Error ? e.message : "Payment connection could not be saved."); }
+    finally { setPalplussBusy(false); }
+  };
 
 
   const testApiConnections = async () => {
@@ -303,6 +347,26 @@ export default function Settings({ businessId, demo = false, onOpenProfile, onOp
         {palplussMessage && <p role="status" className="mt-3 rounded-xl border border-neutral-700 bg-neutral-900 p-3 text-sm text-neutral-200">{palplussMessage}</p>}
       </section>
 
+      {providerAdmin && !demo && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+        <p className="text-xs font-bold uppercase tracking-widest text-orange-600">TWIGA administrator</p>
+        <h2 className="mt-1 text-xl font-semibold text-neutral-950">Managed service connections</h2>
+        <p className="mt-1 text-sm leading-6 text-neutral-600">Connect the provider accounts once here. Your customers use TWIGA only; they never need provider logins or API keys. Credentials are saved server-side and are not exposed to customer accounts.</p>
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-neutral-200 p-4">
+            <div className="flex items-center justify-between gap-2"><h3 className="font-semibold text-neutral-900">Voice service</h3><span className="text-xs font-semibold text-neutral-500">{sautikitKeyStatus.keyConfigured ? "Connected" : "Needs setup"}</span></div>
+            {sautikitKeyStatus.keyLast4 && <p className="mt-1 text-xs text-neutral-500">Saved securely · ending {sautikitKeyStatus.keyLast4}</p>}
+            <input type="password" autoComplete="new-password" value={sautikitKeyDraft} onChange={e => setSautikitKeyDraft(e.target.value)} placeholder="Paste or rotate voice service key" className="mt-3 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm"/>
+            <button onClick={() => void saveManagedSautikit()} disabled={palplussBusy || sautikitKeyDraft.trim().length < 20} className="mt-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Securely save voice connection</button>
+          </div>
+          <div className="rounded-xl border border-neutral-200 p-4">
+            <div className="flex items-center justify-between gap-2"><h3 className="font-semibold text-neutral-900">M-Pesa payment service</h3><span className="text-xs font-semibold text-neutral-500">{centralPalStatus.keyConfigured ? "Connected" : "Needs setup"}</span></div>
+            {centralPalStatus.keyLast4 && <p className="mt-1 text-xs text-neutral-500">Saved securely · ending {centralPalStatus.keyLast4}</p>}
+            <input type="password" autoComplete="new-password" value={centralPalKey} onChange={e => setCentralPalKey(e.target.value)} placeholder="Paste or rotate TWIGA payment key" className="mt-3 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm"/>
+            <button onClick={() => void saveManagedPalpluss()} disabled={palplussBusy || centralPalKey.trim().length < 20} className="mt-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Securely save payment connection</button>
+          </div>
+        </div>
+        {providerSaveMessage && <p role="status" className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{providerSaveMessage}</p>}
+      </section>}
       {tab === "basic" ? (
         
 
