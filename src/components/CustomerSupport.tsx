@@ -18,6 +18,7 @@ export default function CustomerSupport({ businessId }: { businessId: string }) 
   const [error, setError] = useState("");
 
   const invoke = useCallback(async (body: Record<string, unknown>) => {
+    if (!supabase) throw new Error("Support is temporarily unavailable. Please refresh and try again.");
     const { data, error: invokeError } = await supabase.functions.invoke("twiga-support-portal", { body });
     if (invokeError) throw new Error(invokeError.message);
     if (data?.error) throw new Error(String(data.error));
