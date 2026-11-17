@@ -252,7 +252,7 @@ function WorkspaceApp({ demo = false, userId, googleAuth, onSignOut }: { demo?: 
           {tab === "reports" && <Reports />}
           {tab === "alerts" && <Alerts />}
           {tab === "profile" && <Profile userId={userId} businessId={businessId} businesses={businesses} onBusinessChange={setBusinessId} onRefreshBusinesses={refreshBusinesses} onCreateBusiness={() => go("setup")} onOpenPhone={() => go("phone")} />}
-          {tab === "settings" && <Settings businessId={businessId} demo={demo} onOpenProfile={() => go("phone")} />}
+          {tab === "settings" && <Settings businessId={businessId} demo={demo} onOpenProfile={() => go("phone")} onOpenPayments={() => go("payments")} />}
           {tab === "logout" && <Logout onCancel={() => setTab("dashboard")} />}
         </main>
 
