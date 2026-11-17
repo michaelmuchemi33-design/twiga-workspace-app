@@ -30,7 +30,6 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [call, setCall] = useState<any>(null);
-  const [showAllVoiceOptions, setShowAllVoiceOptions] = useState(false);
   const [previewingVoice, setPreviewingVoice] = useState("");
   const [forwardMode, setForwardMode] = useState<"always" | "after_hours">("after_hours");
   const [forwardTo, setForwardTo] = useState("");
@@ -115,7 +114,6 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
     }
     return list;
   })();
-  const visibleVoiceOptions = showAllVoiceOptions ? catalogOptions : catalogOptions.slice(0, 25);
 
   const line = data.phoneLine;
   const currentAgent = data.agent;
