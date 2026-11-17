@@ -47,7 +47,7 @@ const statusMeta: Record<
   },
   failed: {
     icon: IconX,
-    chip: "border-neutral-900 bg-neutral-950 text-white",
+    chip: "border-neutral-200 bg-white text-neutral-900",
     label: "Failed",
   },
 };
@@ -171,14 +171,14 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
         </div>
 
         <div className="flex flex-col items-stretch gap-3 sm:items-end">
-          <div className="flex items-center gap-3 rounded-xl bg-neutral-950 px-4 py-3 text-white">
+          <div className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 text-neutral-900">
             <span className={`h-2.5 w-2.5 rounded-full ${"bg-neutral-500"}`} />
             <span className="text-sm font-medium">{"Workspace ready"}</span>
           </div>
 
           <button
             onClick={onSetup}
-            className="flex items-center gap-3 rounded-xl bg-neutral-950 px-4 py-3 text-white transition-all duration-200 hover:bg-neutral-800 active:scale-95"
+            className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 text-neutral-900 transition-all duration-200 hover:bg-neutral-50 active:scale-95"
           >
             <span className="h-2.5 w-2.5 rounded-full bg-orange-500" />
             <span className="text-sm font-medium">Set up with AI</span>
@@ -233,17 +233,17 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="rounded-2xl border-neutral-900 bg-neutral-950 text-white shadow-lg lg:col-span-2">
+        <Card className="rounded-2xl border-neutral-200 bg-white text-neutral-900 shadow-sm lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <div>
               <CardTitle className="flex items-center gap-2 text-xl font-semibold">
                 <IconMic className="h-5 w-5 text-orange-500" /> {"Recent Calls"}
               </CardTitle>
-              <CardDescription className="text-neutral-400">
+              <CardDescription className="text-neutral-600">
                 <span className="text-neutral-900">{"AI call history for this business. Transcripts are saved only when recording is enabled."}</span>
               </CardDescription>
             </div>
-            <Badge className="border-orange-500/30 bg-orange-500/20 text-orange-400">
+            <Badge className="border-orange-200 bg-orange-50 text-orange-700">
               {ongoingCalls.length} active
             </Badge>
           </CardHeader>
@@ -255,16 +255,16 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
                 const callState = String(call.status || "unknown").toLowerCase();
                 const label = String(call.structured_data?.customer_name || "Caller");
                 const intent = String(call.structured_data?.enquiry_type || call.structured_data?.intent || call.channel || "Call");
-                return <div key={call.id} className="rounded-xl bg-white/5 p-4">
+                return <div key={call.id} className="rounded-xl border border-neutral-100 bg-white p-4">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0"><p className="text-sm font-semibold">{label}</p><p className="text-xs text-neutral-400">{number || "Number unavailable"} · {intent} · {new Date(call.started_at || call.created_at).toLocaleString()}</p></div>
-                    <div className="flex items-center gap-3"><span className="font-mono text-sm text-orange-400">{formatDuration(Number(call.duration_seconds || 0))}</span><Badge className={cn("border", callState === "completed" ? "border-emerald-500/30 bg-emerald-500/20 text-emerald-400" : callState === "in_progress" ? "border-orange-500/30 bg-orange-500/20 text-orange-300" : "border-neutral-600 bg-white/10 text-neutral-300")}>{callState.replaceAll("_", " ")}</Badge></div>
+                    <div className="min-w-0"><p className="text-sm font-semibold">{label}</p><p className="text-xs text-neutral-600">{number || "Number unavailable"} · {intent} · {new Date(call.started_at || call.created_at).toLocaleString()}</p></div>
+                    <div className="flex items-center gap-3"><span className="font-mono text-sm text-orange-600">{formatDuration(Number(call.duration_seconds || 0))}</span><Badge className={cn("border", callState === "completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : callState === "in_progress" ? "border-orange-200 bg-orange-50 text-orange-700" : "border-neutral-200 bg-neutral-100 text-neutral-700")}>{callState.replaceAll("_", " ")}</Badge></div>
                   </div>
-                  {call.summary && <p className="mt-2 text-xs leading-5 text-neutral-300">{call.summary}</p>}
+                  {call.summary && <p className="mt-2 text-xs leading-5 text-neutral-700">{call.summary}</p>}
                 </div>;
               })}
             </div>
-            <div className="grid grid-cols-3 gap-3 border-t border-white/10 pt-4">
+            <div className="grid grid-cols-3 gap-3 border-t border-neutral-200 pt-4">
               <MiniStat label="Call records" value={String(callRecords.length)} />
               <MiniStat label="Completed" value={String(callRecords.filter((call) => String(call.status).toLowerCase() === "completed").length)} />
               <MiniStat label="Avg. call" value={formatDuration(averageDuration)} />
