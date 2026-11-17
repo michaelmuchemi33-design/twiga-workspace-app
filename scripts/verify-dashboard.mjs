@@ -3,6 +3,10 @@ const read = (file) => fs.readFileSync(file, "utf8");
 const store = read("src/lib/store.tsx");
 const dashboard = read("src/components/Dashboard.tsx");
 const phone = read("src/components/PhoneDesk.tsx");
+const sautikit = read("src/components/SautiKitDesk.tsx");
+const sautikitFunction = read("supabase/functions/twiga-sautikit/index.ts");
+const setup = read("src/components/SetupPage.tsx");
+const setupAssistant = read("supabase/functions/twiga-setup-assistant/index.ts");
 const profile = read("src/components/Profile.tsx");
 const connections = read("src/components/Connections.tsx");
 const app = read("src/App.tsx");
@@ -20,7 +24,11 @@ const checks = [
   ["visible save/load error state", store.includes("saveStatus") && store.includes("workspaceError") && store.includes("Your changes could not be saved")],
   ["dashboard avoids live profile fetch in demo", dashboard.includes("if (demoMode || !supabase || !businessId) return;") && !dashboard.includes("if (false ||")],
   ["demo call-history disclosure", dashboard.includes("This demo does not generate fake call history.")],
-  ["phone line assignment flow", phone.includes("save_phone_line") && phone.includes("connectionMethod")],
+  ["SautiKit phone desk is the active phone screen", phone.includes("SautiKitDesk") && sautikit.includes("publish_agent") && sautikit.includes("send_call")],
+  ["voice choices come only from the live provider catalogue", !sautikit.includes("CATALOG_FALLBACK") && sautikit.includes("xl:grid-cols-5") && sautikit.includes("visibleVoiceOptions")],
+  ["provider route is verified before inbound is marked ready", sautikitFunction.includes("Promise.allSettled") && sautikitFunction.includes("liveInboundVerified") && sautikitFunction.includes("inboundBound:")],
+  ["AI setup has a recovery path to provider connections", setup.includes("onOpenConnections") && setup.includes("Open Connections")],
+  ["setup assistant reads the encrypted xAI key", setupAssistant.includes('p_provider: "xai"') && setupAssistant.includes("api.x.ai/v1/responses")],
   ["live Retell voice catalogue and previews", profile.includes("list_voices") && profile.includes("previewUrl")],
   ["Google origin mismatch guidance", connections.includes("origin_mismatch")],
   ["business_id architecture documented", readme.includes("twiga_business_workspace_data") && readme.includes("business_id")],
