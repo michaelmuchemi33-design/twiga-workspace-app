@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 const SETUP_DRAFT_PREFIX = "twiga_setup_draft_v1:";
-import { supabase } from "@/lib/supabase";
 
 type Message = { id: string; role: "ai" | "user"; text: string };
 
@@ -60,6 +60,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
           if (typeof saved.ready === "boolean") setReady(saved.ready);
           if (typeof saved.ownerName === "string" && saved.ownerName) setOwnerName(saved.ownerName);
           if (typeof saved.ownerEmail === "string" && saved.ownerEmail) setOwnerEmail(saved.ownerEmail);
+          if (typeof saved.input === "string") setInput(saved.input);
           setDraftSaved(true);
         }
       } catch { /* Ignore an invalid or unavailable local draft. */ }
@@ -74,11 +75,11 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
     if (!draftLoaded || !draftKey || demo) return;
     try {
       localStorage.setItem(draftKey, JSON.stringify({
-        messages, profile, missing, ready, ownerName, ownerEmail,
+        messages, profile, missing, ready, ownerName, ownerEmail, input,
         updatedAt: new Date().toISOString(),
       }));
     } catch { /* Browser storage can be disabled or full. */ }
-  }, [draftLoaded, draftKey, demo, messages, profile, missing, ready, ownerName, ownerEmail]);
+  }, [draftLoaded, draftKey, demo, messages, profile, missing, ready, ownerName, ownerEmail, input]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "auto" });
@@ -86,7 +87,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
 
   const send = async (value?: string) => {
     const text = (value ?? input).trim();
-    if (!text || thinking) return;
+    if (!text || thinking || !draftLoaded) return;
     if (demo) {
       setError("Sign in to create a real business workspace. Sample business data is disabled.");
       return;
@@ -183,7 +184,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
         </div>
         <div className="border-t border-neutral-100 p-4">
           <p className="mb-3 text-xs text-neutral-400">Start with your business name, what you do, and where you operate.</p>
-          <div className="flex items-end gap-2"><textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} placeholder="Tell me about your business…" rows={3} className="min-h-[76px] flex-1 resize-y rounded-xl border border-neutral-200 p-3 text-sm outline-none focus:border-orange-400" /><button onClick={() => void send()} disabled={thinking || !input.trim()} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">Send</button></div>
+          <div className="flex items-end gap-2"><textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} placeholder="Tell me about your business…" rows={3} className="min-h-[76px] flex-1 resize-y rounded-xl border border-neutral-200 p-3 text-sm outline-none focus:border-orange-400" /><button onClick={() => void send()} disabled={!draftLoaded || thinking || !input.trim()} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">Send</button></div>
           <p className="mt-2 text-[11px] text-neutral-500">Enter to send · Shift + Enter for a new line · Your conversation is saved in this browser so you can continue after refreshing.</p>
         </div>
       </section>
