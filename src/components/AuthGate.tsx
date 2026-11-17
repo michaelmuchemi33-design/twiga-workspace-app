@@ -47,6 +47,8 @@ export default function AuthGate({ children }: {
   const [googleAuth, setGoogleAuth] = useState<GoogleAuthContext>(authContext(null));
   const [loading, setLoading] = useState(true);
   const [emailMode, setEmailMode] = useState(false);
+  const [emailAction, setEmailAction] = useState<"signin" | "signup">("signin");
+  const [notice, setNotice] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -94,7 +96,23 @@ export default function AuthGate({ children }: {
     if (!supabase) return;
     setBusy(true);
     setError("");
+    setNotice("");
     try {
+      if (emailAction === "signup") {
+        const { data, error: authError } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: { emailRedirectTo: window.location.origin + "/auth/callback" },
+        });
+        if (authError) throw authError;
+        if (data.session) {
+          setSession(data.session);
+          setGoogleAuth(authContext(data.session));
+        } else {
+          setNotice("Account created. Check your email for the secure TWIGA confirmation link before signing in.");
+        }
+        return;
+      }
       const { data, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
       if (authError) throw authError;
       setSession(data.session);
@@ -154,15 +172,20 @@ export default function AuthGate({ children }: {
               {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
               <div className="mt-6 border-t border-neutral-100 pt-5 text-center">
                 <button onClick={() => { setEmailMode((v) => !v); setError(""); }} className="text-xs font-semibold text-neutral-500 underline decoration-neutral-300 underline-offset-4 hover:text-orange-700">
-                  {emailMode ? "Back to Google sign-in" : "Use email instead (existing accounts)"}
+                  {emailMode ? "Back to Google sign-in" : "Use email and password instead"}
                 </button>
               </div>
               {emailMode && (
                 <form onSubmit={emailSignIn} className="mt-5 space-y-3 rounded-2xl border border-neutral-200 p-4">
-                  <p className="text-xs font-semibold text-neutral-700">Sign in to an existing TWIGA account</p>
+                  <p className="text-xs font-semibold text-neutral-700">{emailAction === "signup" ? "Create your TWIGA account" : "Sign in to your TWIGA account"}</p>
                   <label className="block text-xs font-semibold text-neutral-700">Email address<input type="email" required value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" placeholder="you@business.co.ke"/></label>
-                  <label className="block text-xs font-semibold text-neutral-700">Password<input type="password" required value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" placeholder="Your existing password"/></label>
-                  <button disabled={busy} className="h-11 w-full rounded-xl bg-neutral-950 text-sm font-bold text-white disabled:opacity-50">{busy ? "Signing in…" : "Sign in"}</button>
+                  <label className="block text-xs font-semibold text-neutral-700">Password<input type="password" required value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" placeholder={emailAction === "signup" ? "Create a strong password" : "Your password"}/></label>
+                  <button disabled={busy} className="h-11 w-full rounded-xl bg-neutral-950 text-sm font-bold text-white disabled:opacity-50">{busy ? "Please wait…" : emailAction === "signup" ? "Create account" : "Sign in"}</button>
+                  <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <button type="button" onClick={() => { setEmailAction((v) => v === "signin" ? "signup" : "signin"); setError(""); setNotice(""); }} className="font-semibold text-orange-700 underline underline-offset-4">{emailAction === "signup" ? "Already have an account? Sign in" : "New to TWIGA? Create an account"}</button>
+                    {emailAction === "signin" && <button type="button" onClick={async () => { if (!supabase || !email.trim()) { setError("Enter your email address first."); return; } setBusy(true); setError(""); setNotice(""); const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: window.location.origin + "/auth/callback" }); setBusy(false); if (resetError) setError(resetError.message); else setNotice("Password reset email sent. Check your inbox."); }} className="font-medium text-neutral-500 underline underline-offset-4">Forgot password?</button>}
+                  </div>
+                  {notice && <p role="status" className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900">{notice}</p>}
                 </form>
               )}
             </>
