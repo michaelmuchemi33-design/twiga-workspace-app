@@ -147,8 +147,8 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
   }
 
   async function saveForwarding() {
-    const target = forwardTo.trim().replace(/[()\\s-]/g, "");
-    if (!/^\\+[1-9]\\d{7,14}$/.test(target)) return setNotice("Enter the forwarding number with country code, for example +2547XXXXXXXX.");
+    const target = forwardTo.trim().replace(/[()\s-]/g, "");
+    if (!/^\+[1-9]\d{7,14}$/.test(target)) return setNotice("Enter the forwarding number with country code, for example +2547XXXXXXXX.");
     if (forwardMode === "always" && !window.confirm("Forward ALL calls on this number directly to " + target + "? This takes incoming calls away from the AI receptionist.")) return;
     if (forwardMode === "after_hours" && !window.confirm("Forward calls outside " + forwardOpening + "–" + forwardClosing + " (Nairobi time) to " + target + "? The AI will keep handling calls during the opening hours.")) return;
     setForwardBusy(true); setNotice("");
