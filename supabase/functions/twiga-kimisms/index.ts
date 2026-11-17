@@ -202,7 +202,7 @@ Deno.serve(async (req: Request) => {
       if (!recipient) return reply({ error: "The customer's number is not a valid Kenyan mobile number." }, 400);
       eventType = isPayment ? "payment_confirmation" : isPaymentRequest ? "payment_request_notice" : "order_confirmation";
       shouldIncludePaymentLink = !isPayment;
-      idempotencyKey = safe(idempotencyKey || (order.id + ":" + eventType), 180);
+      idempotencyKey = safe(idempotencyKey || (eventType === "order_confirmation" ? order.id + ":order_confirmation_paylink" : order.id + ":" + eventType), 180);
       const business = await admin.from("businesses").select("name").eq("id", businessId).maybeSingle();
       const businessName = safe(business.data?.name || "the business", 60);
       const orderNumber = safe(order.order_number || order.id.slice(0, 8), 60);
@@ -210,8 +210,8 @@ Deno.serve(async (req: Request) => {
       message = isPayment
         ? "Payment received by " + businessName + ". Order " + orderNumber + " · KSh " + amount + ". Thank you."
         : isPaymentRequest
-          ? "We sent an M-Pesa payment prompt for order " + orderNumber + " (KSh " + amount + "). If the prompt does not appear, use the secure payment link below. Never share your M-Pesa PIN."
-          : "Order confirmed by " + businessName + ". Order " + orderNumber + " · KSh " + amount + ". Pay securely using the link below.";
+          ? "We sent an M-Pesa payment prompt for order " + orderNumber + " (KSh " + amount + "). Approve the prompt on your phone to complete payment. Never share your M-Pesa PIN."
+          : "Order confirmed by " + businessName + ". Order " + orderNumber + " · KSh " + amount + ".";
     } else if (action === "send_test") {
       if (!canManage || body.confirmTestRecipient !== true) return reply({ error: "Confirm that you control this test phone number before sending a test SMS." }, 403);
       recipient = normalizePhone(body.to);
@@ -229,7 +229,7 @@ Deno.serve(async (req: Request) => {
       if (action === "send_order_confirmation") {
         await admin.from("twiga_orders").update({ status: "confirmed" }).eq("id", orderId).eq("business_id", businessId).eq("status", "pending_confirmation");
       }
-      return reply({ sent: true, duplicate: true, paymentLinkIncluded: eventType !== "payment_confirmation", messageId: existing.provider_message_id || null, status: existing.status, message: "This SMS event was already submitted; it was not sent twice." });
+      return reply({ sent: true, duplicate: true, paymentLinkIncluded: String(existing.message || "").includes("https://app.twiga.co.ke/pay?token="), messageId: existing.provider_message_id || null, status: existing.status, message: "This SMS event was already submitted; it was not sent twice." });
     }
     if (shouldIncludePaymentLink) {
       const paymentLink = await createPublicPaymentLink(admin, businessId, String(orderId), user.id);
@@ -237,7 +237,7 @@ Deno.serve(async (req: Request) => {
         return reply({ error: "Connect this business's PalPluss API key and public Paylink ID in Payments → API & connection before confirming an order by payment-link SMS." }, 409);
       }
       if (paymentLink) {
-        message += " Pay securely: " + paymentLink;
+        message += (eventType === "payment_request_notice" ? " If the prompt does not appear, pay securely here: " : " Pay securely here: ") + paymentLink;
         paymentLinkIncluded = true;
       }
     }

@@ -125,6 +125,14 @@ Deno.serve(async (req: Request) => {
     if (!isPaid && new Date(link.expires_at).getTime() < Date.now()) return reply({ error: "This payment link has expired. Ask the business to send a new one." }, 410);
     if (!isPaid && link.used_at) return reply({ error: "This payment link has already been used. Ask the business for an updated link." }, 409);
 
+    if (action === "load" && isPaid) {
+      return reply({
+        businessName, orderNumber: safe(order.order_number || order.id.slice(0, 8), 60),
+        customerName: safe(order.customer_name, 120), phone: safe(order.customer_phone, 40),
+        amount: Number(order.total_amount), currency: safe(order.currency || "KES", 8),
+        paylinkId: "", expiresAt: link.expires_at, paid: true,
+      });
+    }
     if (action === "load") {
       const [{ data: settings }, { data: businessSecret }, { data: platformSecret }] = await Promise.all([
         admin.from("twiga_business_settings").select("palpluss_paylink_id").eq("business_id", link.business_id).maybeSingle(),

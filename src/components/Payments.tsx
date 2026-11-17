@@ -255,7 +255,7 @@ export default function Payments() {
       const { data, error } = await supabase!.functions.invoke("twiga-kimisms", { body: { action: "send_order_confirmation", businessId, orderId: order.id, ownerConfirmed: true } });
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(String(data.error));
-      setMessage(data.message || "Order SMS accepted by KIMISMS.");
+      setMessage((data.message || "Order SMS accepted by KIMISMS.") + (data.paymentLinkIncluded ? " Secure PalPluss payment link included." : ""));
       await loadPendingOrders();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Order confirmation SMS could not be sent.");

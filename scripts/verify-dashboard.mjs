@@ -17,6 +17,8 @@ const scheduledUi = read("src/components/ScheduledCallsPanel.tsx");
 const paylinkFunction = read("supabase/functions/twiga-palpluss/index.ts");
 const paymentUi = read("src/components/Payments.tsx");
 const kimisms = read("supabase/functions/twiga-kimisms/index.ts");
+const publicPaylink = read("supabase/functions/twiga-public-paylink/index.ts");
+const publicPaylinkUi = read("src/components/PublicPaylink.tsx");
 const palplussWebhook = read("supabase/functions/twiga-palpluss-webhook/index.ts");
 const googleWorkspace = read("supabase/functions/google-workspace/index.ts");
 const install = read("src/components/InstallApp.tsx");
@@ -66,6 +68,12 @@ const checks = [
   ["no Unity branding in live app shell", !/Unity/i.test(app) && !/Unity/i.test(read("index.html"))],
 ];
 
+checks.push(
+  ["owner-confirmed orders send a secure PalPluss link through opted-in KIMISMS SMS", kimisms.includes("ownerConfirmed") && kimisms.includes("twiga_public_payment_links") && kimisms.includes("https://app.twiga.co.ke/pay?token=")],
+  ["public payment links are token-hashed, expiring and server verified", publicPaylink.includes("SHA-256") && publicPaylink.includes("expires_at") && publicPaylink.includes("order.total_amount") && publicPaylink.includes("PalPluss")],
+  ["public paylink checkout locks the server-supplied amount", publicPaylinkUi.includes("lockPrefill: true") && publicPaylinkUi.includes("twiga-public-paylink")],
+  ["orders are not auto-texted before the owner confirms", !paymentUi.includes('row?.status === "pending_confirmation" && row?.payment_status === "unpaid"')],
+);
 let failed = 0;
 for (const [name, pass] of checks) {
   if (pass) console.log("PASS " + name);
@@ -73,16 +81,3 @@ for (const [name, pass] of checks) {
 }
 if (failed) process.exit(1);
 console.log("TWIGA workspace smoke checks passed: " + checks.length + " checks.");
-
-const paymentLinkSms = read("supabase/functions/twiga-kimisms/index.ts");
-const publicPaylink = read("supabase/functions/twiga-public-paylink/index.ts");
-const publicPaylinkUi = read("src/components/PublicPaylink.tsx");
-const paymentsUi = read("src/components/Payments.tsx");
-check("opted-in order confirmation sends a TWIGA-hosted PalPluss link only after owner confirmation",
-  paymentLinkSms.includes("ownerConfirmed") && paymentLinkSms.includes("twiga_public_payment_links") && paymentLinkSms.includes("https://app.twiga.co.ke/pay?token="));
-check("public payment links are token-hashed, expiring and server verified",
-  publicPaylink.includes("SHA-256") && publicPaylink.includes("expires_at") && publicPaylink.includes("order.total_amount") && publicPaylink.includes("PalPluss"));
-check("public paylink checkout locks the server-supplied amount",
-  publicPaylinkUi.includes("lockPrefill: true") && publicPaylinkUi.includes("twiga-public-paylink"));
-check("pending orders are not auto-texted before the owner confirms",
-  !paymentsUi.includes('row?.status === "pending_confirmation" && row?.payment_status === "unpaid"'));
