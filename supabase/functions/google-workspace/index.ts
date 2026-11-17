@@ -407,7 +407,7 @@ Deno.serve(async (req: Request) => {
       for (const appointment of appointments || []) {
         const start = new Date(appointment.scheduled_at);
         if (!Number.isFinite(start.getTime())) continue;
-        const durationMatch = String(appointment.notes || "").match(/Requested duration minutes:\\s*(\\d+)/i);
+        const durationMatch = String(appointment.notes || "").match(/Requested duration minutes:\s*(\\d+)/i);
         const durationMinutes = Math.min(180, Math.max(15, Number(durationMatch?.[1] || 30)));
         const end = new Date(start.getTime() + durationMinutes * 60000);
         const pendingRequest = String(appointment.status || "").toLowerCase() === "requested";
@@ -473,7 +473,7 @@ Deno.serve(async (req: Request) => {
           const emailItem = (person.emailAddresses || []).find((x: any) => x.value) || {};
           const rawPhone = String(phoneItem.value || "").trim();
           const email = String(emailItem.value || "").trim().toLowerCase().slice(0, 254);
-          const phone = rawPhone.replace(/[\\s().-]/g, "").slice(0, 40);
+          const phone = rawPhone.replace(/[\s().-]/g, "").slice(0, 40);
           if (!displayName || (!phone && !email)) continue;
           importedRows.push({
             name: displayName,
@@ -489,7 +489,7 @@ Deno.serve(async (req: Request) => {
       const { data: existing, error: existingError } = await admin.from("twiga_customers")
         .select("phone,email").eq("business_id", businessId).limit(10000);
       if (existingError) throw new HttpError(500, "Could not check existing TWIGA contacts before importing.");
-      const phoneSet = new Set((existing || []).map((row: any) => String(row.phone || "").replace(/[\\s().-]/g, "").toLowerCase()).filter(Boolean));
+      const phoneSet = new Set((existing || []).map((row: any) => String(row.phone || "").replace(/[\s().-]/g, "").toLowerCase()).filter(Boolean));
       const emailSet = new Set((existing || []).map((row: any) => String(row.email || "").toLowerCase()).filter(Boolean));
       const seenPhones = new Set<string>();
       const seenEmails = new Set<string>();
