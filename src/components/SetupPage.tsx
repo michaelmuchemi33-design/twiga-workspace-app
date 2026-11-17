@@ -84,9 +84,9 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       supabase.from("twiga_business_settings").select("timezone,business_hours,language_mode").eq("business_id", businessId).maybeSingle(),
     ]).then(([businessResult, profileResult, settingsResult]) => {
       if (!active) return;
-      const saved = profileResult.data || {};
-      const business = businessResult.data || {};
-      const settings = settingsResult.data || {};
+      const saved: Profile = profileResult.data || {};
+      const business: any = businessResult.data || {};
+      const settings: any = settingsResult.data || {};
       const merged: Profile = {
         ...saved,
         business_name: business.name || "",
