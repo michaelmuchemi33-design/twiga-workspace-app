@@ -199,7 +199,7 @@ Deno.serve(async (req: Request) => {
     if (action === "configure_forwarding") {
       const mode = String(body.mode || "");
       const to = String(body.to || "").trim();
-      if (!/^\\+[1-9]\\d{7,14}$/.test(to)) return json({ error: "Enter a forwarding destination in international format, such as +2547XXXXXXXX." }, 400);
+      if (!/^\+[1-9]\d{7,14}$/.test(to)) return json({ error: "Enter a forwarding destination in international format, such as +2547XXXXXXXX." }, 400);
       const sequential = body.sequential !== false;
       const ringTimeout = Math.min(60, Math.max(10, Number(body.ringTimeout || 20)));
       const forward = { destinations: [to], sequential, first_answer_wins: true, ring_timeout: ringTimeout };
@@ -211,7 +211,7 @@ Deno.serve(async (req: Request) => {
       } else if (mode === "after_hours") {
         const start = String(body.openingTime || "08:00");
         const end = String(body.closingTime || "18:00");
-        if (!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(start) || !/^([01]\\d|2[0-3]):[0-5]\\d$/.test(end) || start >= end) {
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(start) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(end) || start >= end) {
           return json({ error: "Choose a valid opening and closing time; closing must be later than opening." }, 400);
         }
         payload.hours = {
