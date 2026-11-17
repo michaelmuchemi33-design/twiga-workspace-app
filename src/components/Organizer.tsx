@@ -31,13 +31,7 @@ interface Item {
   tag: string;
 }
 
-const seed: Item[] = [
-  { id: "o1", text: "Call back: plumber re: leak quote", direction: "out", kind: "task", tag: "Ops" },
-  { id: "o2", text: "Client wants invoice split into 2 payments", direction: "in", kind: "task", tag: "Billing" },
-  { id: "o3", text: "Idea: loyalty punch-card for regulars", direction: "in", kind: "idea", tag: "Growth" },
-  { id: "o4", text: "Send signed contract to vendor", direction: "out", kind: "task", tag: "Legal" },
-  { id: "o5", text: "Idea: auto-review request 1 day after visit", direction: "in", kind: "idea", tag: "Growth" },
-];
+const seed: Item[] = [];
 
 export default function Organizer() {
   const [items, setItems] = useState<Item[]>(seed);
@@ -74,7 +68,7 @@ export default function Organizer() {
             <IconSwap className="h-5 w-5 text-orange-500" /> Capture
           </CardTitle>
           <CardDescription>
-            Log anything coming in, going out, or a new idea
+            Capture real tasks and ideas from this business. Nothing is prefilled with sample items.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -132,7 +126,7 @@ export default function Organizer() {
             <CardContent className="space-y-2">
               {col.list.length === 0 && (
                 <p className="rounded-lg border border-dashed border-neutral-200 py-6 text-center text-sm text-neutral-400">
-                  Nothing here yet
+                  No items have been added here yet.
                 </p>
               )}
               {col.list.map((i) => (
@@ -154,7 +148,7 @@ export default function Organizer() {
           <CardContent className="space-y-2">
             {ideas.length === 0 && (
               <p className="rounded-lg border border-dashed border-neutral-700 py-6 text-center text-sm text-neutral-500">
-                No ideas captured
+                No ideas added yet. Use Capture above to add an idea from your business.
               </p>
             )}
             {ideas.map((i) => (
