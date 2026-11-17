@@ -73,8 +73,8 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
       setMissing(Array.isArray(data.missingFields) ? data.missingFields : []);
       setReady(data.readyToBuild === true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The setup assistant could not reply.");
-      setMessages((m) => [...m, { id: String(Date.now() + 2), role: "ai", text: "I couldn't reach the setup assistant. " + (e instanceof Error ? e.message : "Please try again.") }]);
+      setError("TWIGA’s setup assistant is temporarily unavailable. Please try again shortly.");
+      setMessages((m) => [...m, { id: String(Date.now() + 2), role: "ai", text: "I’m having trouble reaching the setup assistant right now. Your details are safe — please try again shortly." }]);
     } finally {
       setThinking(false);
     }
@@ -151,10 +151,7 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
     </div>
     {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
       <p>{error}</p>
-      {/OpenRouter is not connected|OpenRouter API key|setup assistant/i.test(error) && onOpenConnections ? <div className="mt-3 flex flex-wrap items-center gap-3">
-        <button type="button" onClick={onOpenConnections} className="rounded-lg bg-neutral-950 px-4 py-2 text-xs font-semibold text-white">Open Connections</button>
-        <span className="text-xs text-red-700">Connect the shared OpenRouter key, then return here and send your business details again.</span>
-      </div> : null}
+      {error.includes("setup assistant") && <p className="mt-2 text-xs text-neutral-700">No action or technical setup is needed from you. Please try again shortly or contact TWIGA support.</p>}
     </div>}
   </div>;
 }
