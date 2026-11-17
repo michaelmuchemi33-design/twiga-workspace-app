@@ -518,3 +518,11 @@ html:focus-within { scroll-behavior: auto !important; }
 @media (prefers-reduced-motion: reduce) {
   .twiga-support-float { animation: none !important; }
 }
+
+
+/* Contrast guard for white dashboard cards: prevent pale/white labels from disappearing. */
+.bg-white .text-white,
+.bg-white .text-neutral-500,
+.bg-white .text-neutral-600 {
+  color: #111827 !important;
+}
