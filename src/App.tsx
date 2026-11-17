@@ -356,7 +356,7 @@ function WorkspaceApp({ demo = false, userId, googleAuth, onSignOut }: { demo?: 
   );
 }
 export default function App(props: { demo?: boolean; userId?: string; googleAuth?: GoogleAuthContext; onSignOut?: () => void }) {
-  if (typeof window !== "undefined" && window.location.pathname.replace(/\\/+$/, "") === "/pay") {
+  if (typeof window !== "undefined" && (window.location.pathname === "/pay" || window.location.pathname === "/pay/")) {
     return <PublicPaylink />;
   }
   return <WorkspaceApp {...props} />;
