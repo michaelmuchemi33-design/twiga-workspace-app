@@ -18,7 +18,7 @@ type Transaction = {
 
 type Tab = "collect" | "keys";
 type Channel = { id: string; provider_channel_id: string; name: string; type: "PAYBILL" | "TILL_NUMBER" | "SEND_MONEY"; shortcode: string; account_number?: string | null; is_default: boolean };
-type PendingOrder = { id: string; order_number: string; customer_name: string; customer_phone: string | null; total_amount: number; description: string; status: string; payment_status: string; created_at: string };
+type PendingOrder = { id: string; order_number: string; customer_name: string; customer_phone: string | null; total_amount: number; description: string; status: string; payment_status: string; customer_sms_consent?: boolean; created_at: string };
 
 export default function Payments() {
   const { businessId } = useStore();
@@ -61,7 +61,7 @@ export default function Payments() {
 
   const loadPendingOrders = useCallback(async () => {
     if (!supabase || !businessId) { setPendingOrders([]); return; }
-    const { data, error } = await supabase.from("twiga_orders").select("id,order_number,customer_name,customer_phone,total_amount,description,status,payment_status,created_at").eq("business_id", businessId).eq("status", "pending_confirmation").eq("payment_status", "unpaid").order("created_at", { ascending: false }).limit(20);
+    const { data, error } = await supabase.from("twiga_orders").select("id,order_number,customer_name,customer_phone,total_amount,description,status,payment_status,customer_sms_consent,created_at").eq("business_id", businessId).eq("status", "pending_confirmation").eq("payment_status", "unpaid").order("created_at", { ascending: false }).limit(20);
     if (error) throw error;
     setPendingOrders((data || []) as PendingOrder[]);
   }, [businessId]);
@@ -173,6 +173,26 @@ export default function Payments() {
     } finally { setBusy(false); }
   };
 
+  const sendOrderConfirmationSms = async (order: PendingOrder) => {
+    if (!order.customer_phone) { setMessage("This order has no customer phone number."); return; }
+    if (!order.customer_sms_consent && !window.confirm("Confirm that this customer explicitly agreed to receive order updates by SMS on " + order.customer_phone + "? Continue only if the customer gave permission.")) return;
+    setBusy(true); setMessage("Preparing order confirmation SMS…");
+    try {
+      if (!order.customer_sms_consent) {
+        const { data: consent, error: consentError } = await supabase!.functions.invoke("twiga-kimisms", { body: { action: "record_order_consent", businessId, orderId: order.id, customerConfirmed: true } });
+        if (consentError) throw new Error(consentError.message);
+        if (consent?.error) throw new Error(String(consent.error));
+      }
+      const { data, error } = await supabase!.functions.invoke("twiga-kimisms", { body: { action: "send_order_confirmation", businessId, orderId: order.id } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setMessage(data.message || "Order SMS accepted by KIMISMS.");
+      await loadPendingOrders();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Order confirmation SMS could not be sent.");
+    } finally { setBusy(false); }
+  };
+
   const checkPending = async () => {
     setBusy(true);
     setMessage("Checking pending transactions…");
@@ -197,7 +217,7 @@ export default function Payments() {
 
     {pendingOrders.length > 0 && <section className="rounded-2xl border border-orange-200 bg-orange-50/50 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-widest text-orange-700">Completed AI calls</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">Orders awaiting payment request</h2><p className="mt-1 text-sm text-neutral-600">These orders were captured after the receptionist finished a call. Review the amount and customer, then approve the M-Pesa prompt to this business's selected Till or Paybill.</p></div><span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-700">{pendingOrders.length} awaiting review</span></div>
-      <div className="mt-4 grid gap-3 md:grid-cols-2">{pendingOrders.map((order) => <div key={order.id} className="rounded-xl border border-neutral-200 bg-white p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-semibold text-neutral-950">{order.customer_name || "Customer"}</p><p className="mt-1 text-xs text-neutral-500">{order.customer_phone || "No phone captured"} · {order.order_number}</p></div><strong className="whitespace-nowrap text-sm text-neutral-950">KES {Number(order.total_amount).toLocaleString()}</strong></div><p className="mt-2 line-clamp-2 text-xs text-neutral-600">{order.description || "Order captured during AI receptionist call."}</p><button onClick={() => void requestOrderPayment(order)} disabled={!connected || !selectedChannelId || busy || !order.customer_phone || Number(order.total_amount) < 1} className="mt-3 w-full rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Working…" : "Approve & send M-Pesa prompt"}</button></div>)}</div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">{pendingOrders.map((order) => <div key={order.id} className="rounded-xl border border-neutral-200 bg-white p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-semibold text-neutral-950">{order.customer_name || "Customer"}</p><p className="mt-1 text-xs text-neutral-500">{order.customer_phone || "No phone captured"} · {order.order_number}</p></div><strong className="whitespace-nowrap text-sm text-neutral-950">KES {Number(order.total_amount).toLocaleString()}</strong></div><p className="mt-2 line-clamp-2 text-xs text-neutral-600">{order.description || "Order captured during AI receptionist call."}</p><div className="mt-3 grid gap-2 sm:grid-cols-2"><button onClick={() => void sendOrderConfirmationSms(order)} disabled={busy || !order.customer_phone} className="rounded-xl border border-neutral-200 px-3 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">{order.customer_sms_consent ? "Send order SMS" : "Confirm SMS consent & send"}</button><button onClick={() => void requestOrderPayment(order)} disabled={!connected || !selectedChannelId || busy || !order.customer_phone || Number(order.total_amount) < 1} className="rounded-xl bg-orange-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Working…" : "Approve & send M-Pesa prompt"}</button></div></div>)}</div>
     </section>}
 
     <div className="flex rounded-xl border border-neutral-200 bg-white p-1 shadow-sm"><button onClick={() => setTab("collect")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "collect" ? "bg-neutral-950 text-white" : "text-neutral-500")}>Collect</button><button onClick={() => setTab("keys")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "keys" ? "bg-neutral-950 text-white" : "text-neutral-500")}>API & connection</button></div>
