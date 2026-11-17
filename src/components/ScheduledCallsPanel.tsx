@@ -11,10 +11,52 @@ function normalizePhone(value: string) {
   if (/^\+[1-9]\d{7,14}$/.test(raw)) return raw;
   return "";
 }
+function parseCsvRows(input: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+    if (char === '"' && quoted && input[i + 1] === '"') { cell += '"'; i++; continue; }
+    if (char === '"') { quoted = !quoted; continue; }
+    if (!quoted && char === ",") { row.push(cell.trim()); cell = ""; continue; }
+    if (!quoted && (char === "\n" || char === "\r")) {
+      if (char === "\r" && input[i + 1] === "\n") i++;
+      row.push(cell.trim()); cell = "";
+      if (row.some((value) => value.length)) rows.push(row);
+      row = [];
+      continue;
+    }
+    cell += char;
+  }
+  row.push(cell.trim());
+  if (row.some((value) => value.length)) rows.push(row);
+  return rows;
+}
+type UploadedContact = { name: string; phone: string; email: string };
+function parseContactCsv(input: string): UploadedContact[] {
+  const rows = parseCsvRows(input);
+  if (!rows.length) return [];
+  const normalise = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const first = rows[0].map(normalise);
+  const hasHeader = first.some((value) => /^(name|fullname|customername|phone|phonenumber|mobile|mobilenumber|email|emailaddress)$/.test(value));
+  const headers = hasHeader ? first : [];
+  const nameIndex = hasHeader ? headers.findIndex((value) => /^(name|fullname|customername)$/.test(value)) : (rows[0].length > 1 ? 0 : -1);
+  const phoneIndex = hasHeader ? headers.findIndex((value) => /^(phone|phonenumber|mobile|mobilenumber|tel|telephone)$/.test(value)) : (rows[0].length > 1 ? 1 : 0);
+  const emailIndex = hasHeader ? headers.findIndex((value) => /^(email|emailaddress)$/.test(value)) : -1;
+  if (phoneIndex < 0) throw new Error("CSV needs a phone, mobile or number column.");
+  return rows.slice(hasHeader ? 1 : 0).map((row) => ({
+    name: nameIndex >= 0 ? String(row[nameIndex] || "").trim() : "",
+    phone: normalizePhone(String(row[phoneIndex] || "")),
+    email: emailIndex >= 0 ? String(row[emailIndex] || "").trim() : "",
+  })).filter((contact) => !!contact.phone);
+}
 export default function ScheduledCallsPanel({ businessId, defaultPhone, defaultReason, enabled }: {
   businessId: string; defaultPhone?: string; defaultReason?: string; enabled: boolean;
 }) {
   const [contactsText, setContactsText] = useState(defaultPhone || "");
+  const [uploadedContacts, setUploadedContacts] = useState<UploadedContact[]>([]);
   const [reason, setReason] = useState(defaultReason || "Customer follow-up");
   const [scheduledAt, setScheduledAt] = useState(() => localDateTimeValue(new Date(Date.now() + 60 * 60 * 1000)));
   const [delayMinutes, setDelayMinutes] = useState("0");
@@ -68,14 +110,44 @@ export default function ScheduledCallsPanel({ businessId, defaultPhone, defaultR
     if (!Number.isFinite(when.getTime()) || when.getTime() < Date.now() + 30000) return setNotice("Choose a future call time at least 30 seconds from now.");
     setBusy(true); setNotice("");
     try {
+      const contacts = validNumbers.map((phone) => {
+        const uploaded = uploadedContacts.find((item) => item.phone === phone);
+        return { phone, ...(uploaded?.name ? { name: uploaded.name } : {}) };
+      });
       const { data, error } = await supabase!.functions.invoke("twiga-scheduled-calls", {
-        body: { action: "schedule", businessId, contacts: validNumbers.map((phone) => ({ phone })),
+        body: { action: "schedule", businessId, contacts,
           reason: reason.trim(), scheduledAt: when.toISOString(), repeat, repeatCount: repeat === "none" ? 1 : repeats, timezone: "Africa/Nairobi", authorised: true,
           triggerType, onlyIfMissed, sourceCallId: sourceCallId.trim(), onlyIfUnpaid, orderId: orderId.trim(), retryOnNoAnswer, callingWindowStart: "08:00", callingWindowEnd: "20:00" },
       });
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(String(data.error));
-      setNotice(data.message || (String(data.scheduledCount || validNumbers.length) + " call(s) scheduled."));
+      let savedContactsNote = "";
+      if (uploadedContacts.length && supabase) {
+        const { data: authData } = await supabase.auth.getUser();
+        const ownerId = authData.user?.id;
+        if (ownerId) {
+          const imported = uploadedContacts.filter((item) => validNumbers.includes(item.phone));
+          const phones = imported.map((item) => item.phone);
+          const { data: existing, error: lookupError } = await supabase.from("twiga_customers")
+            .select("phone").eq("business_id", businessId).in("phone", phones);
+          if (!lookupError) {
+            const known = new Set((existing || []).map((item: any) => String(item.phone || "")));
+            const rows = imported.filter((item) => !known.has(item.phone)).map((item) => ({
+              business_id: businessId, created_by: ownerId, name: item.name || item.phone,
+              phone: item.phone, email: item.email || null,
+            }));
+            if (rows.length) {
+              const { error: insertError } = await supabase.from("twiga_customers").insert(rows);
+              savedContactsNote = insertError ? " The calls were scheduled, but the uploaded contacts could not be added to the People list." : " New contacts were also added to this business's People list.";
+            } else {
+              savedContactsNote = " All uploaded contacts already exist in this business's People list.";
+            }
+          } else {
+            savedContactsNote = " The calls were scheduled, but the contact list could not be checked for duplicates.";
+          }
+        }
+      }
+      setNotice((data.message || (String(data.scheduledCount || validNumbers.length) + " call(s) scheduled.")) + savedContactsNote);
       setAuthorised(false); setSourceCallId(""); setOrderId(""); setOnlyIfMissed(false); setOnlyIfUnpaid(false);
       await loadCalls();
     } catch (error) {
@@ -107,7 +179,31 @@ export default function ScheduledCallsPanel({ businessId, defaultPhone, defaultR
         <label className="block text-sm font-medium text-neutral-700">Recipient phone numbers
           <textarea value={contactsText} onChange={(event) => setContactsText(event.target.value)} rows={3}
             placeholder={"+2547XXXXXXXX\n+2547XXXXXXXX"} className="mt-1.5 w-full rounded-xl border border-neutral-200 p-3 text-sm outline-none focus:border-orange-500" />
-          <span className="mt-1 block text-xs font-normal text-neutral-500">One number per line. Kenyan 07… / 01… numbers are converted to +254 automatically. Maximum 100 per batch.</span>
+          <span className="mt-1 block text-xs font-normal text-neutral-600">One number per line, or upload a CSV with Name, Phone and optional Email columns. Kenyan 07… / 01… numbers are converted to +254 automatically. Maximum 100 per batch.</span>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <label className="inline-flex cursor-pointer items-center rounded-lg border border-neutral-300 bg-neutral-900 px-3 py-2 text-xs font-semibold text-white hover:bg-neutral-800">
+              Upload call list (.csv)
+              <input type="file" accept=".csv,text/csv" className="sr-only" onChange={async (event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (!file) return;
+                try {
+                  const parsed = parseContactCsv(await file.text());
+                  const unique = Array.from(new Map(parsed.map((contact) => [contact.phone, contact])).values());
+                  if (!unique.length) throw new Error("No valid phone numbers were found. Use a Phone column and Kenyan 07… / 01… or international numbers.");
+                  if (unique.length > 100) throw new Error("This list has " + unique.length + " valid numbers. Upload up to 100 per call batch.");
+                  setUploadedContacts(unique);
+                  setContactsText(unique.map((contact) => contact.phone).join("\n"));
+                  setNotice(unique.length + " contacts loaded from " + file.name + ". Review the numbers and confirm call permission before scheduling.");
+                } catch (error) {
+                  setUploadedContacts([]);
+                  setNotice(error instanceof Error ? error.message : "The CSV could not be read.");
+                }
+              }} />
+            </label>
+            {uploadedContacts.length > 0 && <span className="text-xs text-neutral-600">{uploadedContacts.length} CSV contacts loaded</span>}
+            <button type="button" onClick={() => { setUploadedContacts([]); setContactsText(""); }} className="text-xs font-semibold text-neutral-600 underline">Clear list</button>
+          </div>
         </label>
         <label className="block text-sm font-medium text-neutral-700">Reason for calling
           <input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500}
