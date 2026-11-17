@@ -30,6 +30,26 @@ async function getKimismsToken(clientId: string, clientSecret: string) {
   if (!response.ok || !token) throw new Error(response.status === 401 ? "KIMISMS rejected the Client ID or Client Secret." : "KIMISMS could not issue an SMS access token.");
   return token;
 }
+
+const sha256 = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))).map((x) => x.toString(16).padStart(2, "0")).join("");
+async function createPublicPaymentLink(admin: any, businessId: string, orderId: string, createdBy: string) {
+  const [{ data: settings }, { data: businessSecret }, { data: platformSecret }] = await Promise.all([
+    admin.from("twiga_business_settings").select("palpluss_paylink_id").eq("business_id", businessId).maybeSingle(),
+    admin.rpc("twiga_get_provider_secret", { p_business_id: businessId, p_provider: "palpluss" }),
+    admin.rpc("twiga_get_platform_secret", { p_provider: "palpluss_platform_api_key" }),
+  ]);
+  const paylinkId = safe(settings?.palpluss_paylink_id, 120);
+  if (!paylinkId || !(businessSecret || platformSecret)) return "";
+  const token = Array.from(crypto.getRandomValues(new Uint8Array(32))).map((x) => x.toString(16).padStart(2, "0")).join("");
+  const tokenHash = await sha256(token);
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const { error } = await admin.from("twiga_public_payment_links").insert({
+    business_id: businessId, order_id: orderId, token_hash: tokenHash, expires_at: expiresAt, created_by: createdBy,
+  });
+  if (error) throw error;
+  return "https://app.twiga.co.ke/pay?token=" + encodeURIComponent(token);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return reply({ error: "POST only." }, 405);
@@ -150,17 +170,28 @@ Deno.serve(async (req: Request) => {
     let eventType = "manual";
     let orderId: string | null = null;
     let idempotencyKey = safe(body.idempotencyKey, 180);
+    let shouldIncludePaymentLink = false;
+    let paymentLinkIncluded = false;
 
     if (action === "send_order_confirmation" || action === "send_payment_request_notice" || action === "send_payment_confirmation") {
       orderId = safe(body.orderId, 80);
       if (!/^[0-9a-f-]{36}$/i.test(orderId)) return reply({ error: "A valid business order ID is required." }, 400);
       const { data: order, error: orderError } = await admin.from("twiga_orders")
-        .select("id,order_number,customer_name,customer_phone,total_amount,currency,payment_status,customer_sms_consent")
+        .select("id,order_number,customer_name,customer_phone,total_amount,currency,payment_status,customer_sms_consent,status")
         .eq("id", orderId).eq("business_id", businessId).maybeSingle();
       if (orderError) throw orderError;
       if (!order) return reply({ error: "Order not found." }, 404);
       if (order.customer_sms_consent !== true) return reply({ error: "This customer has not opted in to SMS for this order." }, 409);
       if (!order.customer_phone) return reply({ error: "This order has no customer phone number." }, 409);
+      if (action === "send_order_confirmation" && (!canManage || body.ownerConfirmed !== true)) {
+        return reply({ error: "A business owner or administrator must confirm this order before its payment link is sent." }, 403);
+      }
+      if (action === "send_order_confirmation" && !["pending_confirmation", "confirmed"].includes(String(order.status || "").toLowerCase())) {
+        return reply({ error: "This order is not awaiting confirmation." }, 409);
+      }
+      if (action === "send_payment_request_notice" && !canManage) {
+        return reply({ error: "Only a business owner or administrator can send a payment request." }, 403);
+      }
       const isPayment = action === "send_payment_confirmation";
       const isPaymentRequest = action === "send_payment_request_notice";
       if (isPayment && String(order.payment_status || "").toLowerCase() !== "paid") return reply({ error: "The payment is not confirmed as paid. No payment receipt was sent." }, 409);
@@ -170,6 +201,7 @@ Deno.serve(async (req: Request) => {
       recipient = normalizePhone(order.customer_phone);
       if (!recipient) return reply({ error: "The customer's number is not a valid Kenyan mobile number." }, 400);
       eventType = isPayment ? "payment_confirmation" : isPaymentRequest ? "payment_request_notice" : "order_confirmation";
+      shouldIncludePaymentLink = !isPayment;
       idempotencyKey = safe(idempotencyKey || (order.id + ":" + eventType), 180);
       const business = await admin.from("businesses").select("name").eq("id", businessId).maybeSingle();
       const businessName = safe(business.data?.name || "the business", 60);
@@ -178,8 +210,8 @@ Deno.serve(async (req: Request) => {
       message = isPayment
         ? "Payment received by " + businessName + ". Order " + orderNumber + " · KSh " + amount + ". Thank you."
         : isPaymentRequest
-          ? "We sent an M-Pesa payment prompt for order " + orderNumber + " (KSh " + amount + "). Approve the prompt on your phone to complete payment. Never share your M-Pesa PIN."
-          : "Order received by " + businessName + ". Order " + orderNumber + " · KSh " + amount + ". We will update you when it is ready.";
+          ? "We sent an M-Pesa payment prompt for order " + orderNumber + " (KSh " + amount + "). If the prompt does not appear, use the secure payment link below. Never share your M-Pesa PIN."
+          : "Order confirmed by " + businessName + ". Order " + orderNumber + " · KSh " + amount + ". Pay securely using the link below.";
     } else if (action === "send_test") {
       if (!canManage || body.confirmTestRecipient !== true) return reply({ error: "Confirm that you control this test phone number before sending a test SMS." }, 403);
       recipient = normalizePhone(body.to);
@@ -194,10 +226,23 @@ Deno.serve(async (req: Request) => {
     const { data: existing } = await admin.from("twiga_sms_messages").select("id,status,provider_message_id")
       .eq("business_id", businessId).eq("idempotency_key", idempotencyKey).maybeSingle();
     if (existing && ["queued", "pending", "sent", "delivered"].includes(String(existing.status))) {
-      return reply({ sent: true, duplicate: true, messageId: existing.provider_message_id || null, status: existing.status, message: "This SMS event was already submitted; it was not sent twice." });
+      if (action === "send_order_confirmation") {
+        await admin.from("twiga_orders").update({ status: "confirmed" }).eq("id", orderId).eq("business_id", businessId).eq("status", "pending_confirmation");
+      }
+      return reply({ sent: true, duplicate: true, paymentLinkIncluded: eventType !== "payment_confirmation", messageId: existing.provider_message_id || null, status: existing.status, message: "This SMS event was already submitted; it was not sent twice." });
+    }
+    if (shouldIncludePaymentLink) {
+      const paymentLink = await createPublicPaymentLink(admin, businessId, String(orderId), user.id);
+      if (!paymentLink && action === "send_order_confirmation") {
+        return reply({ error: "Connect this business's PalPluss API key and public Paylink ID in Payments → API & connection before confirming an order by payment-link SMS." }, 409);
+      }
+      if (paymentLink) {
+        message += " Pay securely: " + paymentLink;
+        paymentLinkIncluded = true;
+      }
     }
     if (existing) {
-      await admin.from("twiga_sms_messages").update({ status: "queued", error_message: null, updated_at: new Date().toISOString() })
+      await admin.from("twiga_sms_messages").update({ status: "queued", message, error_message: null, updated_at: new Date().toISOString() })
         .eq("id", existing.id).eq("business_id", businessId);
     } else {
       const { error: insertError } = await admin.from("twiga_sms_messages").insert({
@@ -227,7 +272,12 @@ Deno.serve(async (req: Request) => {
       }).eq("business_id", businessId).eq("idempotency_key", idempotencyKey);
       const { error: saveError } = await saveQuery;
       if (saveError) throw saveError;
-      return reply({ sent: true, status, messageId: providerMessageId || null, message: "SMS accepted by KIMISMS. Delivery may remain pending until the provider confirms it." });
+      if (action === "send_order_confirmation") {
+        const { error: confirmError } = await admin.from("twiga_orders").update({ status: "confirmed" })
+          .eq("id", orderId).eq("business_id", businessId).eq("status", "pending_confirmation");
+        if (confirmError) throw confirmError;
+      }
+      return reply({ sent: true, status, paymentLinkIncluded, messageId: providerMessageId || null, message: "SMS accepted by KIMISMS. Delivery may remain pending until the provider confirms it." });
     } catch (error) {
       const messageError = error instanceof Error ? error.message : "SMS send failed.";
       await admin.from("twiga_sms_messages").update({

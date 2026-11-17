@@ -1,6 +1,7 @@
 {
   "rewrites": [
-    { "source": "/auth/callback", "destination": "/" }
+    { "source": "/auth/callback", "destination": "/" },
+    { "source": "/pay", "destination": "/" }
   ],
   "headers": [
     {

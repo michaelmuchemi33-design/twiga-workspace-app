@@ -73,3 +73,16 @@ for (const [name, pass] of checks) {
 }
 if (failed) process.exit(1);
 console.log("TWIGA workspace smoke checks passed: " + checks.length + " checks.");
+
+const paymentLinkSms = read("supabase/functions/twiga-kimisms/index.ts");
+const publicPaylink = read("supabase/functions/twiga-public-paylink/index.ts");
+const publicPaylinkUi = read("src/components/PublicPaylink.tsx");
+const paymentsUi = read("src/components/Payments.tsx");
+check("opted-in order confirmation sends a TWIGA-hosted PalPluss link only after owner confirmation",
+  paymentLinkSms.includes("ownerConfirmed") && paymentLinkSms.includes("twiga_public_payment_links") && paymentLinkSms.includes("https://app.twiga.co.ke/pay?token="));
+check("public payment links are token-hashed, expiring and server verified",
+  publicPaylink.includes("SHA-256") && publicPaylink.includes("expires_at") && publicPaylink.includes("order.total_amount") && publicPaylink.includes("PalPluss"));
+check("public paylink checkout locks the server-supplied amount",
+  publicPaylinkUi.includes("lockPrefill: true") && publicPaylinkUi.includes("twiga-public-paylink"));
+check("pending orders are not auto-texted before the owner confirms",
+  !paymentsUi.includes('row?.status === "pending_confirmation" && row?.payment_status === "unpaid"'));

@@ -1,2 +1,5 @@
 [functions.twiga-scheduled-calls]
 verify_jwt = false
+
+[functions.twiga-public-paylink]
+verify_jwt = false

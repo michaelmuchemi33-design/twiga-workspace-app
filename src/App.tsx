@@ -3,6 +3,7 @@ import type { GoogleAuthContext } from "@/components/AuthGate";
 import { Capacitor } from "@capacitor/core";
 import { supabase } from "@/lib/supabase";
 import InstallApp from "@/components/InstallApp";
+import PublicPaylink from "@/components/PublicPaylink";
 import DemoInterest from "@/components/DemoInterest";
 import { StoreProvider } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -64,7 +65,7 @@ const moreTabs = [
   { id: "logout", label: "Log out", icon: IconLogout },
 ];
 
-export default function App({ demo = false, userId, googleAuth, onSignOut }: { demo?: boolean; userId?: string; googleAuth?: GoogleAuthContext; onSignOut?: () => void }) {
+function WorkspaceApp({ demo = false, userId, googleAuth, onSignOut }: { demo?: boolean; userId?: string; googleAuth?: GoogleAuthContext; onSignOut?: () => void }) {
   const [tab, setTab] = useState("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
   const [businesses, setBusinesses] = useState<any[]>([]);
@@ -353,4 +354,10 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
       </div>
     </StoreProvider>
   );
+}
+export default function App(props: { demo?: boolean; userId?: string; googleAuth?: GoogleAuthContext; onSignOut?: () => void }) {
+  if (typeof window !== "undefined" && window.location.pathname.replace(/\\/+$/, "") === "/pay") {
+    return <PublicPaylink />;
+  }
+  return <WorkspaceApp {...props} />;
 }
