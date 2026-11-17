@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+
+const SETUP_DRAFT_PREFIX = "twiga_setup_draft_v1:";
 import { supabase } from "@/lib/supabase";
 
 type Message = { id: string; role: "ai" | "user"; text: string };
@@ -32,19 +34,55 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
   const [thinking, setThinking] = useState(false);
   const [building, setBuilding] = useState(false);
   const [error, setError] = useState("");
+  const [draftLoaded, setDraftLoaded] = useState(demo);
+  const [draftSaved, setDraftSaved] = useState(false);
+  const [draftKey, setDraftKey] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Restore the conversation only after the authenticated owner is known.
+  useEffect(() => {
+    if (demo || !supabase) return;
+    let active = true;
+    void supabase.auth.getUser().then(({ data }) => {
+      if (!active) return;
+      const user = data.user;
+      setOwnerName(String(user?.user_metadata?.full_name || user?.user_metadata?.name || ""));
+      setOwnerEmail(String(user?.email || ""));
+      if (!user?.id) { setDraftLoaded(true); return; }
+      const key = SETUP_DRAFT_PREFIX + user.id;
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const saved = JSON.parse(raw);
+          if (Array.isArray(saved.messages) && saved.messages.length) setMessages(saved.messages);
+          if (saved.profile && typeof saved.profile === "object") setProfile(saved.profile);
+          if (Array.isArray(saved.missing)) setMissing(saved.missing);
+          if (typeof saved.ready === "boolean") setReady(saved.ready);
+          if (typeof saved.ownerName === "string" && saved.ownerName) setOwnerName(saved.ownerName);
+          if (typeof saved.ownerEmail === "string" && saved.ownerEmail) setOwnerEmail(saved.ownerEmail);
+          setDraftSaved(true);
+        }
+      } catch { /* Ignore an invalid or unavailable local draft. */ }
+      setDraftKey(key);
+      setDraftLoaded(true);
+    });
+    return () => { active = false; };
+  }, [demo]);
+
+  // Keep the latest prompts and setup progress through refreshes in this browser.
+  useEffect(() => {
+    if (!draftLoaded || !draftKey || demo) return;
+    try {
+      localStorage.setItem(draftKey, JSON.stringify({
+        messages, profile, missing, ready, ownerName, ownerEmail,
+        updatedAt: new Date().toISOString(),
+      }));
+    } catch { /* Browser storage can be disabled or full. */ }
+  }, [draftLoaded, draftKey, demo, messages, profile, missing, ready, ownerName, ownerEmail]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "auto" });
   }, [messages, thinking]);
-
-  useEffect(() => {
-    if (demo || !supabase) return;
-    void supabase.auth.getUser().then(({ data }) => {
-      setOwnerName(String(data.user?.user_metadata?.full_name || data.user?.user_metadata?.name || ""));
-      setOwnerEmail(String(data.user?.email || ""));
-    });
-  }, [demo]);
 
   const send = async (value?: string) => {
     const text = (value ?? input).trim();
@@ -137,15 +175,16 @@ export default function SetupPage({ demo = false, onDone, onBusinessCreated, onO
 
     <div className="grid gap-5 lg:grid-cols-[1fr_300px]">
       <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4"><div><h2 className="font-semibold text-neutral-950">Business setup chat</h2><p className="text-xs text-neutral-500">Ask questions and build the profile together</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{thinking ? "Thinking…" : ready ? "Ready to build" : "Collecting details"}</span></div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 px-5 py-4"><div><h2 className="font-semibold text-neutral-950">Business setup chat</h2><p className="text-xs text-neutral-500">Ask questions and build the profile together</p></div><div className="flex items-center gap-2"><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{thinking ? "Thinking…" : ready ? "Ready to build" : "Collecting details"}</span>{draftSaved && <span className="text-[11px] font-medium text-emerald-700">Conversation restored</span>}</div></div>
         <div ref={scrollRef} className="max-h-[55vh] min-h-[360px] space-y-4 overflow-y-auto p-5">
+          {!draftLoaded && <p className="rounded-xl bg-neutral-100 px-4 py-3 text-xs text-neutral-600">Restoring your saved setup conversation…</p>}
           {messages.map((m) => <div key={m.id} className={m.role === "user" ? "ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-neutral-950 px-4 py-3 text-sm leading-6 text-white" : "mr-auto max-w-[90%] rounded-2xl rounded-bl-md bg-neutral-100 px-4 py-3 text-sm leading-6 text-neutral-800"}>{m.text}</div>)}
           {thinking && <div className="rounded-2xl bg-neutral-100 px-4 py-3 text-sm text-neutral-500">Your setup assistant is organising the business details…</div>}
         </div>
         <div className="border-t border-neutral-100 p-4">
           <p className="mb-3 text-xs text-neutral-400">Start with your business name, what you do, and where you operate.</p>
           <div className="flex items-end gap-2"><textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} placeholder="Tell me about your business…" rows={3} className="min-h-[76px] flex-1 resize-y rounded-xl border border-neutral-200 p-3 text-sm outline-none focus:border-orange-400" /><button onClick={() => void send()} disabled={thinking || !input.trim()} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">Send</button></div>
-          <p className="mt-2 text-[11px] text-neutral-400">Enter to send · Shift + Enter for a new line</p>
+          <p className="mt-2 text-[11px] text-neutral-500">Enter to send · Shift + Enter for a new line · Your conversation is saved in this browser so you can continue after refreshing.</p>
         </div>
       </section>
 
