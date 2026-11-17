@@ -110,6 +110,17 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     } catch (e) { setMessage(e instanceof Error ? e.message : "Google connection failed."); setBusy(false); }
   };
 
+  const importGoogleContacts = async () => {
+    setBusy(true); setMessage("Importing Google contacts into this business…");
+    try {
+      const result = await action("contacts.import", { limit: 500 });
+      const text = result.message || ((result.imported || 0) + " contact(s) imported.");
+      setTests(old => ({ ...old, contacts: text }));
+      setMessage(text);
+    } catch (e) { setTests(old => ({ ...old, contacts: "Import failed · " + (e instanceof Error ? e.message : "Google contact import failed") })); }
+    finally { setBusy(false); }
+  };
+
   const test = async (item: typeof items[number]) => {
     setBusy(true);
     try {
@@ -256,7 +267,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
           const granted = (status.scopes || []).some((scope: string) => item.key === "calendar" ? scope.includes("calendar.events") : item.key === "contacts" ? scope.includes("contacts") : item.key === "sheets" ? scope.includes("spreadsheets") : scope.includes("drive.file"));
           return <div key={item.key} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div><p className="font-semibold text-neutral-900">{item.title}</p><p className="mt-1 text-sm text-neutral-500">{item.detail}</p><p className="mt-1 text-xs font-medium text-neutral-600">{status.connected && granted ? "Permission granted" : "Permission not confirmed"}</p></div>
-            <div className="flex flex-wrap items-center gap-2">{status.connected && <button onClick={() => test(item)} disabled={busy} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700">Test {item.title.replace("Google ", "")}</button>}{tests[item.key] && <span className="max-w-xs text-xs text-neutral-600">{tests[item.key]}</span>}</div>
+            <div className="flex flex-wrap items-center gap-2">{status.connected && <button onClick={() => test(item)} disabled={busy} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700">Test {item.title.replace("Google ", "")}</button>}{status.connected && item.key === "contacts" && <button onClick={() => void importGoogleContacts()} disabled={busy} className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">Import contacts</button>}{tests[item.key] && <span className="max-w-xs text-xs text-neutral-600">{tests[item.key]}</span>}</div>
           </div>;
         })}
       </div>
