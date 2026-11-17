@@ -46,7 +46,7 @@ const checks = [
   ["no-answer retry defaults to one five-minute second attempt", scheduledCalls.includes("delay_minutes: 5") && scheduledCalls.includes("unreachable_after_no_answer") && scheduledUi.includes("Retry once when unanswered")],
   ["direct callbacks enter the no-answer retry queue", sautikitFunction.includes("no_answer_retry") && sautikitFunction.includes("retryJobId")],
   ["direct and after-hours forwarding is provider guarded", sautikitFunction.includes("configure_forwarding") && sautikitFunction.includes("hours:") && sautikit.includes("Call forwarding")],
-  ["PalPluss Paylink is public ID only and server verified", paylinkFunction.includes("save_paylink") && paylinkFunction.includes("order.verify_paylink_payment") && paymentUi.includes("Palpluss.pay")],
+  ["PalPluss Paylink is public ID only and server verified", paylinkFunction.includes("save_paylink") && paylinkFunction.includes("order.verify_paylink_payment") && paymentUi.includes("widget.pay")],
   ["PalPluss checkout requires server verification key", paymentUi.includes("window as any).Palpluss") && paymentUi.includes("order.verify_paylink_payment") && paymentUi.includes("!connected || !paylinkId.trim()")],
   ["KIMISMS SMS is consented, per-business and idempotent", kimisms.includes("customer_sms_consent") && kimisms.includes("twiga_set_kimisms_secret") && kimisms.includes("idempotencyKey") && smsMigration.includes("twiga_sms_messages")],
   ["successful PalPluss payments can send opted-in SMS receipts", palplussWebhook.includes("payment_confirmation_enabled") && palplussWebhook.includes("customer_sms_consent")],
