@@ -276,10 +276,10 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
               {isSelected ? <span className="rounded-full bg-orange-500 px-2.5 py-1 text-xs font-semibold text-white">Selected</span> : null}
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" onClick={() => previewVoiceSample(option, index)} className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-semibold text-neutral-800 hover:border-orange-400">
+              <button type="button" aria-label={"Play a sample of " + option.voice + " voice"} onClick={() => previewVoiceSample(option, index)} className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-semibold text-neutral-800 hover:border-orange-400">
                 <span aria-hidden="true">{isPreviewing ? "■" : "▶"}</span>{isPreviewing ? "Playing sample…" : "Listen to sample"}
               </button>
-              <button type="button" disabled={!data.keyConfigured} onClick={() => { setVoice(option.voice); setModel(option.model); }} className="rounded-xl bg-neutral-950 px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">
+              <button type="button" aria-pressed={isSelected} disabled={!data.keyConfigured} onClick={() => { setVoice(option.voice); setModel(option.model); }} className="rounded-xl bg-neutral-950 px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">
                 {isSelected ? "Selected" : "Choose voice"}
               </button>
             </div>
