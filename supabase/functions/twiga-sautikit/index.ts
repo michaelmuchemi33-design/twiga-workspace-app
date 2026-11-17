@@ -300,7 +300,10 @@ Deno.serve(async (req: Request) => {
       let revision = 0;
       try {
         await skRequest(key, "/v1/agents/" + encodeURIComponent(createdAgentId) + "/tools/" + encodeURIComponent(toolId), "PUT", {
+          agent_id: createdAgentId,
+          tool_id: toolId,
           name: "book_appointment",
+          purpose: "saving this caller's appointment request to this business after the caller explicitly agrees",
           description: "Create a pending appointment request for this business. Ask the caller for their name, phone number, service and preferred date/time with timezone. Ask for explicit consent before saving. The team must confirm the final slot; never claim it is confirmed.",
           url: "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-booking-tool",
           method: "POST",
@@ -367,7 +370,10 @@ Deno.serve(async (req: Request) => {
       if (bookingSecretError || !bookingSecret) return json({ error: "This business's appointment-tool credential is not saved. Recreate the business agent or contact TWIGA support." }, 409);
       const toolId = String(settings.sautikit_booking_tool_id || crypto.randomUUID());
       await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/tools/" + encodeURIComponent(toolId), "PUT", {
+        agent_id: agentId,
+        tool_id: toolId,
         name: "book_appointment",
+        purpose: "saving this caller's appointment request to this business after the caller explicitly agrees",
         description: "Create a pending appointment request for this business. Ask the caller for their name, phone number, service and preferred date/time with timezone. Ask for explicit consent before saving. The team must confirm the final slot; never claim it is confirmed.",
         url: "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-booking-tool",
         method: "POST",
