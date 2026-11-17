@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Model = { id: string; voices?: string[]; rate_per_minute_minor?: number; currency?: string };
-type SautiKitConfig = { keyConfigured?: boolean; isPlatformAdmin?: boolean; phoneLine?: any; number?: any; numberVerified?: boolean; providerNumber?: string; agent?: any; models?: Model[]; scripts?: { greeting?: string; inbound?: string; outbound?: string }; inboundBound?: boolean; inboundVerified?: boolean; providerError?: string };
+type SautiKitConfig = { keyConfigured?: boolean; isPlatformAdmin?: boolean; voicePreference?: { voice?: string; model?: string; gender?: string }; phoneLine?: any; number?: any; numberVerified?: boolean; providerNumber?: string; agent?: any; models?: Model[]; scripts?: { greeting?: string; inbound?: string; outbound?: string }; inboundBound?: boolean; inboundVerified?: boolean; providerError?: string };
 type ScheduledCall = { id: string; customer_name: string; phone_number: string; reason: string; scheduled_at: string; trigger_type: string; status: string; last_error?: string | null };
 type CallRecord = { id: string; created_at: string; direction: string; from_number?: string | null; to_number?: string | null; status: string; duration_seconds?: number | null; summary?: string | null; provider?: string | null };
 
