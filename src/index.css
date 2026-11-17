@@ -461,16 +461,18 @@
   }
 }
 
-/* TWIGA calm interface: no continuous motion, glow, or animated decoration. */
-*, *::before, *::after {
-  animation: none !important;
-  transition: none !important;
-  scroll-behavior: auto !important;
-}
+/* TWIGA calm interface: avoid decorative glow while keeping useful, smooth interactions. */
 [class*="shadow-orange"], .setup-glare, .logout-primary { box-shadow: none !important; text-shadow: none !important; }
 .setup-sheen { display: none !important; }
-.live-row:hover { transform: none !important; box-shadow: none !important; }
-html:focus-within { scroll-behavior: auto !important; }
+.live-row:hover { box-shadow: none !important; }
+.twiga-workspace, .twiga-workspace * {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+  transition-duration: 220ms;
+  transition-timing-function: ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .twiga-workspace, .twiga-workspace * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
 
 /* Keep the compact side rail visually centred at every viewport size. */
 .rail-shell.w-16 .rail-item {
@@ -565,3 +567,52 @@ html:focus-within { scroll-behavior: auto !important; }
     scroll-behavior: auto !important;
   }
 }
+
+
+/* TWIGA light theme: bright surfaces with dark, high-contrast copy and numbers. */
+.twiga-workspace.theme-light {
+  color: #171717 !important;
+  background: #ffffff !important;
+  color-scheme: light;
+}
+.twiga-workspace.theme-light .bg-white { background-color: #ffffff !important; }
+.twiga-workspace.theme-light .bg-neutral-50 { background-color: #f8f8f8 !important; }
+.twiga-workspace.theme-light .bg-neutral-100 { background-color: #f1f1f1 !important; }
+.twiga-workspace.theme-light .bg-neutral-200 { background-color: #e5e5e5 !important; }
+.twiga-workspace.theme-light .bg-neutral-900,
+.twiga-workspace.theme-light .bg-neutral-950 { background-color: #171717 !important; }
+.twiga-workspace.theme-light .text-neutral-950,
+.twiga-workspace.theme-light .text-neutral-900 { color: #111111 !important; }
+.twiga-workspace.theme-light .text-neutral-800 { color: #222222 !important; }
+.twiga-workspace.theme-light .text-neutral-700 { color: #333333 !important; }
+.twiga-workspace.theme-light .text-neutral-600 { color: #4b4b4b !important; }
+.twiga-workspace.theme-light .text-neutral-500 { color: #626262 !important; }
+.twiga-workspace.theme-light .text-neutral-400 { color: #737373 !important; }
+.twiga-workspace.theme-light .text-neutral-300 { color: #555555 !important; }
+.twiga-workspace.theme-light .border-neutral-50,
+.twiga-workspace.theme-light .border-neutral-100,
+.twiga-workspace.theme-light .border-neutral-200,
+.twiga-workspace.theme-light .border-neutral-300 { border-color: #dedede !important; }
+.twiga-workspace.theme-light input,
+.twiga-workspace.theme-light textarea,
+.twiga-workspace.theme-light select,
+.twiga-workspace.theme-light [role="combobox"] {
+  color: #171717 !important;
+  background-color: #ffffff !important;
+  border-color: #c9c9c9 !important;
+}
+.twiga-workspace.theme-light input::placeholder,
+.twiga-workspace.theme-light textarea::placeholder { color: #737373 !important; opacity: 1 !important; }
+.twiga-workspace.theme-light label { color: #262626 !important; }
+.twiga-workspace.theme-light .bg-orange-50 { background-color: #fff1e7 !important; }
+.twiga-workspace.theme-light .text-orange-600,
+.twiga-workspace.theme-light .text-orange-700,
+.twiga-workspace.theme-light .text-orange-800 { color: #a8440b !important; }
+.twiga-workspace.theme-light .border-orange-200 { border-color: #efb58f !important; }
+.twiga-workspace.theme-light .bg-red-50 { background-color: #fff0f0 !important; }
+.twiga-workspace.theme-light .text-red-800 { color: #9f1d1d !important; }
+.twiga-workspace.theme-light .text-emerald-400 { color: #176b38 !important; }
+.twiga-workspace.theme-light a { color: #a8440b; }
+.twiga-workspace.theme-light table { color: #171717; }
+.twiga-workspace.theme-light .bg-neutral-950.text-white,
+.twiga-workspace.theme-light button.bg-neutral-950 { color: #ffffff !important; }
