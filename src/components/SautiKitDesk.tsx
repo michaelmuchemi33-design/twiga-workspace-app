@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import ScheduledCallsPanel from "./ScheduledCallsPanel";
 
 type Option = { voice: string; model: string; rate: number; label: string; note: string; tested?: boolean };
 const MODEL_LABELS: Record<string, string> = {
@@ -178,7 +179,8 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
       <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">TWIGA · Front Desk</p>
       <h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Phone & AI receptionist</h1>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">One SautiKit agent handles incoming and outgoing calls. Set the voice and instructions once, then publish them to the same existing line.</p>
-      <div className="mt-4 grid gap-3 sm:grid-cols-4">
+      <div className="mt-4 grid gap-3 sm:grid-cols-5">
+        <div className="rounded-xl border border-orange-200 bg-orange-50 p-3"><p className="text-xs text-neutral-600">Business phone number</p><p className="mt-1 font-semibold text-neutral-950">{line?.line_number || "No number assigned"}</p></div>
         <div className="rounded-xl border border-neutral-200 p-3"><p className="text-xs text-neutral-500">Provider</p><p className="mt-1 font-semibold text-neutral-900">SautiKit</p></div>
         <div className="rounded-xl border border-neutral-200 p-3"><p className="text-xs text-neutral-500">Active voice</p><p className="mt-1 font-semibold text-neutral-900">{currentAgent?.voice || line?.settings?.inbound_voice || "Woman"}</p></div>
         <div className="rounded-xl border border-neutral-200 p-3"><p className="text-xs text-neutral-500">Published revision</p><p className="mt-1 font-semibold text-neutral-900">{currentAgent?.current_revision ?? line?.settings?.inbound_agent_revision ?? "—"}</p></div>
@@ -249,6 +251,8 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
       <button onClick={placeCall} disabled={busy || !data.keyConfigured || !active || !inboundVerified || !to.trim() || !authorised} className="mt-4 rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Submitting…" : "Place authorised AI callback"}</button>
       {call ? <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">Call request: {call.id || call.call_id || call.status || "submitted"}</p> : null}
     </section>
+
+    <ScheduledCallsPanel businessId={businessId} defaultPhone={to} defaultReason={reason} enabled={!!data.keyConfigured && active && inboundVerified} />
 
     {data.providerError ? <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">SautiKit connection check: {data.providerError}</p> : null}
     {notice ? <p role="status" className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">{notice}</p> : null}

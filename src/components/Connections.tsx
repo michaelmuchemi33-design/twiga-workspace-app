@@ -86,7 +86,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       {!businessId && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Create or select a business in AI Setup first.</p>}
     </header>
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <h2 className="text-lg font-semibold text-neutral-950">Google permissions</h2><p className="mt-1 text-sm text-neutral-500">Approve access in Google. You can revoke it from your Google Account at any time.</p>
+      <h2 className="text-lg font-semibold text-neutral-950">Google permissions</h2><p className="mt-1 text-sm text-neutral-500">Approve access in Google. You can revoke it from your Google Account at any time.</p><div className="mt-2 space-y-1 text-xs text-neutral-500"><p>OAuth client setup: add <strong>https://live.twiga.co.ke</strong> and <strong>https://app.twiga.co.ke</strong> as authorised JavaScript origins.</p><a className="inline-flex font-semibold text-orange-700 underline" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">Open Google Cloud OAuth credentials</a></div>
       <div className="mt-4 divide-y divide-neutral-100">
         {items.map(item => {
           const granted = (status.scopes || []).some((scope: string) => item.key === "calendar" ? scope.includes("calendar.events") : item.key === "contacts" ? scope.includes("contacts") : item.key === "sheets" ? scope.includes("spreadsheets") : scope.includes("drive.file"));
