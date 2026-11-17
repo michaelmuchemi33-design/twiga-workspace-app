@@ -51,11 +51,16 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   }, [businessId]);
 
   const refresh = useCallback(async () => {
-    if (!businessId || !supabase) return;
+    if (!businessId || !supabase) { setStatus({ connected: false, status: "not_connected" }); return; }
     try {
       const [connection, oauth] = await Promise.all([action("status"), action("oauth.config")]);
-      setStatus(connection); setOauthConfig(oauth);
-    } catch (e) { setMessage(e instanceof Error ? e.message : "Google status unavailable."); }
+      setStatus(connection || { connected: false, status: "unavailable" });
+      setOauthConfig(oauth);
+      setMessage("");
+    } catch (e) {
+      setStatus({ connected: false, status: "unavailable", verifiedAt: new Date().toISOString() });
+      setMessage(e instanceof Error ? e.message : "Google status unavailable.");
+    }
   }, [action, businessId]);
 
   const refreshProviders = useCallback(async () => {
@@ -78,6 +83,20 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   }, [businessId]);
 
   useEffect(() => { void refresh(); void refreshProviders(); }, [refresh, refreshProviders]);
+
+  useEffect(() => {
+    const recheck = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    window.addEventListener("focus", recheck);
+    document.addEventListener("visibilitychange", recheck);
+    const timer = window.setInterval(recheck, 60000);
+    return () => {
+      window.removeEventListener("focus", recheck);
+      document.removeEventListener("visibilitychange", recheck);
+      window.clearInterval(timer);
+    };
+  }, [refresh]);
 
   const connect = async () => {
     if (!businessId || !supabase) { setMessage("Create or select a business first."); return; }
@@ -108,7 +127,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     setBusy(true); setMessage("Importing Google contacts into this business…");
     try {
       const result = await action("contacts.import", { limit: 500 });
-      const text = result.message || ((result.imported || 0) + " contact(s) imported.");
+      const text = result.message || ((result.imported || 0) + " contact(s) imported to Cloudflare.");
       setTests(old => ({ ...old, contacts: text }));
       setMessage(text);
     } catch (e) { setTests(old => ({ ...old, contacts: "Import failed · " + (e instanceof Error ? e.message : "Google contact import failed") })); }
@@ -219,8 +238,9 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{!oauthConfig.serverConfigured && !googleAuth?.tokens?.accessToken ? "Google access is being prepared by TWIGA. You do not need to enter any keys or credentials." : "Your Google account can be connected securely below. TWIGA only receives the permissions you approve."}</div>
       
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-800">{status.connected ? "Google connected" : "Google not connected"}</span>
+        <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-800">{status.connected ? (status.permissionsComplete === false ? "Google connected · permissions incomplete" : "Google connected · verified") : status.reconnectRequired ? "Reconnect Google" : "Google not connected"}</span>
         {status.googleEmail && <span className="text-sm text-neutral-600">{status.googleEmail}</span>}
+        {status.verifiedAt && <span className="text-xs text-neutral-500">Checked {new Date(status.verifiedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
         <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-700">{googleOAuthReady ? "Google ready" : "Google setup in progress"}</span>
         <button onClick={connect} disabled={busy || !businessId} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Please wait…" : status.connected ? "Review / reconnect permissions" : "Connect Google account"}</button>
         <button onClick={() => { void refresh(); void refreshProviders(); }} disabled={busy || providerBusy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700">Refresh status</button>
@@ -229,13 +249,13 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     </header>
     
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <h2 className="text-lg font-semibold text-neutral-950">Google permissions</h2><p className="mt-1 text-sm text-neutral-500">Approve access in Google. You can revoke it from your Google Account at any time.</p>
+      <h2 className="text-lg font-semibold text-neutral-950">Google permissions</h2><p className="mt-1 text-sm text-neutral-500">These permissions are checked against the active Google token. TWIGA refreshes the status when you return to this page and every minute while it is open. You can revoke access from your Google Account at any time.</p>
       <div className="mt-4 divide-y divide-neutral-100">
         {items.map(item => {
           const granted = (status.scopes || []).some((scope: string) => item.key === "calendar" ? scope.includes("calendar.events") : item.key === "contacts" ? scope.includes("contacts") : item.key === "sheets" ? scope.includes("spreadsheets") : scope.includes("drive.file"));
           return <div key={item.key} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div><p className="font-semibold text-neutral-900">{item.title}</p><p className="mt-1 text-sm text-neutral-500">{item.detail}</p><p className="mt-1 text-xs font-medium text-neutral-600">{status.connected && granted ? "Permission granted" : "Permission not confirmed"}</p></div>
-            <div className="flex flex-wrap items-center gap-2">{status.connected && <button onClick={() => test(item)} disabled={busy} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700">Test {item.title.replace("Google ", "")}</button>}{status.connected && item.key === "contacts" && <button onClick={() => void importGoogleContacts()} disabled={busy} className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">Import contacts</button>}{tests[item.key] && <span className="max-w-xs text-xs text-neutral-600">{tests[item.key]}</span>}</div>
+            <div><p className="font-semibold text-neutral-900">{item.title}</p><p className="mt-1 text-sm text-neutral-500">{item.detail}</p><p className="mt-1 text-xs font-medium text-neutral-600">{status.connected && granted ? "Allowed by Google · verified" : status.connected ? "Not granted · reconnect to approve" : "Not verified"}</p></div>
+            <div className="flex flex-wrap items-center gap-2">{status.connected && granted && <button onClick={() => test(item)} disabled={busy} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700">Test {item.title.replace("Google ", "")}</button>}{status.connected && granted && item.key === "contacts" && <button onClick={() => void importGoogleContacts()} disabled={busy} className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">Import contacts</button>}{tests[item.key] && <span className="max-w-xs text-xs text-neutral-600">{tests[item.key]}</span>}</div>
           </div>;
         })}
       </div>
