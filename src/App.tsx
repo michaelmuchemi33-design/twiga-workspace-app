@@ -229,7 +229,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
       <div
         className={cn(
           "min-h-screen bg-neutral-50 text-neutral-900 transition-all duration-500",
-          isSetup ? "pb-10" : isCompactPwaLayout ? "pb-32" : "pb-8"
+          isCompactPwaLayout ? "pb-36" : "pb-8"
         )}
       >
         {!isCompactPwaLayout && <SideRail tab={tab} onSelect={go} />}
@@ -293,14 +293,12 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
         {isCompactPwaLayout && <nav
           className={cn(
             "fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-5 transition-all duration-500",
-            isSetup
-              ? "pointer-events-none translate-y-40 opacity-0"
-              : "translate-y-0 opacity-100"
+            "translate-y-0 opacity-100"
           )}
         >
           <div className="relative w-full max-w-md">
             {menuOpen && (
-              <div className="footer-panel absolute bottom-full left-0 right-0 mb-3 overflow-hidden rounded-3xl border border-orange-500/20 bg-neutral-950 p-3 shadow-2xl shadow-orange-950/40">
+              <div className="footer-panel absolute bottom-full left-0 right-0 mb-3 max-h-[68vh] overflow-y-auto overscroll-contain rounded-3xl border border-neutral-200 bg-white p-3 shadow-2xl shadow-neutral-900/15 dark:border-neutral-700 dark:bg-neutral-900">
                 <div className="mb-2 flex items-center justify-between px-2">
                   <span className="text-xs font-semibold uppercase tracking-widest text-orange-500/70">
                     More
@@ -324,7 +322,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
                           "footer-tile flex flex-col items-center gap-1.5 rounded-2xl px-2 py-3 text-xs font-medium transition-all duration-200 active:scale-90",
                           active
                             ? "bg-orange-500 text-white shadow-lg shadow-orange-500/40"
-                            : "text-neutral-300 hover:bg-orange-500/10 hover:text-orange-400"
+                            : "text-neutral-700 hover:bg-orange-50 hover:text-orange-700 dark:text-neutral-300 dark:hover:bg-orange-500/10 dark:hover:text-orange-400"
                         )}
                       >
                         <span className="footer-icon flex h-5 w-5 items-center justify-center">
@@ -338,7 +336,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
               </div>
             )}
 
-            <div className="flex items-center justify-between gap-1 rounded-3xl border border-orange-500/20 bg-neutral-950 p-2 shadow-2xl shadow-orange-950/40">
+            <div className="flex items-center justify-between gap-1 rounded-3xl border border-neutral-200 bg-white p-2 shadow-lg shadow-neutral-900/10 dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-black/30">
               {footerTabs.map((t, i) => {
                 const active = tab === t.id;
                 return (
@@ -350,7 +348,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
                       "footer-tile flex flex-1 flex-col items-center gap-1 rounded-2xl px-2 py-2.5 text-xs font-medium transition-all duration-200 active:scale-90",
                       active
                         ? "bg-orange-500 text-white shadow-lg shadow-orange-500/40"
-                        : "text-neutral-400 hover:bg-orange-500/10 hover:text-orange-400"
+                        : "text-neutral-600 hover:bg-orange-50 hover:text-orange-700 dark:text-neutral-400 dark:hover:bg-orange-500/10 dark:hover:text-orange-400"
                     )}
                   >
                     <span className="footer-icon flex h-5 w-5 items-center justify-center">
