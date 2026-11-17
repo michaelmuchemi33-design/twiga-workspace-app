@@ -16,6 +16,7 @@ import Analytics from "@/components/Analytics";
 import Settings from "@/components/Settings";
 import Profile from "@/components/Profile";
 import PhoneDesk from "@/components/PhoneDesk";
+import CustomerSupport from "@/components/CustomerSupport";
 import Connections from "@/components/Connections";
 import Products from "@/components/Products";
 import Reports from "@/components/Reports";
@@ -254,6 +255,8 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           {tab === "settings" && <Settings businessId={businessId} demo={demo} onOpenProfile={() => go("phone")} />}
           {tab === "logout" && <Logout onCancel={() => setTab("dashboard")} />}
         </main>
+
+        {!demo && userId && businessId && <CustomerSupport businessId={businessId} />}
 
         {menuOpen && (
           <div
