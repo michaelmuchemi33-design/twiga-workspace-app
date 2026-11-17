@@ -48,7 +48,13 @@ Deno.serve(async(req:Request)=>{
   const secret=businessSecret||platformSecret;
   const keySource=businessSecret?"business":"platform";
   if(secretError&&!secret)console.error("PalPluss business key lookup failed",secretError.message);
-  if(!secret){if(action==="get_config")return reply({keyConfigured:false,keySource:"missing"});return reply({error:"The TWIGA platform administrator must connect the central PalPluss account, or this business must connect its own account."},409);}
+  if(!secret){
+   if(action==="get_config"){
+    const {data:businessSettings}=await db.from("twiga_business_settings").select("palpluss_paylink_id").eq("business_id",businessId).maybeSingle();
+    return reply({keyConfigured:false,keySource:"missing",paylinkId:businessSettings?.palpluss_paylink_id||""});
+   }
+   return reply({error:"The TWIGA platform administrator must connect the central PalPluss account, or this business must connect its own account."},409);
+  }
   const key=String(secret);
 
   if(action==="get_config"||action==="balance"){
