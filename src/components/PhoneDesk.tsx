@@ -77,6 +77,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
 
   useEffect(() => { void load(); }, [load]);
   const allVoices = useMemo(() => (config.models || []).flatMap(m => (m.voices || []).map(voice => ({ model: m.id, voice }))), [config.models]);
+  const voiceOptions = allVoices.length ? allVoices : [{ model: voiceModel || "sautikit-flash", voice: "Woman" }, { model: voiceModel || "sautikit-flash", voice: "amara" }];
   const line = config.phoneLine;
   const settings = line?.settings || {};
   const displayedPhoneNumber = String(config.providerNumber || config.number?.phone_number || config.number?.number_e164 || config.number?.phoneNumber || config.number?.number || line?.line_number || "");
@@ -146,7 +147,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     if (updateError) setError(updateError.message); else { setMessage("Scheduled call cancelled."); await load(); }
   };
 
-  if (demo) return <section className="rounded-2xl border border-neutral-200 bg-white p-6"><h1 className="text-2xl font-semibold">Phone & AI receptionist</h1><p className="mt-2 text-sm text-neutral-500">Sign in and select a business to manage its AI phone line, voices and scheduled calls.</p></section>;
+  if (demo) return <section className="rounded-2xl border border-neutral-200 bg-white p-6"><h1 className="text-2xl font-semibold">Phone & AI receptionist</h1><p className="mt-2 text-sm text-neutral-800">Sign in and select a business to manage its AI phone line, voices and scheduled calls.</p></section>;
 
   return <div className="mx-auto max-w-6xl space-y-5">
     <header className="rounded-2xl border border-neutral-200 bg-white p-6">
@@ -164,11 +165,11 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     {config.providerError && <div className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">SautiKit status: {config.providerError}</div>}
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold text-neutral-950">Voice library & receptionist instructions</h2><p className="mt-1 text-sm text-neutral-500">The available voices are loaded from TWIGA’s centrally managed voice catalogue. Choose a female or male voice when the central connection is active.</p></div><span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-700">{allVoices.length} voices across catalogue</span></div>
-      {config.keyConfigured && line && config.agent ? <div className="mt-5 grid gap-4 lg:grid-cols-2">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold text-neutral-950">Voice library & receptionist instructions</h2><p className="mt-1 text-sm text-neutral-500">The available voices are loaded from TWIGA’s centrally managed voice catalogue. Choose a female or male voice when the central connection is active.</p></div><span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-700">{voiceOptions.length} voice options</span></div>
+      {true ? <div className="mt-5 grid gap-4 lg:grid-cols-2">
         <div className="space-y-4">
-          <label className="block text-sm font-medium text-neutral-800">AI model<select value={voiceModel} onChange={e => { const next = e.target.value; setVoiceModel(next); const model = (config.models || []).find(m => m.id === next); if (model?.voices?.length) setVoiceId(model.voices[0]); }} className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm">{(config.models || []).map(m => <option key={m.id} value={m.id}>{m.id}{typeof m.rate_per_minute_minor === "number" ? ` · ${(m.rate_per_minute_minor / 100).toFixed(2)} per minute` : ""}</option>)}</select></label>
-          <label className="block text-sm font-medium text-neutral-800">Voice · all provider options<select value={`${voiceModel}::${voiceId}`} onChange={e => { const [model, voice] = e.target.value.split("::"); setVoiceModel(model); setVoiceId(voice); }} className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm">{(config.models || []).map(m => <optgroup key={m.id} label={m.id}>{(m.voices || []).map(v => <option key={`${m.id}::${v}`} value={`${m.id}::${v}`}>{v}</option>)}</optgroup>)}</select></label>
+          <label className="block text-sm font-medium text-neutral-800">AI model<select value={voiceModel} onChange={e => { const next = e.target.value; setVoiceModel(next); const model = (config.models || []).find(m => m.id === next); if (model?.voices?.length) setVoiceId(model.voices[0]); }} className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm">{(config.models || []).length ? (config.models || []).map(m => <option key={m.id} value={m.id}>{m.id}{typeof m.rate_per_minute_minor === "number" ? ` · ${(m.rate_per_minute_minor / 100).toFixed(2)} per minute` : ""}</option>) : <option value={voiceModel}>{voiceModel}</option> }</select></label>
+          <label className="block text-sm font-medium text-neutral-800">Voice · all provider options<select value={`${voiceModel}::${voiceId}`} onChange={e => { const [model, voice] = e.target.value.split("::"); setVoiceModel(model); setVoiceId(voice); }} className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm">{allVoices.length ? (config.models || []).map(m => <optgroup key={m.id} label={m.id}>{(m.voices || []).map(v => <option key={`${m.id}::${v}`} value={`${m.id}::${v}`}>{v}</option>)}</optgroup>) : voiceOptions.map(v => <option key={`${v.model}::${v.voice}`} value={`${v.model}::${v.voice}`}>{v.voice} · {v.model}</option>)}</select></label>
           <p className="text-xs text-neutral-500">Published agent revision: {settings.inbound_agent_revision || config.agent?.revision || "—"}. Publishing updates the bound inbound agent and future outbound calls.</p>
           <label className="block text-sm font-medium text-neutral-800">Core receptionist instructions<textarea value={corePrompt} onChange={e => setCorePrompt(e.target.value)} rows={5} maxLength={12000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
         </div>
@@ -176,9 +177,10 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
           <label className="block text-sm font-medium text-neutral-800">What the receptionist says first<textarea value={greeting} onChange={e => setGreeting(e.target.value)} rows={2} maxLength={4000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
           <label className="block text-sm font-medium text-neutral-800">Inbound call instructions<textarea value={inboundPrompt} onChange={e => setInboundPrompt(e.target.value)} rows={4} maxLength={5000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
           <label className="block text-sm font-medium text-neutral-800">Outbound call instructions<textarea value={outboundPrompt} onChange={e => setOutboundPrompt(e.target.value)} rows={4} maxLength={5000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
-          <button onClick={() => void publishVoice()} disabled={savingVoice || !voiceModel || !voiceId} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{savingVoice ? "Publishing…" : "Publish voice & instructions"}</button>
+          <p className="rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-800">{config.keyConfigured && line && config.agent ? "The selected voice can be published when the SautiKit number and agent are verified." : "Voice choices are visible now. Publishing is locked until TWIGA reconnects the correct SautiKit workspace and verifies the assigned number."}</p>
+          <button onClick={() => void publishVoice()} disabled={savingVoice || !voiceModel || !voiceId || !config.keyConfigured || !line || !config.agent} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{savingVoice ? "Publishing…" : "Publish voice & instructions"}</button>
         </div>
-      </div> : <p className="mt-4 rounded-xl bg-neutral-50 p-4 text-sm text-neutral-600">TWIGA manages the voice provider credentials. Once the shared connection is verified and a number is assigned, the available voice choices and publish controls will appear here.</p>}
+      </div> : <p className="mt-4 rounded-xl bg-neutral-50 p-4 text-sm text-neutral-600">TWIGA manages the voice provider credentials. Choose a voice above; publishing and live calls unlock after the correct SautiKit workspace and number are verified.</p>}
     </section>
 
     <section className="grid gap-5 lg:grid-cols-2">
