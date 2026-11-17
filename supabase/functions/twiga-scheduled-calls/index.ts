@@ -208,7 +208,46 @@ Deno.serve(async (req: Request) => {
         if (!["completed", "failed", "no_answer", "busy", "canceled", "cancelled"].includes(providerStatus)) continue;
         const finalStatus = providerStatus === "completed" ? "completed" : "failed";
         const finishedAt = callData.ended_at || callData.completed_at || new Date().toISOString();
-        await setJob(admin, item.id, { status: finalStatus, completed_at: finishedAt, last_error: finalStatus === "failed" ? (providerStatus === "no_answer" ? "The contact did not answer." : providerStatus === "busy" ? "The contact's line was busy." : "The provider did not complete the call.") : null });
+        const retryConfig = item.metadata?.no_answer_retry && typeof item.metadata.no_answer_retry === "object"
+          ? item.metadata.no_answer_retry : { enabled: false, attempts: 0, max_attempts: 2, delay_minutes: 5 };
+        const noAnswerAttempts = Math.max(0, Number(retryConfig.attempts || 0));
+        const noAnswerMaxAttempts = Math.min(2, Math.max(1, Number(retryConfig.max_attempts || 2)));
+        const shouldRetryNoAnswer = providerStatus === "no_answer" && retryConfig.enabled === true && noAnswerAttempts + 1 < noAnswerMaxAttempts;
+        if (shouldRetryNoAnswer) {
+          const retryDelayMinutes = Math.min(60, Math.max(1, Number(retryConfig.delay_minutes || 5)));
+          const retryAt = new Date(Date.now() + retryDelayMinutes * 60000).toISOString();
+          await setJob(admin, item.id, {
+            status: "scheduled",
+            scheduled_at: retryAt,
+            provider_call_id: null,
+            completed_at: null,
+            last_error: "No answer on attempt " + (noAnswerAttempts + 1) + ". One more call is scheduled in " + retryDelayMinutes + " minutes.",
+            metadata: {
+              ...(item.metadata || {}),
+              no_answer_retry: { ...retryConfig, enabled: true, attempts: noAnswerAttempts + 1, max_attempts: noAnswerMaxAttempts, delay_minutes: retryDelayMinutes },
+              dispatch_status: "retry_scheduled",
+              last_provider_outcome: "no_answer",
+            },
+          });
+        } else {
+          const unreachable = providerStatus === "no_answer" && retryConfig.enabled === true && noAnswerAttempts + 1 >= noAnswerMaxAttempts;
+          await setJob(admin, item.id, {
+            status: finalStatus,
+            completed_at: finishedAt,
+            last_error: finalStatus === "failed"
+              ? (unreachable
+                ? "Unreachable after two unanswered call attempts. The number has not been verified as invalid."
+                : providerStatus === "no_answer" ? "The contact did not answer."
+                : providerStatus === "busy" ? "The contact's line was busy."
+                : "The provider did not complete the call.")
+              : null,
+            metadata: {
+              ...(item.metadata || {}),
+              ...(unreachable ? { final_outcome: "unreachable_after_no_answer", dispatch_status: "unreachable" } : { last_provider_outcome: providerStatus }),
+              ...(retryConfig.enabled === true ? { no_answer_retry: { ...retryConfig, attempts: Math.min(noAnswerMaxAttempts, noAnswerAttempts + (providerStatus === "no_answer" ? 1 : 0)) } } : {}),
+            },
+          });
+        }
         const repeatMode = safe(item.metadata?.repeat || "none", 20);
         const repeatRemaining = Number(item.metadata?.repeat_remaining || 1);
         if (finalStatus === "completed" && ["daily", "weekly"].includes(repeatMode) && repeatRemaining > 1) {
@@ -308,7 +347,16 @@ Deno.serve(async (req: Request) => {
         try { call = raw ? JSON.parse(raw) : {}; } catch { call = {}; }
         if (!response.ok) throw new Error("SautiKit call request failed (HTTP " + response.status + ").");
         const providerCallId = safe(call.call_id || call.id || call.data?.call_id || call.data?.id, 120);
-        await setJob(admin, job.id, { status: "submitted", provider_call_id: providerCallId || null, last_error: null });
+        await setJob(admin, job.id, {
+          status: "submitted",
+          provider_call_id: providerCallId || null,
+          last_error: null,
+          metadata: {
+            ...(job.metadata || {}),
+            dispatch_status: "submitted",
+            provider_call_ids: [...new Set([...(Array.isArray(job.metadata?.provider_call_ids) ? job.metadata.provider_call_ids : []), ...(providerCallId ? [providerCallId] : [])])].slice(-3),
+          },
+        });
         const { error: recordError } = await admin.from("twiga_call_records").insert({
           business_id: job.business_id,
           provider: "sautikit",
