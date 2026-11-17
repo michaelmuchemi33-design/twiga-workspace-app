@@ -1,9 +1,9 @@
 name: TWIGA workspace quality
 on:
   push:
-    branches: [main]
+    branches: [main, qa/security-hardening-and-build-checks]
   pull_request:
-    branches: [main]
+    branches: [main, qa/security-hardening-and-build-checks]
   workflow_dispatch:
 permissions:
   contents: read
