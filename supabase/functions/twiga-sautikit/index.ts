@@ -126,21 +126,36 @@ Deno.serve(async (req: Request) => {
       let number: Row | null = null;
       let providerError = "";
       if (key) {
-        try {
-          const [catalog, agentData, numberData] = await Promise.all([
-            skRequest(key, "/v1/models"),
-            agentId ? skRequest(key, "/v1/agents/" + encodeURIComponent(agentId)) : Promise.resolve(null),
-            numberId ? skRequest(key, "/v1/numbers/" + encodeURIComponent(numberId)) : Promise.resolve(null),
-          ]);
-          models = Array.isArray(catalog?.data) ? catalog.data : [];
+        const [catalogResult, agentResult, numberResult] = await Promise.allSettled([
+          skRequest(key, "/v1/models"),
+          agentId ? skRequest(key, "/v1/agents/" + encodeURIComponent(agentId)) : Promise.resolve(null),
+          numberId ? skRequest(key, "/v1/numbers/" + encodeURIComponent(numberId)) : Promise.resolve(null),
+        ]);
+        if (catalogResult.status === "fulfilled") {
+          models = Array.isArray(catalogResult.value?.data) ? catalogResult.value.data : [];
+          if (!models.length) providerError = "SautiKit returned an empty voice/model catalogue.";
+        } else {
+          providerError = "Voice catalogue: " + (catalogResult.reason instanceof Error ? catalogResult.reason.message : "SautiKit catalogue request failed.");
+        }
+        if (agentResult.status === "fulfilled") {
+          const agentData = agentResult.value;
           agent = agentData?.agent || agentData?.data?.agent || agentData?.data || agentData;
-          const numberEnvelope = numberData as any;
+        } else {
+          const message = "Receptionist agent: " + (agentResult.reason instanceof Error ? agentResult.reason.message : "agent lookup failed.");
+          providerError = [providerError, message].filter(Boolean).join(" · ");
+        }
+        if (numberResult.status === "fulfilled") {
+          const numberEnvelope = numberResult.value as any;
           number = numberEnvelope?.number || numberEnvelope?.data?.number || numberEnvelope?.data || numberEnvelope;
-        } catch (e) {
-          providerError = e instanceof Error ? e.message : "SautiKit connection check failed.";
+        } else {
+          const message = "Phone number: " + (numberResult.reason instanceof Error ? numberResult.reason.message : "number lookup failed.");
+          providerError = [providerError, message].filter(Boolean).join(" · ");
         }
       }
       const scripts = settings.sautikit_scripts && typeof settings.sautikit_scripts === "object" ? settings.sautikit_scripts : {};
+      const liveInboundRoute = number?.routing?.inbound_agent || number?.inbound_agent || number?.routing?.inboundAgent;
+      const liveInboundAgentId = liveInboundRoute?.agent_id || liveInboundRoute?.agentId;
+      const liveInboundVerified = !!(liveInboundRoute?.enabled && agent?.id && liveInboundAgentId === agentId);
       return json({
         isPlatformAdmin,
         keyConfigured: !!keyRef,
@@ -170,9 +185,10 @@ Deno.serve(async (req: Request) => {
         providerError,
         inboundBound: settings.ai_agent_bound === true
           && settings.inbound_agent_provider === "sautikit-managed"
-          && settings.inbound_agent_id === agentId,
-        inboundVerified: !!((number?.routing?.inbound_agent || number?.inbound_agent || number?.routing?.inboundAgent)?.enabled && ((number?.routing?.inbound_agent || number?.inbound_agent || number?.routing?.inboundAgent)?.agent_id || (number?.routing?.inbound_agent || number?.inbound_agent || number?.routing?.inboundAgent)?.agentId) === agentId),
-        inboundMode: (number?.routing?.inbound_agent || number?.inbound_agent || number?.routing?.inboundAgent)?.mode || null,
+          && settings.inbound_agent_id === agentId
+          && liveInboundVerified,
+        inboundVerified: liveInboundVerified,
+        inboundMode: liveInboundRoute?.mode || null,
       });
     }
 
