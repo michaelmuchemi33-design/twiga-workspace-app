@@ -120,7 +120,7 @@ Deno.serve(async (req: Request) => {
     const key = String(apiKey || "");
 
     if (action === "get_config") {
-      if (!line) return json({ phoneLine: null, keyConfigured: !!keyRef, isPlatformAdmin });
+      if (!line) return json({ phoneLine: null, keyConfigured: !!key, isPlatformAdmin });
       let models: Row[] = [];
       let agent: Row | null = null;
       let number: Row | null = null;
@@ -138,11 +138,13 @@ Deno.serve(async (req: Request) => {
         } catch (e) {
           providerError = e instanceof Error ? e.message : "SautiKit connection check failed.";
         }
+      } else if (keyRef) {
+        providerError = "A SautiKit key reference exists, but the encrypted key could not be read. Reconnect the key.";
       }
       const scripts = settings.sautikit_scripts && typeof settings.sautikit_scripts === "object" ? settings.sautikit_scripts : {};
       return json({
         isPlatformAdmin,
-        keyConfigured: !!keyRef,
+        keyConfigured: !!key,
         keyLast4: keyRef?.secret_last4 || "",
         keyUpdatedAt: keyRef?.updated_at || null,
         phoneLine: {
