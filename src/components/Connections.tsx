@@ -77,6 +77,8 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     else setSautikitConfig({ isPlatformAdmin: false, providerError: sautikit.status === "rejected" ? String(sautikit.reason) : sautikit.value.error?.message });
     if (xai.status === "fulfilled" && !xai.value.error && !xai.value.data?.error) setXaiConfig(xai.value.data || {});
     else setXaiConfig({ isAdmin: false });
+    if (openrouter.status === "fulfilled" && !openrouter.value.error && !openrouter.value.data?.error) setOpenRouterConfig(openrouter.value.data || {});
+    else setOpenRouterConfig({ isAdmin: false });
     if (googleSecrets.status === "fulfilled" && !googleSecrets.value.error && !googleSecrets.value.data?.error) setGoogleSecretConfig(googleSecrets.value.data || {});
     else setGoogleSecretConfig({ isAdmin: false });
     if (sms.status === "fulfilled" && !sms.value.error && !sms.value.data?.error) {
