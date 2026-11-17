@@ -30,7 +30,7 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [call, setCall] = useState<any>(null);
-  const [showAllVoiceOptions, setShowAllVoiceOptions] = useState(false);
+  const [previewingVoice, setPreviewingVoice] = useState("");
   const [forwardMode, setForwardMode] = useState<"always" | "after_hours">("after_hours");
   const [forwardTo, setForwardTo] = useState("");
   const [forwardOpening, setForwardOpening] = useState("08:00");
@@ -114,7 +114,6 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
     }
     return list;
   })();
-  const visibleVoiceOptions = showAllVoiceOptions ? catalogOptions : catalogOptions.slice(0, 25);
 
   const line = data.phoneLine;
   const currentAgent = data.agent;
@@ -122,7 +121,32 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
   const inboundVerified = data.inboundVerified === true;
   const inboundBound = data.inboundBound === true || inboundVerified;
   const selected = catalogOptions.find((v) => v.voice === voice && v.model === model);
+  const fiveVoiceOptions: Option[] = [];
+  for (const option of catalogOptions) {
+    if (!fiveVoiceOptions.some((item) => item.voice === option.voice)) fiveVoiceOptions.push(option);
+    if (fiveVoiceOptions.length === 5) break;
+  }
 
+  function previewVoiceSample(option: Option, index: number) {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      setNotice("Voice previews are not supported by this browser. You can still select a provider voice.");
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(
+      "Hello, karibu! Thank you for calling. How may I help you today?"
+    );
+    const browserVoices = window.speechSynthesis.getVoices();
+    const englishVoices = browserVoices.filter((item) => item.lang.toLowerCase().startsWith("en"));
+    if (englishVoices.length) utterance.voice = englishVoices[index % englishVoices.length];
+    // These are local browser previews, not recordings of SautiKit production voices.
+    utterance.pitch = [0.88, 1.0, 1.12, 0.94, 1.06][index] || 1;
+    utterance.rate = [0.94, 1.0, 0.97, 1.04, 0.91][index] || 1;
+    utterance.onstart = () => setPreviewingVoice(option.voice);
+    utterance.onend = () => setPreviewingVoice("");
+    utterance.onerror = () => setPreviewingVoice("");
+    window.speechSynthesis.speak(utterance);
+  }
 
   async function publish() {
     if (!selected) return setNotice("Choose an available SautiKit voice.");
@@ -231,38 +255,47 @@ export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Choose the receptionist voice</h2><p className="mt-1 text-sm text-neutral-500">Available voices are loaded directly from the connected SautiKit catalogue. Only provider-returned voice/model pairs can be selected.</p></div><span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">{catalogOptions.length ? catalogOptions.length + " live voice/model options" : "Waiting for live catalogue"}</span></div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        {(["Man", "Woman"] as const).map((gender) => {
-          const option = catalogOptions.find((v) => v.voice === gender && v.model === model)
-            || catalogOptions.find((v) => v.voice === gender);
-          const selectedGender = voice === gender;
-          return <button key={gender} type="button" disabled={!data.keyConfigured || !models.length || !option}
-            onClick={() => { if (option) { setVoice(option.voice); setModel(option.model); } }}
-            className={"rounded-xl border-2 px-4 py-3 text-left transition " + (selectedGender ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-orange-300") + (!data.keyConfigured || !models.length || !option ? " opacity-50" : "")}>
-            <span className="block text-sm font-semibold text-neutral-950">{gender === "Man" ? "Male voice" : "Female voice"}</span>
-            <span className="mt-1 block text-xs text-neutral-600">{option ? option.voice + " · " + (MODEL_LABELS[option.model] || option.model) : "Not available in the connected catalogue"}</span>
-            {selectedGender ? <span className="mt-2 inline-block text-xs font-semibold text-orange-800">Currently selected</span> : <span className="mt-2 inline-block text-xs font-medium text-neutral-500">Choose this voice</span>}
-          </button>;
-        })}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-neutral-950">Choose your receptionist voice</h2>
+          <p className="mt-1 text-sm text-neutral-600">Choose from five real voice options returned by the connected SautiKit catalogue.</p>
+        </div>
+        <span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">{fiveVoiceOptions.length} of 5 voice choices available</span>
       </div>
-      <p className="mt-3 text-xs text-neutral-500">Choose Male or Female for a quick switch, or select a named provider voice below. The selected voice is applied to inbound and outbound calls only after SautiKit accepts the publish request.</p>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        {visibleVoiceOptions.map((v) => {
-          const isSelected = voice === v.voice && model === v.model;
-          const disabled = !data.keyConfigured || !models.length;
-          return <button key={v.model + ":" + v.voice} type="button" disabled={disabled} onClick={() => { setVoice(v.voice); setModel(v.model); }} className={"rounded-xl border p-3 text-left transition " + (isSelected ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-neutral-400") + (disabled ? " opacity-60" : "")}>
-            <div className="flex items-center justify-between gap-2"><span className="font-semibold text-neutral-900">{v.label}</span><span className="shrink-0 text-xs text-neutral-500">KSh {v.rate}/min AI</span></div>
-            <p className="mt-1 text-xs text-neutral-500">{v.note}</p>
-            {isSelected ? <p className="mt-2 text-xs font-semibold text-orange-800">Selected{v.tested ? " · your tested voice" : ""}</p> : null}
-          </button>;
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {fiveVoiceOptions.map((option, index) => {
+          const isSelected = voice === option.voice && model === option.model;
+          const isPreviewing = previewingVoice === option.voice;
+          return <div key={option.voice} className={"rounded-2xl border-2 p-4 transition " + (isSelected ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white")}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-wide text-orange-700">Voice {index + 1}</p>
+                <h3 className="mt-1 truncate text-lg font-semibold text-neutral-950">{option.voice}</h3>
+                <p className="mt-1 text-xs text-neutral-600">{MODEL_LABELS[option.model] || option.model} · KSh {option.rate}/min AI</p>
+              </div>
+              {isSelected ? <span className="rounded-full bg-orange-500 px-2.5 py-1 text-xs font-semibold text-white">Selected</span> : null}
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button type="button" aria-label={"Play a sample of " + option.voice + " voice"} onClick={() => previewVoiceSample(option, index)} className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-semibold text-neutral-800 hover:border-orange-400">
+                <span aria-hidden="true">{isPreviewing ? "■" : "▶"}</span>{isPreviewing ? "Playing sample…" : "Listen to sample"}
+              </button>
+              <button type="button" aria-pressed={isSelected} disabled={!data.keyConfigured} onClick={() => { setVoice(option.voice); setModel(option.model); }} className="rounded-xl bg-neutral-950 px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">
+                {isSelected ? "Selected" : "Choose voice"}
+              </button>
+            </div>
+          </div>;
         })}
-        {!catalogOptions.length ? <p className="rounded-xl border border-dashed border-neutral-300 p-4 text-sm text-neutral-600 sm:col-span-2 xl:col-span-5">{data.providerError ? "SautiKit catalogue could not be loaded: " + data.providerError : data.keyConfigured ? "Loading the live SautiKit voice catalogue…" : "Connect the SautiKit API key above to load the live voice catalogue. No unverified or sample voices are selectable."}</p> : null}
+        {!fiveVoiceOptions.length ? <p className="rounded-xl border border-dashed border-neutral-300 p-4 text-sm text-neutral-600 sm:col-span-2 lg:col-span-3">{data.providerError ? "SautiKit catalogue could not be loaded: " + data.providerError : data.keyConfigured ? "Loading the live SautiKit voice catalogue…" : "The TWIGA platform administrator must finish connecting SautiKit before voice choices can load."}</p> : null}
       </div>
-      {catalogOptions.length > 25 ? <button type="button" onClick={() => setShowAllVoiceOptions((v) => !v)} className="mt-3 rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700">{showAllVoiceOptions ? "Show first 25 voices" : "Show all " + catalogOptions.length + " voice/model options"}</button> : null}
-      <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">This is a 5-column list showing up to 25 voice/model combinations at a time. TWIGA displays the actual names and model combinations returned by SautiKit; it does not invent extra voices. Man and Woman are labelled according to the provider's catalogue. Other named voices are not assigned a gender unless SautiKit specifies one. AI usage rates are per minute; carrier charges are separate.</p>
-      <div className="mt-4 flex flex-wrap items-center gap-3"><p className="text-sm text-neutral-600">Selected: <strong className="text-neutral-900">{voice}</strong> · {model}</p>{!active ? <button onClick={createAgent} disabled={busy || !data.keyConfigured || !line || !selected} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Creating…" : "Create this business's AI receptionist"}</button> : <button onClick={publish} disabled={busy || !data.keyConfigured || !inboundBound || !selected} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Publishing…" : "Save voice & publish"}</button>}{active && !inboundBound ? <button onClick={bindAgent} disabled={busy || !data.keyConfigured} className="rounded-xl border border-orange-300 px-4 py-3 text-sm font-semibold text-orange-800 disabled:opacity-40">Retry inbound binding</button> : null}</div>
-      {!inboundBound ? <p className="mt-2 text-xs text-amber-800">The existing inbound binding is not confirmed in TWIGA records. Publishing is paused to protect the current line.</p> : null}{inboundBound && !inboundVerified ? <p className="mt-2 text-xs text-amber-800">TWIGA records the agent as bound, but SautiKit has not yet confirmed the route. Publishing remains paused until the API key is connected and the live binding is verified.</p> : null}
+      {fiveVoiceOptions.length > 0 && fiveVoiceOptions.length < 5 ? <p className="mt-3 text-xs text-amber-800">SautiKit currently returned only {fiveVoiceOptions.length} distinct voice names. TWIGA will not invent extra production voices.</p> : null}
+      <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-700"><strong>About the samples:</strong> SautiKit's published API catalogue supplies voice names and model choices, but does not provide playable sample recordings. These short previews use your browser's built-in speech voice so you can hear a rough speaking style. They are not recordings of the selected SautiKit voice, and the live call may sound different. Your chosen SautiKit voice is the one saved and published to the business's actual receptionist.</p>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <p className="text-sm text-neutral-700">Selected: <strong className="text-neutral-950">{voice}</strong> · {model}</p>
+        {!active ? <button onClick={createAgent} disabled={busy || !data.keyConfigured || !line || !selected} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Creating…" : "Create this business's AI receptionist"}</button> : <button onClick={publish} disabled={busy || !data.keyConfigured || !inboundBound || !selected} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Publishing…" : "Save voice & publish"}</button>}
+        {active && !inboundBound ? <button onClick={bindAgent} disabled={busy || !data.keyConfigured} className="rounded-xl border border-orange-300 px-4 py-3 text-sm font-semibold text-orange-800 disabled:opacity-40">Retry inbound binding</button> : null}
+      </div>
+      {!inboundBound ? <p className="mt-2 text-xs text-amber-800">The existing inbound binding is not confirmed in TWIGA records. Publishing is paused to protect the current line.</p> : null}
+      {inboundBound && !inboundVerified ? <p className="mt-2 text-xs text-amber-800">TWIGA records the agent as bound, but SautiKit has not yet confirmed the route. Publishing remains paused until the API key is connected and the live binding is verified.</p> : null}
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
