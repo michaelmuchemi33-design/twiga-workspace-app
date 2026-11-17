@@ -9,6 +9,14 @@ const MODEL_LABELS: Record<string, string> = {
   "sautikit-pro": "Pro",
   "sautikit-reason": "Reason",
 };
+// Last verified SautiKit catalogue snapshot. Live catalogue data replaces this after the key is connected.
+const CATALOG_FALLBACK = [
+  { id: "sautikit-flash", voices: ["Man", "Woman"], rate_per_minute_minor: 400 },
+  { id: "sautikit-flash-large", voices: ["Man", "Woman"], rate_per_minute_minor: 1500 },
+  { id: "sautikit-voice-2", voices: ["Man", "Woman", "Neema", "Zuri", "Amani", "Furaha", "Baraka", "Jabari", "Tumaini", "Simba"], rate_per_minute_minor: 700 },
+  { id: "sautikit-pro", voices: ["Man", "Woman"], rate_per_minute_minor: 3000 },
+  { id: "sautikit-reason", voices: ["Man", "Woman"], rate_per_minute_minor: 1200 },
+];
 const DEFAULTS = {
   greeting: "Hello, karibu! Thank you for calling {{business_name}}. How can I help you today?",
   inbound: "Answer in the caller's language (Kenyan English or Kiswahili). Identify why they are calling, use verified business information, and capture booking or order requests for the team to confirm. Never say that a booking, order or payment is complete until TWIGA confirms it was saved.",
@@ -65,10 +73,10 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
   useEffect(() => { void refresh(); }, [refresh]);
 
   const catalogOptions: Option[] = (() => {
-    if (!models.length) return [];
+    const availableModels = models.length ? models : CATALOG_FALLBACK;
     const list: Option[] = [];
     const knownNames = new Set<string>();
-    for (const entry of models) {
+    for (const entry of availableModels) {
       const modelId = String(entry.id || "");
       const modelLabel = MODEL_LABELS[modelId] || modelId;
       const rate = Number(entry.rate_per_minute_minor || 0) / 100;
@@ -199,7 +207,7 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
             {isSelected ? <p className="mt-2 text-xs font-semibold text-orange-800">Selected{v.tested ? " · your tested voice" : ""}</p> : null}
           </button>;
         })}
-        {!catalogOptions.length ? <p className="rounded-xl border border-dashed border-neutral-300 p-4 text-sm text-neutral-600 sm:col-span-2">{data.keyConfigured ? "Loading the SautiKit voice catalogue…" : "Connect the SautiKit API key above to load all available voices and live prices."}</p> : null}
+        {!catalogOptions.length ? <p className="rounded-xl border border-dashed border-neutral-300 p-4 text-sm text-neutral-600 sm:col-span-2">{data.keyConfigured ? "Loading the SautiKit voice catalogue…" : "These are the last verified SautiKit voices and prices. Connect the SautiKit API key above to refresh live availability. Voice choices remain locked until connected."}</p> : null}
       </div>
       <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">The catalogue has 10 named voice choices: Man, Woman and eight additional named voices. Man and Woman are available across Flash, Flash Large, Voice 2, Pro and Reason model tiers, giving you more male voice/model choices. The eight named voices are shown exactly as SautiKit lists them; SautiKit does not publish their gender labels. AI prices are per minute; carrier charges are separate.</p>
       <div className="mt-4 flex flex-wrap items-center gap-3"><p className="text-sm text-neutral-600">Selected: <strong className="text-neutral-900">{voice}</strong> · {model}</p><button onClick={publish} disabled={busy || !data.keyConfigured || !active || !inboundBound || !inboundVerified || !selected} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Publishing…" : "Save voice & publish"}</button></div>
