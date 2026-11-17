@@ -53,7 +53,7 @@ const checks = [
   ["Google Contacts import is paginated and deduplicated", googleWorkspace.includes('action === "contacts.import"') && googleWorkspace.includes("phoneSet") && googleWorkspace.includes("emailSet") && contactsMigration.includes("add column if not exists email")],
   ["Paylink ID and transaction verification schema are present", paylinkMigration.includes("palpluss_paylink_id") && paylinkMigration.includes("palpluss_transaction_id")],
   ["app install is described as PWA, not APK", install.includes("Install TWIGA PWA") && install.includes("Add to Home Screen") && manifest.display === "standalone"],
-  ["recording UI does not claim local preference records provider audio", sautikit.includes("SautiKit-managed object storage") && sautikit.includes("24 hours") && sautikit.includes("not currently copying audio")],
+  ["recording UI does not claim local preference records provider audio", sautikit.includes("SautiKit-managed object storage") && sautikit.includes("24 hours") && sautikit.includes("no permanent copy in its own")],
   ["Retell is clearly identified as a legacy browser-call provider", profile.includes("Legacy Retell browser-call connection") && dashboard.includes("Provider:")],
   ["dashboard KPI cards use aligned, non-shrinking icons", dashboard.includes("grid items-stretch") && dashboard.includes("h-full min-h-[132px]") && dashboard.includes("shrink-0")],
   ["business_id architecture documented", readme.includes("twiga_business_workspace_data") && readme.includes("business_id")],
