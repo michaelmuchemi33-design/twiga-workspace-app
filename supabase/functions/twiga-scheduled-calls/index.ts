@@ -1,252 +1,344 @@
-const cors = {
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+
+const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info, x-timestamp, x-signature",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-timestamp, x-signature",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
-const API = "https://api.sautikit.com";
-const KIND = "sautikit_scheduled_call";
-const BASE = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
-const ANON = Deno.env.get("SUPABASE_ANON_KEY") || "";
-const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-type Row = Record<string, any>;
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+function normalizePhone(value: unknown) {
+  let number = safe(value, 40).replace(/[\s().-]/g, "");
+  if (/^0[17]\d{8}$/.test(number)) number = "+254" + number.slice(1);
+  else if (/^254[17]\d{8}$/.test(number)) number = "+" + number;
+  return /^\+[1-9]\d{7,14}$/.test(number) ? number : "";
+}
+const enc = new TextEncoder();
+const safe = (v: unknown, max = 2000) => String(v ?? "").trim().slice(0, max);
 
-async function adminRest(path: string, method = "GET", body?: unknown) {
-  const headers: Record<string, string> = {
-    apikey: SERVICE,
-    Authorization: "Bearer " + SERVICE,
-    Accept: "application/json",
-  };
-  if (body !== undefined) {
-    headers["Content-Type"] = "application/json";
-    headers["Prefer"] = "return=representation";
-  }
-  const response = await fetch(BASE + "/rest/v1/" + path, {
-    method,
-    headers,
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const raw = await response.text();
-  let data: any = null;
-  try { data = raw ? JSON.parse(raw) : null; } catch { data = { message: raw.slice(0, 500) }; }
-  if (!response.ok) {
-    const message = String(data?.message || data?.error_description || data?.error || "Supabase database request failed (HTTP " + response.status + ").");
-    throw Object.assign(new Error(message), { status: response.status });
-  }
-  return data;
-}
-async function getUser(auth: string) {
-  const response = await fetch(BASE + "/auth/v1/user", { headers: { apikey: ANON, Authorization: auth } });
-  if (!response.ok) return null;
-  return await response.json();
-}
-async function skRequest(key: string, path: string, method = "GET", body?: unknown) {
-  const response = await fetch(API + path, {
-    method,
-    headers: { Authorization: "Bearer " + key, Accept: "application/json", ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const raw = await response.text();
-  let data: Row = {};
-  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { message: raw.slice(0, 500) }; }
-  if (!response.ok) {
-    const message = String(data?.error?.message || data?.message || data?.error || "SautiKit request failed (HTTP " + response.status + ").");
-    throw Object.assign(new Error(message), { status: response.status });
-  }
-  return data;
-}
-function safeEqual(a: string, b: string) {
+function equalHex(a: string, b: string) {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
 }
-async function verifyCron(req: Request) {
-  const secret = Deno.env.get("TWIGA_CRON_SECRET") || "";
-  const timestamp = req.headers.get("x-timestamp") || "";
-  const signature = req.headers.get("x-signature") || "";
-  const seconds = Number(timestamp);
-  if (!secret || !Number.isFinite(seconds) || Math.abs(Date.now() / 1000 - seconds) > 120 || !signature) return false;
-  const cryptoKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const signed = new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, new TextEncoder().encode(timestamp)));
-  const expected = Array.from(signed).map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  return safeEqual(expected, signature.toLowerCase());
+async function hmacHex(secret: string, message: string) {
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(message)));
+  return Array.from(sig, b => b.toString(16).padStart(2, "0")).join("");
 }
-function nextKenyaEight(now: Date) {
-  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(now);
-  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value || 0);
-  const year = get("year"), month = get("month");
-  let day = get("day");
-  if (get("hour") >= 20) day += 1;
-  return new Date(Date.UTC(year, month - 1, day, 8, 0, 0) - 3 * 60 * 60 * 1000);
+function partsInZone(date: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(date);
+  const out: Record<string, string> = {};
+  for (const p of parts) if (p.type !== "literal") out[p.type] = p.value;
+  return { year: Number(out.year), month: Number(out.month), day: Number(out.day), hour: Number(out.hour), minute: Number(out.minute) };
 }
-function isKenyaCallingTime(now: Date) {
-  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Nairobi", hour: "2-digit", hourCycle: "h23" }).formatToParts(now);
-  const hour = Number(parts.find((part) => part.type === "hour")?.value || 0);
-  return hour >= 8 && hour < 20;
-}
-async function getProvider(businessId: string) {
-  const lines = await adminRest("twiga_phone_lines?business_id=eq." + encodeURIComponent(businessId) + "&provider=eq.sautikit&select=*&order=created_at.desc&limit=1");
-  const line = Array.isArray(lines) ? lines[0] : null;
-  if (!line || !line.outbound_enabled || line.outbound_status !== "active") throw Object.assign(new Error("This business does not have an active SautiKit outbound line."), { status: 409 });
-  const settings: Row = line.settings && typeof line.settings === "object" ? line.settings : {};
-  const agentId = String(settings.inbound_agent_id || "");
-  const numberId = String(line.provider_reference || "");
-  if (!agentId || !numberId) throw Object.assign(new Error("The existing phone line is missing its published agent or provider number ID."), { status: 409 });
-  const secret = await adminRest("rpc/twiga_get_platform_secret", "POST", { p_provider: "sautikit_platform_api_key" });
-  const key = String(secret || "");
-  if (!key) throw Object.assign(new Error("Connect the SautiKit API key in Phone & AI before scheduling calls."), { status: 409 });
-  const [agent, number, businesses] = await Promise.all([
-    skRequest(key, "/v1/agents/" + encodeURIComponent(agentId)),
-    skRequest(key, "/v1/numbers/" + encodeURIComponent(numberId)),
-    adminRest("businesses?id=eq." + encodeURIComponent(businessId) + "&select=name&limit=1"),
-  ]);
-  const inbound = number?.routing?.inbound_agent;
-  if (!inbound?.enabled || inbound.agent_id !== agentId) throw Object.assign(new Error("The existing SautiKit number is not verified against this published receptionist."), { status: 409 });
-  if (agent?.status && agent.status !== "published") throw Object.assign(new Error("Publish the receptionist before scheduling outbound calls."), { status: 409 });
-  return { line, settings, agentId, key, businessName: String(businesses?.[0]?.name || "the business") };
-}
-async function processDueCalls() {
-  const now = new Date();
-  const due = await adminRest("twiga_followups?channel=eq.phone&status=eq.pending&consent_status=eq.confirmed&metadata=cs." +
-    encodeURIComponent(JSON.stringify({ kind: KIND })) + "&due_at=lte." + encodeURIComponent(now.toISOString()) +
-    "&select=*&order=due_at.asc&limit=20");
-  let submitted = 0, deferred = 0, failed = 0;
-  for (const row of (Array.isArray(due) ? due : []) as Row[]) {
-    const callTime = new Date();
-    if (!isKenyaCallingTime(callTime)) {
-      const next = nextKenyaEight(callTime);
-      await adminRest("twiga_followups?id=eq." + encodeURIComponent(row.id) + "&status=eq.pending", "PATCH", {
-        due_at: next.toISOString(), metadata: { ...(row.metadata || {}), deferred_outside_calling_hours: true },
-      });
-      deferred++;
-      continue;
-    }
-    const nextAttempt = Number(row.attempt_count || 0) + 1;
-    const claimed = await adminRest("twiga_followups?id=eq." + encodeURIComponent(row.id) + "&status=eq.pending", "PATCH", {
-      status: "processing", attempt_count: nextAttempt, last_attempt_at: callTime.toISOString(),
-    });
-    if (!Array.isArray(claimed) || !claimed.length) continue;
-    try {
-      const provider = await getProvider(String(row.business_id));
-      const outbound = String(provider.settings.sautikit_scripts?.outbound ||
-        "Introduce yourself and the business, explain the reason for calling, ask whether this is a convenient time, keep the conversation brief, and respect requests not to be called again.");
-      const call = await skRequest(provider.key, "/v1/agents/" + encodeURIComponent(provider.agentId) + "/send", "POST", {
-        to: String(row.phone_number),
-        prompt_template: "You are calling on behalf of {{business_name}}. Reason for calling: {{call_reason}}. " + outbound,
-        variables: { business_name: provider.businessName, call_reason: String(row.task || "Customer follow-up") },
-      });
-      const callId = String(call.call_id || call.id || call.call?.id || "");
-      await adminRest("twiga_call_records", "POST", {
-        business_id: row.business_id, provider: "sautikit", provider_call_id: callId || null,
-        channel: "phone", direction: "outbound", from_number: provider.line.line_number,
-        to_number: row.phone_number, status: "queued", created_by: row.created_by || null,
-        metadata: { scheduled_followup_id: row.id, agent_id: provider.agentId, dispatch_status: "submitted" },
-      });
-      await adminRest("twiga_followups?id=eq." + encodeURIComponent(row.id), "PATCH", {
-        status: "completed", completed_at: new Date().toISOString(),
-        metadata: { ...(row.metadata || {}), dispatch_status: "submitted", provider_call_id: callId || null },
-      });
-      const repeat = String(row.metadata?.repeat || "none");
-      if (repeat === "daily" || repeat === "weekly") {
-        const nextAt = new Date(row.due_at);
-        nextAt.setUTCDate(nextAt.getUTCDate() + (repeat === "daily" ? 1 : 7));
-        const nextId = crypto.randomUUID();
-        await adminRest("twiga_followups", "POST", {
-          id: nextId, business_id: row.business_id, customer_name: row.customer_name || null,
-          phone_number: row.phone_number, task: row.task, channel: "phone", due_at: nextAt.toISOString(),
-          status: "pending", consent_status: "confirmed", created_by: row.created_by || null,
-          metadata: { ...(row.metadata || {}), series_id: String(row.metadata?.series_id || row.id), occurrence: Number(row.metadata?.occurrence || 1) + 1, dispatch_status: null },
-        });
-      }
-      submitted++;
-    } catch (error) {
-      const status = Number((error as any)?.status || 0);
-      const retryable = status === 429 || status >= 500 || status === 0;
-      const canRetry = retryable && nextAttempt < 3;
-      const message = error instanceof Error ? error.message : "Provider submission failed.";
-      await adminRest("twiga_followups?id=eq." + encodeURIComponent(row.id), "PATCH", {
-        status: canRetry ? "pending" : "failed",
-        due_at: canRetry ? new Date(Date.now() + 10 * 60 * 1000).toISOString() : row.due_at,
-        last_attempt_at: new Date().toISOString(),
-        metadata: { ...(row.metadata || {}), dispatch_status: canRetry ? "retrying" : "failed", last_error: message.slice(0, 300) },
-      });
-      failed++;
-    }
+function localToUtc(year: number, month: number, day: number, hour: number, minute: number, timezone: string) {
+  const target = Date.UTC(year, month - 1, day, hour, minute);
+  let guess = new Date(target);
+  for (let i = 0; i < 3; i++) {
+    const p = partsInZone(guess, timezone);
+    const represented = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute);
+    guess = new Date(guess.getTime() + target - represented);
   }
-  return { processed: Array.isArray(due) ? due.length : 0, submitted, deferred, failed };
+  return guess;
+}
+function nextWindow(date: Date, timezone: string, start: string, end: string) {
+  const p = partsInZone(date, timezone);
+  const hm = (v: string) => {
+    const [h, m] = String(v || "08:00").split(":").map(Number);
+    return h * 60 + m;
+  };
+  const nowMin = p.hour * 60 + p.minute, startMin = hm(start), endMin = hm(end);
+  if (nowMin >= startMin && nowMin < endMin) return null;
+  let y = p.year, mo = p.month, d = p.day;
+  if (nowMin >= endMin) {
+    const next = new Date(Date.UTC(y, mo - 1, d + 1));
+    y = next.getUTCFullYear(); mo = next.getUTCMonth() + 1; d = next.getUTCDate();
+  }
+  const sh = Math.floor(startMin / 60), sm = startMin % 60;
+  return localToUtc(y, mo, d, sh, sm, timezone);
+}
+async function setJob(admin: any, id: string, values: Record<string, unknown>) {
+  const { error } = await admin.from("twiga_scheduled_calls").update({ ...values, updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw error;
 }
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "POST only." }, 405);
   try {
-    if (!BASE || !SERVICE) return json({ error: "TWIGA server is not configured." }, 503);
+    const url = Deno.env.get("SUPABASE_URL") || "";
+    const service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    if (!url || !service) return json({ error: "TWIGA server is not configured." }, 503);
+    const admin = createClient(url, service, { auth: { persistSession: false, autoRefreshToken: false } });
     const body = await req.json().catch(() => ({}));
-    const action = String(body.action || "");
-    if (action === "process_due_calls") {
-      if (!(await verifyCron(req))) return json({ error: "Scheduled worker signature is invalid or expired." }, 401);
-      return json(await processDueCalls());
+    const action = safe(body.action, 80);
+
+    // User-facing queue actions authenticate the caller's Supabase JWT and verify business ownership.
+    if (action !== "process_due_calls") {
+      const anon = Deno.env.get("SUPABASE_ANON_KEY") || "";
+      const authHeader = safe(req.headers.get("Authorization"), 4000);
+      const token = authHeader.replace(/^Bearer\s+/i, "");
+      if (!anon || !token) return json({ error: "Sign in to manage scheduled calls." }, 401);
+      const userClient = createClient(url, anon, { global: { headers: { Authorization: "Bearer " + token } }, auth: { persistSession: false, autoRefreshToken: false } });
+      const { data: userData, error: authError } = await userClient.auth.getUser(token);
+      const user = userData?.user;
+      if (authError || !user) return json({ error: "Your session is invalid or expired. Sign in again." }, 401);
+      const businessId = safe(body.businessId, 80);
+      if (!businessId) return json({ error: "Choose a business workspace first." }, 400);
+      const { data: member, error: memberError } = await admin.from("business_members").select("role").eq("business_id", businessId).eq("user_id", user.id).maybeSingle();
+      if (memberError) throw memberError;
+      if (!member || !["owner", "admin", "manager"].includes(String(member.role || ""))) return json({ error: "Only a business owner, admin or manager can manage scheduled calls." }, 403);
+
+      if (action === "list") {
+        const { data: rows, error } = await admin.from("twiga_scheduled_calls").select("*").eq("business_id", businessId).order("scheduled_at", { ascending: false }).limit(100);
+        if (error) throw error;
+        const calls = (rows || []).map((row: any) => ({ id: row.id, phone_number: row.phone_number, task: row.reason, due_at: row.scheduled_at, status: row.status, last_error: row.last_error, metadata: { ...(row.metadata || {}), series_id: row.metadata?.series_id || row.id, repeat: row.metadata?.repeat || "none", dispatch_status: row.status, trigger_type: row.trigger_type } }));
+        return json({ calls });
+      }
+
+      if (action === "schedule") {
+        if (body.authorised !== true) return json({ error: "Explicit recipient consent is required before scheduling calls." }, 400);
+        const rawContacts = Array.isArray(body.contacts) ? body.contacts : [];
+        if (!rawContacts.length || rawContacts.length > 100) return json({ error: "Schedule between 1 and 100 recipients per batch." }, 400);
+        const contacts = Array.from(new Map(rawContacts.map((item: any) => {
+          const phone = normalizePhone(typeof item === "string" ? item : item?.phone);
+          return [phone, { phone, name: safe(item?.name, 120) }];
+        }).filter(([phone]) => !!phone)).values());
+        if (!contacts.length || contacts.length !== rawContacts.length) return json({ error: "One or more phone numbers are invalid. Use Kenyan 07… / 01… or international +country format." }, 400);
+        const reason = safe(body.reason, 500);
+        const scheduledAt = new Date(body.scheduledAt);
+        if (!reason) return json({ error: "Enter the reason for calling." }, 400);
+        if (!Number.isFinite(scheduledAt.getTime()) || scheduledAt.getTime() < Date.now() + 30000) return json({ error: "Choose a future call time at least 30 seconds from now." }, 400);
+        const repeat = ["daily", "weekly"].includes(String(body.repeat)) ? String(body.repeat) : "none";
+        const repeatCount = repeat === "none" ? 1 : Math.max(2, Math.min(30, Number(body.repeatCount) || 4));
+        const triggerTypes = ["timer", "missed_call", "appointment_reminder", "follow_up", "conditional"];
+        const triggerType = triggerTypes.includes(String(body.triggerType)) ? String(body.triggerType) : "timer";
+        const onlyIfMissed = body.onlyIfMissed === true || triggerType === "missed_call";
+        const onlyIfUnpaid = body.onlyIfUnpaid === true;
+        const sourceCallId = safe(body.sourceCallId, 80);
+        const orderId = safe(body.orderId, 80);
+        if (onlyIfMissed && !/^[0-9a-f-]{36}$/i.test(sourceCallId)) return json({ error: "A valid source call record ID is required for a missed-call condition." }, 400);
+        if (onlyIfUnpaid && !/^[0-9a-f-]{36}$/i.test(orderId)) return json({ error: "A valid order ID is required for an unpaid-order condition." }, 400);
+        if (onlyIfMissed) {
+          const { data: sourceCall, error: sourceError } = await admin.from("twiga_call_records").select("id,status,direction").eq("id", sourceCallId).eq("business_id", businessId).eq("direction", "inbound").maybeSingle();
+          if (sourceError) throw sourceError;
+          if (!sourceCall) return json({ error: "Choose a real inbound call record from this business." }, 400);
+        }
+        if (onlyIfUnpaid) {
+          const { data: order, error: orderError } = await admin.from("twiga_orders").select("id,payment_status").eq("id", orderId).eq("business_id", businessId).maybeSingle();
+          if (orderError) throw orderError;
+          if (!order) return json({ error: "The order ID does not belong to this business." }, 400);
+          if (String(order.payment_status || "").toLowerCase() !== "unpaid") return json({ error: "That order is not currently marked unpaid; no reminder call was scheduled." }, 400);
+        }
+        const windowStart = safe(body.callingWindowStart || "08:00", 5);
+        const windowEnd = safe(body.callingWindowEnd || "20:00", 5);
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(windowStart) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(windowEnd) || windowStart >= windowEnd) return json({ error: "The allowed calling window must be a valid start and end time." }, 400);
+        const seriesId = crypto.randomUUID();
+        const timezone = safe(body.timezone || "Africa/Nairobi", 80);
+        const rows = contacts.map((contact: any) => ({
+          business_id: businessId, customer_name: contact.name, phone_number: contact.phone, reason,
+          scheduled_at: scheduledAt.toISOString(), timezone, consent_status: "opted_in", trigger_type: triggerType,
+          trigger_conditions: { only_if_missed_call: onlyIfMissed, only_if_unpaid: onlyIfUnpaid, order_id: orderId || null },
+          source_call_id: sourceCallId || null, calling_window_start: windowStart, calling_window_end: windowEnd,
+          status: "scheduled", attempt_count: 0, max_attempts: 3, retry_interval_minutes: 30, created_by: user.id,
+          metadata: { series_id: seriesId, repeat, repeat_remaining: repeatCount, dispatch_status: "pending" },
+        }));
+        const { data: inserted, error } = await admin.from("twiga_scheduled_calls").insert(rows).select("id");
+        if (error) throw error;
+        return json({ success: true, scheduledCount: inserted?.length || rows.length, seriesId, message: (inserted?.length || rows.length) + " consented call(s) added to the queue." });
+      }
+
+      if (action === "cancel") {
+        const seriesId = safe(body.seriesId, 80);
+        if (!seriesId) return json({ error: "Choose a scheduled call series to cancel." }, 400);
+        const values = { status: "cancelled", last_error: "Cancelled by the business workspace.", updated_at: new Date().toISOString() };
+        const { data: seriesRows, error: seriesError } = await admin.from("twiga_scheduled_calls").update(values).eq("business_id", businessId).filter("metadata->>series_id", "eq", seriesId).in("status", ["scheduled", "waiting_for_provider"]).select("id");
+        if (seriesError) throw seriesError;
+        const { data: singleRows, error: singleError } = await admin.from("twiga_scheduled_calls").update(values).eq("business_id", businessId).eq("id", seriesId).in("status", ["scheduled", "waiting_for_provider"]).select("id");
+        if (singleError) throw singleError;
+        const count = (seriesRows?.length || 0) + (singleRows?.length || 0);
+        return json({ success: true, cancelledCount: count, message: count + " future call(s) cancelled." });
+      }
+      return json({ error: "Unknown scheduled-call action." }, 400);
     }
-    const auth = req.headers.get("Authorization") || "";
-    if (!auth.startsWith("Bearer ") || !ANON) return json({ error: "Sign in required." }, 401);
-    const user = await getUser(auth);
-    if (!user?.id) return json({ error: "Your sign-in has expired. Sign in again." }, 401);
-    const businessId = String(body.businessId || "").trim();
-    if (!businessId) return json({ error: "Choose a business workspace first." }, 400);
-    const [admins, memberships] = await Promise.all([
-      adminRest("twiga_platform_admins?user_id=eq." + encodeURIComponent(user.id) + "&select=user_id&limit=1"),
-      adminRest("business_members?business_id=eq." + encodeURIComponent(businessId) + "&user_id=eq." + encodeURIComponent(user.id) + "&select=role&limit=1"),
-    ]);
-    const isPlatformAdmin = Array.isArray(admins) && admins.length > 0;
-    const membership = Array.isArray(memberships) ? memberships[0] : null;
-    if (!membership && !isPlatformAdmin) return json({ error: "You are not authorised for this business." }, 403);
-    const canManage = isPlatformAdmin || ["owner", "admin"].includes(String(membership?.role || ""));
-    if (action === "list") {
-      const calls = await adminRest("twiga_followups?business_id=eq." + encodeURIComponent(businessId) +
-        "&channel=eq.phone&metadata=cs." + encodeURIComponent(JSON.stringify({ kind: KIND })) +
-        "&select=id,phone_number,task,due_at,status,metadata,attempt_count,last_attempt_at,completed_at,created_at&order=due_at.asc&limit=100");
-      return json({ calls: Array.isArray(calls) ? calls : [] });
+
+    const timestamp = safe(req.headers.get("x-timestamp"), 32);
+    const signature = safe(req.headers.get("x-signature"), 128).toLowerCase();
+    const seconds = Number(timestamp);
+    if (!/^\d{10,13}$/.test(timestamp) || !Number.isFinite(seconds) || Math.abs(Date.now() / 1000 - seconds) > 300) {
+      return json({ error: "Invalid or expired scheduler timestamp." }, 401);
     }
-    if (action === "schedule") {
-      if (!canManage) return json({ error: "Only the business owner, admin or TWIGA platform administrator can schedule calls." }, 403);
-      if (body.authorised !== true) return json({ error: "Confirm that every recipient has authorised these calls." }, 400);
-      const contacts = Array.isArray(body.contacts) ? body.contacts : [];
-      if (!contacts.length || contacts.length > 100) return json({ error: "Provide between 1 and 100 recipient phone numbers." }, 400);
-      const reason = String(body.reason || "").trim().slice(0, 500);
-      if (!reason) return json({ error: "Enter the reason for calling." }, 400);
-      const scheduledAt = new Date(String(body.scheduledAt || ""));
-      if (!Number.isFinite(scheduledAt.getTime()) || scheduledAt.getTime() < Date.now() + 30000) return json({ error: "Choose a future call time at least 30 seconds from now." }, 400);
-      const repeat = ["none", "daily", "weekly"].includes(String(body.repeat || "")) ? String(body.repeat) : "none";
-      const provider = await getProvider(businessId);
-      const numbers = Array.from(new Set(contacts.map((contact: Row) => String(contact?.phone || "").trim())));
-      if (numbers.some((phone) => !/^\+[1-9]\d{7,14}$/.test(phone))) return json({ error: "All phone numbers must use international format, for example +2547XXXXXXXX." }, 400);
-      const rows = numbers.map((phone) => {
-        const id = crypto.randomUUID();
-        return {
-          id, business_id: businessId, customer_name: null, phone_number: phone, task: reason,
-          channel: "phone", due_at: scheduledAt.toISOString(), status: "pending", consent_status: "confirmed", created_by: user.id,
-          metadata: { kind: KIND, series_id: id, agent_id: provider.agentId, repeat, timezone: String(body.timezone || "Africa/Nairobi"), scheduled_by: user.id, dispatch_status: "scheduled" },
-        };
-      });
-      await adminRest("twiga_followups", "POST", rows);
-      return json({ scheduledCount: rows.length, message: rows.length + " authorised call(s) scheduled. The same published SautiKit agent and voice will be used." });
+    const { data: cronSecret, error: cronSecretError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "twiga_scheduled_calls_cron_secret" });
+    if (cronSecretError || !cronSecret) return json({ error: "Scheduled-call signing secret is not configured." }, 503);
+    const expected = await hmacHex(String(cronSecret), timestamp);
+    if (!equalHex(signature, expected)) return json({ error: "Invalid scheduler signature." }, 401);
+
+    const { data: keyData, error: keyError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "sautikit_platform_api_key" });
+    const apiKey = String(keyData || "");
+    if (keyError || !apiKey) {
+      await admin.from("twiga_scheduled_calls").update({
+        status: "waiting_for_provider",
+        last_error: "Connect the SautiKit API key in Connections to enable scheduled calls.",
+        updated_at: new Date().toISOString(),
+      }).eq("status", "scheduled").lte("scheduled_at", new Date().toISOString());
+      return json({ ok: true, processed: 0, waitingForProvider: true });
     }
-    if (action === "cancel") {
-      if (!canManage) return json({ error: "Only the business owner, admin or TWIGA platform administrator can cancel scheduled calls." }, 403);
-      const seriesId = String(body.seriesId || "").trim();
-      if (!seriesId) return json({ error: "Choose a scheduled call series to cancel." }, 400);
-      const filter = encodeURIComponent(JSON.stringify({ kind: KIND, series_id: seriesId }));
-      const cancelled = await adminRest("twiga_followups?business_id=eq." + encodeURIComponent(businessId) +
-        "&channel=eq.phone&status=eq.pending&metadata=cs." + filter, "PATCH", {
-          status: "cancelled", completed_at: new Date().toISOString(),
-          metadata: { cancelled_by: user.id, kind: KIND, series_id: seriesId, dispatch_status: "cancelled" },
+    // Poll previously accepted calls so the queue and call history show their real outcome.
+    const { data: submittedCalls } = await admin.from("twiga_scheduled_calls")
+      .select("*")
+      .eq("status", "submitted").not("provider_call_id", "is", null)
+      .order("updated_at", { ascending: true }).limit(20);
+    let polledCalls = 0;
+    for (const item of submittedCalls || []) {
+      try {
+        const statusResponse = await fetch("https://api.sautikit.com/v1/calls/" + encodeURIComponent(String(item.provider_call_id)), {
+          headers: { Authorization: "Bearer " + apiKey, Accept: "application/json" },
+          signal: AbortSignal.timeout(12000),
         });
-      return json({ cancelledCount: Array.isArray(cancelled) ? cancelled.length : 0, message: "Future call(s) in this series cancelled." });
+        if (!statusResponse.ok) continue;
+        const rawStatus = await statusResponse.text();
+        let callStatus: any = {};
+        try { callStatus = rawStatus ? JSON.parse(rawStatus) : {}; } catch { callStatus = {}; }
+        const callData = callStatus.data && typeof callStatus.data === "object" ? callStatus.data : callStatus;
+        const providerStatus = String(callData.status || "").toLowerCase();
+        if (!["completed", "failed", "no_answer", "busy", "canceled", "cancelled"].includes(providerStatus)) continue;
+        const finalStatus = providerStatus === "completed" ? "completed" : "failed";
+        const finishedAt = callData.ended_at || callData.completed_at || new Date().toISOString();
+        await setJob(admin, item.id, { status: finalStatus, completed_at: finishedAt, last_error: finalStatus === "failed" ? (providerStatus === "no_answer" ? "The contact did not answer." : providerStatus === "busy" ? "The contact's line was busy." : "The provider did not complete the call.") : null });
+        const repeatMode = safe(item.metadata?.repeat || "none", 20);
+        const repeatRemaining = Number(item.metadata?.repeat_remaining || 1);
+        if (finalStatus === "completed" && ["daily", "weekly"].includes(repeatMode) && repeatRemaining > 1) {
+          const nextAt = new Date(item.scheduled_at);
+          nextAt.setUTCDate(nextAt.getUTCDate() + (repeatMode === "daily" ? 1 : 7));
+          const nextMetadata = { ...(item.metadata || {}), repeat_remaining: repeatRemaining - 1, dispatch_status: "pending" };
+          const { error: repeatError } = await admin.from("twiga_scheduled_calls").insert({
+            business_id: item.business_id, customer_name: item.customer_name || "", phone_number: item.phone_number, reason: item.reason,
+            scheduled_at: nextAt.toISOString(), timezone: item.timezone || "Africa/Nairobi", consent_status: item.consent_status,
+            trigger_type: item.trigger_type, trigger_conditions: item.trigger_conditions || {}, source_call_id: item.source_call_id || null,
+            calling_window_start: item.calling_window_start || "08:00", calling_window_end: item.calling_window_end || "20:00",
+            voice_model_id: item.voice_model_id || null, voice_id: item.voice_id || null, status: "scheduled", attempt_count: 0,
+            max_attempts: item.max_attempts || 3, retry_interval_minutes: item.retry_interval_minutes || 30, created_by: item.created_by || null, metadata: nextMetadata,
+          });
+          if (repeatError) console.error("Could not create next repeat call:", repeatError.message);
+        }
+        await admin.from("twiga_call_records").update({
+          status: providerStatus,
+          ended_at: finishedAt,
+          duration_seconds: Number(callData.duration_seconds || callData.duration_s || 0),
+          transcript: typeof callData.transcript === "string" ? callData.transcript.slice(0, 30000) : undefined,
+          summary: typeof callData.summary === "string" ? callData.summary.slice(0, 4000) : undefined,
+          metadata: { scheduled_call_id: item.id, provider_status: providerStatus },
+        }).eq("provider_call_id", item.provider_call_id).eq("business_id", item.business_id);
+        polledCalls++;
+      } catch (pollError) { console.error("Could not refresh SautiKit call status:", pollError instanceof Error ? pollError.message : "unknown error"); }
     }
-    return json({ error: "Unknown scheduled-call action." }, 404);
-  } catch (error) {
-    const err = error as Error & { status?: number };
-    console.error("twiga-scheduled-calls", err.message);
-    return json({ error: err.message || "Scheduled-call operation failed." }, err.status && err.status >= 400 && err.status < 600 ? err.status : 500);
+    await admin.from("twiga_scheduled_calls").update({ status: "scheduled", last_error: null, updated_at: new Date().toISOString() })
+      .eq("status", "waiting_for_provider");
+
+    const { data: jobs, error: claimError } = await admin.rpc("twiga_claim_scheduled_calls", { p_limit: 10 });
+    if (claimError) throw claimError;
+    const claimed = Array.isArray(jobs) ? jobs : [];
+    const summary = { ok: true, claimed: claimed.length, submitted: 0, polled: polledCalls, deferred: 0, skipped: 0, failed: 0 };
+
+    for (const job of claimed) {
+      try {
+        const conditions = job.trigger_conditions && typeof job.trigger_conditions === "object" ? job.trigger_conditions : {};
+        if (job.trigger_type === "missed_call" || conditions.only_if_missed_call === true) {
+          if (!job.source_call_id) {
+            await setJob(admin, job.id, { status: "skipped", last_error: "A source missed-call record is required for this trigger." });
+            summary.skipped++; continue;
+          }
+          const { data: sourceCall } = await admin.from("twiga_call_records").select("status").eq("id", job.source_call_id).eq("business_id", job.business_id).maybeSingle();
+          if (!sourceCall || !["missed", "no_answer", "failed"].includes(String(sourceCall.status || "").toLowerCase())) {
+            await setJob(admin, job.id, { status: "skipped", last_error: "The source call is no longer a missed or unanswered call." });
+            summary.skipped++; continue;
+          }
+        }
+        if (conditions.only_if_unpaid === true) {
+          const orderId = safe(conditions.order_id, 80);
+          if (!orderId) {
+            await setJob(admin, job.id, { status: "skipped", last_error: "An order ID is required for the unpaid-order condition." });
+            summary.skipped++; continue;
+          }
+          const { data: order } = await admin.from("twiga_orders").select("payment_status").eq("id", orderId).eq("business_id", job.business_id).maybeSingle();
+          if (!order || String(order.payment_status || "").toLowerCase() !== "unpaid") {
+            await setJob(admin, job.id, { status: "skipped", last_error: "The order is paid or no longer exists; no call was placed." });
+            summary.skipped++; continue;
+          }
+        }
+
+        const timezone = safe(job.timezone || "Africa/Nairobi", 80);
+        const deferredUntil = nextWindow(new Date(), timezone, String(job.calling_window_start || "08:00"), String(job.calling_window_end || "20:00"));
+        if (deferredUntil) {
+          await setJob(admin, job.id, { status: "scheduled", scheduled_at: deferredUntil.toISOString(), last_error: "Deferred to the next permitted calling window." });
+          summary.deferred++; continue;
+        }
+
+        const { data: line, error: lineError } = await admin.from("twiga_phone_lines").select("*")
+          .eq("business_id", job.business_id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+        if (lineError) throw lineError;
+        const settings = line?.settings && typeof line.settings === "object" ? line.settings : {};
+        const agentId = safe(settings.inbound_agent_id, 100);
+        if (!line || line.provider !== "sautikit" || line.outbound_enabled !== true || line.outbound_status !== "active" || !agentId) {
+          await setJob(admin, job.id, { status: "waiting_for_provider", last_error: "This business needs an active SautiKit outbound line and a published agent before calls can be sent." });
+          summary.deferred++; continue;
+        }
+        const { data: business, error: businessError } = await admin.from("businesses").select("name").eq("id", job.business_id).maybeSingle();
+        if (businessError) throw businessError;
+        const scripts = settings.sautikit_scripts && typeof settings.sautikit_scripts === "object" ? settings.sautikit_scripts : {};
+        const outbound = safe(scripts.outbound || "Identify the business, explain the reason for calling, ask if this is a convenient time, keep the call brief, and respect requests not to be contacted again.", 5000);
+        const to = safe(job.phone_number, 24);
+        if (!/^\+[1-9]\d{7,14}$/.test(to)) throw new Error("The destination number is not in international format.");
+        const response = await fetch("https://api.sautikit.com/v1/agents/" + encodeURIComponent(agentId) + "/send", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + apiKey, "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({
+            to,
+            prompt_template: "You are calling on behalf of {{business_name}}. Reason for calling: {{call_reason}}. " + outbound,
+            variables: { business_name: String(business?.name || "the business"), call_reason: safe(job.reason, 500) },
+          }),
+          signal: AbortSignal.timeout(20000),
+        });
+        const raw = await response.text();
+        let call: any = {};
+        try { call = raw ? JSON.parse(raw) : {}; } catch { call = {}; }
+        if (!response.ok) throw new Error("SautiKit call request failed (HTTP " + response.status + ").");
+        const providerCallId = safe(call.call_id || call.id || call.data?.call_id || call.data?.id, 120);
+        await setJob(admin, job.id, { status: "submitted", provider_call_id: providerCallId || null, last_error: null });
+        const { error: recordError } = await admin.from("twiga_call_records").insert({
+          business_id: job.business_id,
+          provider: "sautikit",
+          provider_call_id: providerCallId || null,
+          channel: "pstn",
+          direction: "outbound",
+          from_number: line.line_number,
+          to_number: to,
+          status: "queued",
+          created_by: job.created_by || null,
+          metadata: { scheduled_call_id: job.id, trigger_type: job.trigger_type, consent_status: job.consent_status },
+        });
+        if (recordError) console.error("Scheduled call record insert failed:", recordError.message);
+        summary.submitted++;
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Scheduled call failed.";
+        const attempt = Number(job.attempt_count || 1), maxAttempts = Number(job.max_attempts || 1);
+        const retryable = attempt < maxAttempts && !/HTTP 4\d\d|not in international format/i.test(message);
+        if (retryable) {
+          const retryAt = new Date(Date.now() + Number(job.retry_interval_minutes || 30) * 60000).toISOString();
+          await setJob(admin, job.id, { status: "scheduled", scheduled_at: retryAt, last_error: message });
+        } else {
+          await setJob(admin, job.id, { status: "failed", last_error: message });
+        }
+        summary.failed++;
+      }
+    }
+    return json(summary);
+  } catch (e) {
+    console.error("twiga-scheduled-calls", e);
+    return json({ error: e instanceof Error ? e.message : "Scheduled-call worker failed." }, 500);
   }
 });

@@ -26,9 +26,9 @@ function loadGoogle() {
   });
 }
 
-export default function Profile({ userId, businessId, businesses, onBusinessChange, onRefreshBusinesses, onCreateBusiness }: {
+export default function Profile({ userId, businessId, businesses, onBusinessChange, onRefreshBusinesses, onCreateBusiness, onOpenPhone }: {
   userId?: string; businessId?: string; businesses: Business[];
-  onBusinessChange: (id: string) => void; onRefreshBusinesses: () => Promise<void>; onCreateBusiness: () => void;
+  onBusinessChange: (id: string) => void; onRefreshBusinesses: () => Promise<void>; onCreateBusiness: () => void; onOpenPhone?: () => void;
 }) {
   const [user, setUser] = useState<any>(null);
   const [name, setName] = useState("");
@@ -254,7 +254,6 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
 
   useEffect(() => { void loadGoogleStatus(); }, [loadGoogleStatus]);
   useEffect(() => { void loadXaiConfig(); }, [loadXaiConfig]);
-  useEffect(() => { void loadRetell(); }, [loadRetell]);
   useEffect(() => { void loadPal(); }, [loadPal]);
 
   const saveProfile = async () => {
@@ -482,42 +481,8 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Voice & receptionist</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Retell AI</h2><p className="mt-1 text-sm text-neutral-500">A shared TWIGA Retell account can power separate business agents. Platform and optional business keys are stored in Supabase Vault.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{retell.keyConfigured ? (retell.keySource === "platform" ? "TWIGA platform key · •••• " : "Business key · •••• ") + (retell.keyLast4 || "") : "Not connected"}</span></div>
-      {!retell.keyConfigured ? <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={retellKey} onChange={(e) => setRetellKey(e.target.value)} placeholder="Retell API key for this business" className="h-11 min-w-0 flex-1 rounded-xl border px-3 text-sm" /><button onClick={saveRetellKey} disabled={busy || retellKey.length < 20 || !businessId} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Connect Retell</button></div> : <>
-        <div className="mt-4 max-w-sm"><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">AI language model</label><select value={model} onChange={(e) => setModel(e.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm"><option value="gpt-4.1-mini">GPT-4.1 mini</option></select></div>
-        <div className="mt-4 rounded-xl border border-neutral-200 p-4">
-          <p className="text-sm font-semibold text-neutral-950">Retell voice library</p>
-          <p className="mt-1 text-xs leading-5 text-neutral-500">Loaded directly from the connected Retell account. Each group shows up to three British and two African/Kenyan/South African voices, using the accent metadata from Retell.</p>
-          {voiceOptions.length === 0 ? <p className="mt-3 rounded-lg bg-neutral-50 p-3 text-sm text-neutral-600">No voices were returned. Connect a valid Retell key and refresh this page.</p> : <div className="mt-3 space-y-4">
-            {(["female", "male"] as const).map((gender) => {
-              const eligible = voiceOptions.filter((voice: any) => voice.gender === gender);
-              const british = eligible.filter((voice: any) => /british/i.test(String(voice.accent || "")) && !/african/i.test(String(voice.accent || ""))).slice(0, 3);
-              const african = eligible.filter((voice: any) => /african|kenyan|nigerian|south african|east african|west african/i.test(String(voice.accent || ""))).filter((voice: any) => !british.some((item: any) => item.voiceId === voice.voiceId)).slice(0, 2);
-              const matching = [...british, ...african];
-              return <div key={gender}>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">{gender === "female" ? "Female voices" : "Male voices"} · {matching.length} available</p>
-                {matching.length === 0 ? <p className="rounded-lg bg-neutral-50 p-3 text-xs text-neutral-500">No matching {gender} British/African accent voice is currently available in this Retell account.</p> : <div className="grid gap-2 sm:grid-cols-2">
-                  {matching.map((voice: any) => <div key={voice.voiceId} className={selectedVoice === voice.voiceId ? "rounded-xl border-2 border-orange-500 bg-orange-50 p-3" : "rounded-xl border border-neutral-200 bg-white p-3"}>
-                    <button type="button" onClick={() => setSelectedVoice(voice.voiceId)} className="flex w-full items-center justify-between gap-2 text-left">
-                      <span><span className="block text-sm font-semibold text-neutral-900">{voice.name}</span><span className="mt-1 block text-xs text-neutral-500">{[voice.gender, voice.accent, voice.provider].filter(Boolean).join(" · ")}</span></span>
-                      <span className={selectedVoice === voice.voiceId ? "rounded-full bg-orange-500 px-2.5 py-1 text-[10px] font-semibold text-white" : "rounded-full border border-neutral-200 px-2.5 py-1 text-[10px] font-semibold text-neutral-500"}>{selectedVoice === voice.voiceId ? "Selected" : "Choose"}</span>
-                    </button>
-                    {voice.previewUrl && <audio controls preload="none" src={voice.previewUrl} className="mt-2 h-9 w-full" /> }
-                  </div>)}
-                </div>}
-              </div>;
-            })}
-          </div>}
-          <p className="mt-3 text-[11px] leading-5 text-neutral-500">TWIGA applies calm, slightly slower speech settings where the selected voice provider supports them. Names and accent labels come from the Retell catalogue.</p>
-        </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Inbound instructions</label><textarea rows={3} value={inboundPrompt} onChange={(e) => setInboundPrompt(e.target.value)} className="w-full rounded-xl border p-3 text-sm" /></div><div><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Outbound instructions</label><textarea rows={3} value={outboundPrompt} onChange={(e) => setOutboundPrompt(e.target.value)} className="w-full rounded-xl border p-3 text-sm" /></div></div>
-        <div className="mt-4 rounded-xl border border-neutral-200 p-4">
-          <label className="flex items-start gap-3"><input type="checkbox" checked={recordingEnabled} onChange={(e) => setRecordingEnabled(e.target.checked)} className="mt-1 h-4 w-4 accent-orange-500" /><span><span className="block text-sm font-semibold text-neutral-900">Store call recordings and transcripts</span><span className="mt-1 block text-xs leading-5 text-neutral-500">When enabled, Retell keeps recordings and TWIGA saves available summaries/transcripts for this business. Enable only when callers are notified and you have the required consent. When off, TWIGA still stores call status, time and duration.</span></span></label>
-          {recordingEnabled && <div className="mt-3"><label className="mb-1 block text-xs font-semibold uppercase text-neutral-500">Recording notice spoken to callers</label><input value={recordingNotice} onChange={(e) => setRecordingNotice(e.target.value)} className="h-10 w-full rounded-xl border px-3 text-sm" /></div>}
-        </div>
-        <div className="mt-4 flex flex-wrap gap-2"><button onClick={publishSelected} disabled={busy || !selectedVoice} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Publish selected voice</button>{retell.config?.retell_agent_id && <button onClick={testVoice} disabled={busy} className="rounded-xl border px-4 py-2.5 text-sm font-semibold">{callStatus === "live" || callStatus === "connecting" ? "End test call" : "Test voice in browser"}</button>}</div>
-        <p className="mt-2 text-xs text-neutral-500">Browser call: {callStatus}. Microphone access is requested only when you start the test.</p>
-      </>}
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Voice & receptionist</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">TWIGA SautiKit receptionist</h2><p className="mt-1 text-sm leading-6 text-neutral-500">The live receptionist, preferred Woman voice, male voice options, inbound instructions, outbound calls and scheduled callbacks are managed together in Phone & AI. Provider keys are managed securely in Connections.</p></div><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">SautiKit</span></div>
+      <div className="mt-4 flex flex-wrap gap-2"><button onClick={onOpenPhone} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Open Phone & AI</button></div>
     </section>
     {message && <p className="rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{message}</p>}
   </div>;

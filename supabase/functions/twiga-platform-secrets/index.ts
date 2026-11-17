@@ -17,11 +17,7 @@ Deno.serve(async(req:Request)=>{
   const body=await req.json().catch(()=>({})),action=String(body.action||"get_config");
   if(action==="get_config"){
    const {data:ref}=await admin.from("twiga_platform_secret_refs").select("secret_last4,updated_at").eq("provider","xai").maybeSingle();
-   const {data:storedKey,error:keyError}=await admin.rpc("twiga_get_platform_secret",{p_provider:"xai"});
-   if(keyError) throw keyError;
-   const envKey=String(Deno.env.get("XAI_API_KEY")||"");
-   const hasKey=!!String(storedKey||"")||!!envKey;
-   return json({isAdmin:true,keyConfigured:hasKey,keySource:String(storedKey||"")?"vault":envKey?"environment":"missing",keyLast4:ref?.secret_last4||"",updatedAt:ref?.updated_at||null});
+   return json({isAdmin:true,keyConfigured:!!ref||!!Deno.env.get("XAI_API_KEY"),keySource:ref?"vault":Deno.env.get("XAI_API_KEY")?"environment":"missing",keyLast4:ref?.secret_last4||"",updatedAt:ref?.updated_at||null});
   }
   if(action==="retell.platform.status"){
    const {data:ref,error:refError}=await admin.from("twiga_platform_secret_refs").select("secret_last4,updated_at").eq("provider","retell_platform_api_key").maybeSingle();
@@ -62,15 +58,10 @@ Deno.serve(async(req:Request)=>{
    const secretRef=rows.find((x:any)=>x.provider==="google_oauth_client_secret");
    const encryptionRef=rows.find((x:any)=>x.provider==="google_token_encryption_key");
    const {data:clientId}=await admin.rpc("twiga_get_platform_secret",{p_provider:"google_oauth_client_id"});
-   const {data:clientSecret}=await admin.rpc("twiga_get_platform_secret",{p_provider:"google_oauth_client_secret"});
-   const {data:encryptionKey}=await admin.rpc("twiga_get_platform_secret",{p_provider:"google_token_encryption_key"});
    const envClientId=String(Deno.env.get("GOOGLE_CLIENT_ID")||"");
    const envClientSecret=String(Deno.env.get("GOOGLE_CLIENT_SECRET")||"");
    const envEncryptionKey=String(Deno.env.get("GOOGLE_TOKEN_ENCRYPTION_KEY")||"");
-   const resolvedClientId=String(clientId||envClientId||"");
-   const resolvedClientSecret=String(clientSecret||envClientSecret||"");
-   const resolvedEncryptionKey=String(encryptionKey||envEncryptionKey||"");
-   return json({isAdmin:true,clientId:resolvedClientId,clientIdConfigured:!!resolvedClientId,clientSecretConfigured:!!resolvedClientSecret,encryptionReady:!!resolvedEncryptionKey,clientIdSource:clientId?"vault":envClientId?"supabase_environment":"missing",clientSecretSource:clientSecret?"vault":envClientSecret?"supabase_environment":"missing",clientIdLast4:idRef?.secret_last4||"",clientSecretLast4:secretRef?.secret_last4||"",updatedAt:secretRef?.updated_at||idRef?.updated_at||null});
+   return json({isAdmin:true,clientId:String(clientId||envClientId),clientIdConfigured:!!(idRef||envClientId),clientSecretConfigured:!!(secretRef||envClientSecret),encryptionReady:!!(encryptionRef||envEncryptionKey),clientIdSource:idRef?"vault":envClientId?"supabase_environment":"missing",clientSecretSource:secretRef?"vault":envClientSecret?"supabase_environment":"missing",clientIdLast4:idRef?.secret_last4||"",clientSecretLast4:secretRef?.secret_last4||"",updatedAt:secretRef?.updated_at||idRef?.updated_at||null});
   }
   if(action==="google.oauth.save"){
    const clientId=String(body.clientId||"").trim();

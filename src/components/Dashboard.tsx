@@ -61,7 +61,7 @@ const capabilities = [
   { icon: IconSparkle, label: "Answer FAQs", detail: "Trained on you" },
 ];
 
-export default function Dashboard({ onSetup }: { onSetup: () => void }) {
+export default function Dashboard({ onSetup, onOpenPhone }: { onSetup: () => void; onOpenPhone?: () => void }) {
   const {
     tasks,
     sales,
@@ -75,6 +75,7 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
     demoMode,
   } = useStore();
   const [ownerName, setOwnerName] = useState("");
+  const [phoneLine, setPhoneLine] = useState<any>(null);
 
   useEffect(() => {
     if (demoMode || !supabase || !businessId) return;
@@ -82,11 +83,13 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
     void Promise.all([
       supabase.auth.getUser(),
       supabase.from("twiga_business_profiles").select("owner_name,owner_email").eq("business_id", businessId).maybeSingle(),
-    ]).then(([authResult, profileResult]) => {
+      supabase.from("twiga_phone_lines").select("line_number,inbound_enabled,outbound_enabled,inbound_status,outbound_status,status,settings,created_at").eq("business_id", businessId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    ]).then(([authResult, profileResult, phoneResult]) => {
       if (!active) return;
       const savedName = String(profileResult.data?.owner_name || "");
       const accountName = String(authResult.data.user?.user_metadata?.full_name || authResult.data.user?.user_metadata?.name || "");
       setOwnerName(savedName || accountName);
+      setPhoneLine(phoneResult.data || null);
     });
     return () => { active = false; };
   }, [demoMode, businessId]);
@@ -104,12 +107,13 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
   };
   const businessTimeZone = resolveBusinessTimeZone(settings.business.timezone);
   const todayKey = new Date().toLocaleDateString("en-CA", { timeZone: businessTimeZone });
-  const callsToday = callRecords.filter((c) => new Date(c.started_at || c.created_at).toLocaleDateString("en-CA", { timeZone: businessTimeZone }) === todayKey).length;
-  const callsHandled = callRecords.filter((c) => Date.now() - new Date(c.started_at || c.created_at).getTime() <= 7 * 24 * 60 * 60 * 1000).length;
+  const callsToday = callRecords.filter((c) => String(c.status || "").toLowerCase() === "completed" && new Date(c.started_at || c.created_at).toLocaleDateString("en-CA", { timeZone: businessTimeZone }) === todayKey).length;
+  const callsHandled = callRecords.filter((c) => String(c.status || "").toLowerCase() === "completed" && Date.now() - new Date(c.started_at || c.created_at).getTime() <= 7 * 24 * 60 * 60 * 1000).length;
   const bookings = callRecords.filter((c) => Boolean(c.structured_data?.appointment_request || c.structured_data?.appointment_start_iso)).length;
   const ongoingCalls = callRecords.filter((c) => ["in_progress", "ringing", "ongoing"].includes(String(c.status).toLowerCase()));
   const recentCalls = callRecords.slice(0, 8);
-  const averageDuration = callRecords.length ? Math.round(callRecords.reduce((sum, c) => sum + Number(c.duration_seconds || 0), 0) / callRecords.length) : 0;
+  const completedCalls = callRecords.filter((c) => String(c.status || "").toLowerCase() === "completed");
+  const averageDuration = completedCalls.length ? Math.round(completedCalls.reduce((sum, c) => sum + Number(c.duration_seconds || 0), 0) / completedCalls.length) : 0;
   const formatDuration = (seconds: number) => seconds >= 60 ? Math.floor(seconds / 60) + "m " + String(seconds % 60).padStart(2, "0") + "s" : seconds + "s";
   const leads = customers.length;
 
@@ -196,6 +200,18 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
         ))}
       </div>
 
+      <Card className="rounded-2xl border-neutral-200 bg-white shadow-sm">
+        <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Your TWIGA phone number</p>
+            <p className="mt-1 text-2xl font-bold tracking-tight text-neutral-950">{phoneLine?.line_number || "No phone line assigned yet"}</p>
+            <p className="mt-1 text-sm text-neutral-500">{phoneLine ? `Inbound: ${phoneLine.inbound_status || (phoneLine.inbound_enabled ? "enabled" : "off")} · Outbound: ${phoneLine.outbound_status || (phoneLine.outbound_enabled ? "enabled" : "off")}` : "Connect and manage your existing business line in Phone & AI."}</p>
+            {phoneLine && <p className="mt-1 text-xs text-neutral-500">The provider route is configured; a real inbound call is still required to verify pickup and audio.</p>}
+          </div>
+          <div className="flex shrink-0 items-center gap-2"><Badge className={cn("border", phoneLine?.outbound_status === "active" ? "border-orange-200 bg-orange-50 text-orange-700" : "border-neutral-200 bg-neutral-100 text-neutral-600")}>{phoneLine?.outbound_status === "active" ? "Outbound active" : "Phone setup"}</Badge><Button onClick={onOpenPhone} className="bg-neutral-950 text-white hover:bg-neutral-800">Manage Phone & AI</Button></div>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="rounded-2xl border-neutral-900 bg-neutral-950 text-white shadow-lg lg:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -204,7 +220,7 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
                 <IconMic className="h-5 w-5 text-orange-500" /> {"Recent Calls"}
               </CardTitle>
               <CardDescription className="text-neutral-400">
-                {"Retell call history for this business. Transcripts are saved only when recording is enabled."}
+                {"AI call history for this business. Transcripts are saved only when recording is enabled."}
               </CardDescription>
             </div>
             <Badge className="border-orange-500/30 bg-orange-500/20 text-orange-400">
@@ -213,12 +229,12 @@ export default function Dashboard({ onSetup }: { onSetup: () => void }) {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="live-scroll max-h-64 space-y-3 overflow-y-auto pr-2">
-              {recentCalls.length === 0 && <p className="rounded-xl border border-dashed border-neutral-700 py-8 text-center text-sm text-neutral-500">{demoMode ? "This demo does not generate fake call history. Connect and test a real line in your live workspace to see calls here." : "No Retell calls yet. Publish a receptionist and complete a test call to see real activity here."}</p>}
+              {recentCalls.length === 0 && <p className="rounded-xl border border-dashed border-neutral-700 py-8 text-center text-sm text-neutral-500">{demoMode ? "This demo does not generate fake call history. Connect and test a real line in your live workspace to see calls here." : "No AI calls yet. Publish the SautiKit receptionist in Phone & AI and complete a test call to see real activity here."}</p>}
               {recentCalls.map((call) => {
                 const number = call.direction === "outbound" ? (call.to_number || call.from_number) : (call.from_number || call.to_number);
                 const callState = String(call.status || "unknown").toLowerCase();
                 const label = String(call.structured_data?.customer_name || "Caller");
-                const intent = String(call.structured_data?.enquiry_type || call.structured_data?.intent || call.channel || "Call");
+                const intent = String(call.structured_data?.enquiry_type || call.structured_data?.intent || call.structured_data?.reason || call.channel || "Call");
                 return <div key={call.id} className="rounded-xl bg-white/5 p-4">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0"><p className="text-sm font-semibold">{label}</p><p className="text-xs text-neutral-400">{number || "Number unavailable"} · {intent} · {new Date(call.started_at || call.created_at).toLocaleString()}</p></div>

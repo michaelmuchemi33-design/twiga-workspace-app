@@ -25,14 +25,13 @@ const DEFAULTS = {
 };
 const MARKER = "----- TWIGA FRONT DESK SETTINGS -----";
 
-export default function SautiKitDesk({ businessId, demo = false }: { businessId: string; demo?: boolean; onOpenProfile?: () => void }) {
+export default function SautiKitDesk({ businessId, demo = false, onOpenProfile }: { businessId: string; demo?: boolean; onOpenProfile?: () => void }) {
   const [data, setData] = useState<any>({});
   const [models, setModels] = useState<any[]>([]);
   const [core, setCore] = useState("");
   const [scripts, setScripts] = useState(DEFAULTS);
   const [voice, setVoice] = useState("Woman");
   const [model, setModel] = useState("sautikit-flash");
-  const [key, setKey] = useState("");
   const [to, setTo] = useState("");
   const [reason, setReason] = useState("Requested customer follow-up");
   const [authorised, setAuthorised] = useState(false);
@@ -119,18 +118,6 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
   const inboundBound = data.inboundBound === true || inboundVerified;
   const selected = catalogOptions.find((v) => v.voice === voice && v.model === model);
 
-  async function connect() {
-    if (!key.trim()) return setNotice("Paste the SautiKit API key created for TWIGA.");
-    setBusy(true); setNotice("");
-    try {
-      const result = await invoke("connect", { apiKey: key.trim() });
-      setKey("");
-      setModels(Array.isArray(result.models) ? result.models : []);
-      setNotice(result.message || "SautiKit connected securely.");
-      await refresh();
-    } catch (e) { setNotice(e instanceof Error ? e.message : "SautiKit connection failed."); }
-    finally { setBusy(false); }
-  }
 
   async function publish() {
     if (!selected) return setNotice("Choose an available SautiKit voice.");
@@ -189,12 +176,8 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
     </header>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">SautiKit connection</h2><p className="mt-1 text-sm text-neutral-500">The key is stored encrypted in Supabase Vault and never returned to the browser.</p></div><span className={"rounded-full px-3 py-1 text-xs font-semibold " + (data.keyConfigured ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800")}>{data.keyConfigured ? "Connected" : "Needs connection"}</span></div>
-      {data.keyConfigured ? <div className="mt-4 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">Connected securely{data.keyLast4 ? " · key ending " + data.keyLast4 : ""}{data.providerError ? <p className="mt-2 text-amber-800">{data.providerError}</p> : null}</div> : <div className="mt-4 space-y-3">
-        <p className="text-sm leading-6 text-neutral-600">Create a restricted key in SautiKit under Developers → API keys. It needs model, agent and number read/write access. Only a TWIGA platform administrator can connect the shared key.</p>
-        <a className="inline-flex text-sm font-semibold text-orange-700 underline" href="https://app.sautikit.com/developers/api-keys" target="_blank" rel="noreferrer">Open SautiKit API keys</a>
-        {data.isPlatformAdmin ? <div className="flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder="Paste SautiKit API key" className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-500" /><button onClick={connect} disabled={busy || !key.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Checking…" : "Connect SautiKit"}</button></div> : <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">A TWIGA platform administrator must complete the shared connection.</p>}
-      </div>}
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">SautiKit connection</h2><p className="mt-1 text-sm text-neutral-500">The provider key is managed from Connections and stored encrypted in Supabase Vault.</p></div><span className={"rounded-full px-3 py-1 text-xs font-semibold " + (data.keyConfigured ? "bg-orange-50 text-orange-800" : "bg-amber-50 text-amber-800")}>{data.keyConfigured ? "Connected" : "Needs connection"}</span></div>
+      {data.keyConfigured ? <div className="mt-4 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">Connected securely{data.keyLast4 ? " · key ending " + data.keyLast4 : ""}{data.providerError ? <p className="mt-2 text-amber-800">{data.providerError}</p> : null}</div> : <div className="mt-4 space-y-3"><p className="text-sm leading-6 text-neutral-600">Connect your existing SautiKit account in Connections to load the live catalogue, publish the selected voice and dispatch authorised calls.</p><a className="inline-flex text-sm font-semibold text-orange-700 underline" href="https://app.sautikit.com/developers/api-keys" target="_blank" rel="noreferrer">Get a SautiKit API key ↗</a>{data.isPlatformAdmin ? <button onClick={onOpenProfile} className="block rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Open Connections to add key</button> : <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">A TWIGA platform administrator must complete the shared connection.</p>}</div>}
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
@@ -227,7 +210,7 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
         {!catalogOptions.length ? <p className="rounded-xl border border-dashed border-neutral-300 p-4 text-sm text-neutral-600 sm:col-span-2">{data.keyConfigured ? "Loading the SautiKit voice catalogue…" : "These are the last verified SautiKit voices and prices. Connect the SautiKit API key above to refresh live availability. Voice choices remain locked until connected."}</p> : null}
       </div>
       <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">The catalogue has 10 named voice choices: Man, Woman and eight additional named voices. Man and Woman are available across Flash, Flash Large, Voice 2, Pro and Reason model tiers, giving you more male voice/model choices. The eight named voices are shown exactly as SautiKit lists them; SautiKit does not publish their gender labels. AI prices are per minute; carrier charges are separate.</p>
-      <div className="mt-4 flex flex-wrap items-center gap-3"><p className="text-sm text-neutral-600">Selected: <strong className="text-neutral-900">{voice}</strong> · {model}</p><button onClick={publish} disabled={busy || !data.keyConfigured || !active || !inboundBound || !inboundVerified || !selected} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Publishing…" : "Save voice & publish"}</button></div>
+      <div className="mt-4 flex flex-wrap items-center gap-3"><p className="text-sm text-neutral-600">Selected: <strong className="text-neutral-900">{voice}</strong> · {model}</p><button onClick={publish} disabled={busy || !data.keyConfigured || !active || !inboundBound || !selected} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Publishing…" : "Save voice & publish"}</button></div>
       {!inboundBound ? <p className="mt-2 text-xs text-amber-800">The existing inbound binding is not confirmed in TWIGA records. Publishing is paused to protect the current line.</p> : null}{inboundBound && !inboundVerified ? <p className="mt-2 text-xs text-amber-800">TWIGA records the agent as bound, but SautiKit has not yet confirmed the route. Publishing remains paused until the API key is connected and the live binding is verified.</p> : null}
     </section>
 
@@ -237,7 +220,7 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
       <label className="mt-4 block text-sm font-medium text-neutral-800">Incoming calls<textarea value={scripts.inbound} onChange={(e) => setScripts((s) => ({ ...s, inbound: e.target.value }))} rows={4} maxLength={5000} className="mt-2 w-full rounded-xl border border-neutral-200 p-3 text-sm leading-6 outline-none focus:border-orange-500" /></label>
       <label className="mt-4 block text-sm font-medium text-neutral-800">Outgoing calls and follow-ups<textarea value={scripts.outbound} onChange={(e) => setScripts((s) => ({ ...s, outbound: e.target.value }))} rows={4} maxLength={5000} className="mt-2 w-full rounded-xl border border-neutral-200 p-3 text-sm leading-6 outline-none focus:border-orange-500" /></label>
       <label className="mt-4 block text-sm font-medium text-neutral-800">Core receptionist knowledge and behaviour<textarea value={core} onChange={(e) => setCore(e.target.value)} rows={7} maxLength={12000} placeholder="Describe the business, its services, customers and how the receptionist should help." className="mt-2 w-full rounded-xl border border-neutral-200 p-3 text-sm leading-6 outline-none focus:border-orange-500" /></label>
-      <div className="mt-4 flex flex-wrap gap-2"><button onClick={publish} disabled={busy || !data.keyConfigured || !active || !inboundVerified} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Publishing…" : "Save instructions & publish"}</button><button onClick={refresh} disabled={busy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-3 text-sm font-semibold text-neutral-700">Reload settings</button></div>
+      <div className="mt-4 flex flex-wrap gap-2"><button onClick={publish} disabled={busy || !data.keyConfigured || !active || !inboundBound} className="rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Publishing…" : "Save instructions & publish"}</button><button onClick={refresh} disabled={busy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-3 text-sm font-semibold text-neutral-700">Reload settings</button></div>
       <p className="mt-3 text-xs leading-5 text-neutral-500">Publishing creates a new immutable SautiKit revision. The existing number stays bound to the same agent; TWIGA will not replace or rent another number.</p>
     </section>
 
@@ -263,11 +246,11 @@ export default function SautiKitDesk({ businessId, demo = false }: { businessId:
         <label className="block text-sm font-medium text-neutral-700">Reason for calling<input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Requested booking follow-up, order update…" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" /></label>
       </div>
       <label className="mt-3 flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" checked={authorised} onChange={(e) => setAuthorised(e.target.checked)} className="mt-1" /><span>I confirm this person or business has authorised this callback.</span></label>
-      <button onClick={placeCall} disabled={busy || !data.keyConfigured || !active || !inboundVerified || !to.trim() || !authorised} className="mt-4 rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Submitting…" : "Place authorised AI callback"}</button>
+      <button onClick={placeCall} disabled={busy || !data.keyConfigured || !active || !inboundBound || !to.trim() || !authorised} className="mt-4 rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Submitting…" : "Place authorised AI callback"}</button>
       {call ? <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">Call request: {call.id || call.call_id || call.status || "submitted"}</p> : null}
     </section>
 
-    <ScheduledCallsPanel businessId={businessId} defaultPhone={to} defaultReason={reason} enabled={!!data.keyConfigured && active && inboundVerified} />
+    <ScheduledCallsPanel businessId={businessId} defaultPhone={to} defaultReason={reason} enabled={!!data.keyConfigured && active && inboundBound} />
 
     {data.providerError ? <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">SautiKit connection check: {data.providerError}</p> : null}
     {notice ? <p role="status" className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">{notice}</p> : null}

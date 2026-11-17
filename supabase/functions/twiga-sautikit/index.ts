@@ -120,7 +120,7 @@ Deno.serve(async (req: Request) => {
     const key = String(apiKey || "");
 
     if (action === "get_config") {
-      if (!line) return json({ phoneLine: null, keyConfigured: !!key, isPlatformAdmin });
+      if (!line) return json({ phoneLine: null, keyConfigured: !!keyRef, isPlatformAdmin });
       let models: Row[] = [];
       let agent: Row | null = null;
       let number: Row | null = null;
@@ -133,18 +133,17 @@ Deno.serve(async (req: Request) => {
             numberId ? skRequest(key, "/v1/numbers/" + encodeURIComponent(numberId)) : Promise.resolve(null),
           ]);
           models = Array.isArray(catalog?.data) ? catalog.data : [];
-          agent = agentData;
-          number = numberData;
+          agent = agentData?.agent || agentData?.data?.agent || agentData?.data || agentData;
+          const numberEnvelope = numberData as any;
+          number = numberEnvelope?.number || numberEnvelope?.data?.number || numberEnvelope?.data || numberEnvelope;
         } catch (e) {
           providerError = e instanceof Error ? e.message : "SautiKit connection check failed.";
         }
-      } else if (keyRef) {
-        providerError = "A SautiKit key reference exists, but the encrypted key could not be read. Reconnect the key.";
       }
       const scripts = settings.sautikit_scripts && typeof settings.sautikit_scripts === "object" ? settings.sautikit_scripts : {};
       return json({
         isPlatformAdmin,
-        keyConfigured: !!key,
+        keyConfigured: !!keyRef,
         keyLast4: keyRef?.secret_last4 || "",
         keyUpdatedAt: keyRef?.updated_at || null,
         phoneLine: {
@@ -172,8 +171,8 @@ Deno.serve(async (req: Request) => {
         inboundBound: settings.ai_agent_bound === true
           && settings.inbound_agent_provider === "sautikit-managed"
           && settings.inbound_agent_id === agentId,
-        inboundVerified: !!(number?.routing?.inbound_agent?.enabled && number?.routing?.inbound_agent?.agent_id === agentId),
-        inboundMode: number?.routing?.inbound_agent?.mode || null,
+        inboundVerified: !!((number?.routing?.inbound_agent || number?.inbound_agent || number?.routing?.inboundAgent)?.enabled && ((number?.routing?.inbound_agent || number?.inbound_agent || number?.routing?.inboundAgent)?.agent_id || (number?.routing?.inbound_agent || number?.inbound_agent || number?.routing?.inboundAgent)?.agentId) === agentId),
+        inboundMode: (number?.routing?.inbound_agent || number?.inbound_agent || number?.routing?.inboundAgent)?.mode || null,
       });
     }
 
@@ -182,11 +181,14 @@ Deno.serve(async (req: Request) => {
     if (!canManage && ["publish_agent", "send_call"].includes(action)) return json({ error: "Only the business owner, admin or TWIGA platform administrator can change or call from this receptionist." }, 403);
 
     if (action === "publish_agent") {
-      const [catalog, agent, number] = await Promise.all([
+      const [catalog, agentResponse, numberResponse] = await Promise.all([
         skRequest(key, "/v1/models"),
         skRequest(key, "/v1/agents/" + encodeURIComponent(agentId)),
         skRequest(key, "/v1/numbers/" + encodeURIComponent(numberId)),
       ]);
+      const agent = agentResponse?.agent || agentResponse?.data?.agent || agentResponse?.data || agentResponse;
+      const numberEnvelope = numberResponse as any;
+      const number = numberEnvelope?.number || numberEnvelope?.data?.number || numberEnvelope?.data || numberEnvelope;
       const models: Row[] = Array.isArray(catalog?.data) ? catalog.data : [];
       const modelId = String(body.model || agent.model || "");
       const voice = String(body.voice || agent.voice || "");
@@ -194,8 +196,9 @@ Deno.serve(async (req: Request) => {
       if (!selectedModel || !Array.isArray(selectedModel.voices) || !selectedModel.voices.includes(voice)) {
         return json({ error: "That voice is not available on the selected SautiKit model." }, 400);
       }
-      const inbound = number?.routing?.inbound_agent;
-      if (!inbound?.enabled || inbound.agent_id !== agentId) {
+      const inbound = number?.routing?.inbound_agent || number?.inbound_agent || number?.routing?.inboundAgent;
+      const inboundAgentId = inbound?.agent_id || inbound?.agentId;
+      if (!inbound?.enabled || inboundAgentId !== agentId) {
         return json({ error: "The SautiKit number is not currently bound to this receptionist. The live inbound route was left unchanged; check number routing in SautiKit first." }, 409);
       }
       const scripts = {
@@ -260,7 +263,21 @@ Deno.serve(async (req: Request) => {
         prompt_template: "You are calling on behalf of {{business_name}}. Reason for calling: {{call_reason}}. " + outbound,
         variables: { business_name: String(business.data?.name || "the business"), call_reason: reason },
       });
-      return json({ submitted: true, call, message: "Your authorised callback was submitted through the published SautiKit receptionist." });
+      const providerCallId = safe(call?.call_id || call?.id || call?.data?.call_id || call?.data?.id, 200);
+      let callRecordId: string | null = null;
+      if (providerCallId) {
+        const { data: callRecord, error: callRecordError } = await admin.from("twiga_call_records").insert({
+          business_id: businessId, provider: "sautikit", provider_call_id: providerCallId, channel: "pstn", direction: "outbound",
+          from_number: String(line.line_number || ""), to_number: to, status: safe(call?.status || "queued", 40), started_at: new Date().toISOString(),
+          duration_seconds: 0, summary: reason, structured_data: { reason, business_name: String(business.data?.name || "the business") },
+          metadata: { source: "dashboard_send_call", authorised: true, agent_id: agentId, agent_revision: settings.inbound_agent_revision || null, voice: settings.inbound_voice || null, model_id: settings.inbound_model_id || null },
+          created_by: user.id,
+        }).select("id").maybeSingle();
+        if (callRecordError) console.error("Could not record SautiKit call in TWIGA history:", callRecordError.message);
+        else callRecordId = callRecord?.id || null;
+      }
+      await admin.from("twiga_phone_lines").update({ settings: { ...settings, last_outbound_call_id: providerCallId || null, last_outbound_call_status: safe(call?.status || "queued", 40) } }).eq("id", line.id);
+      return json({ submitted: true, call, callRecordId, message: "Your authorised callback was submitted through the published SautiKit receptionist and added to call history." });
     }
 
     return json({ error: "Unknown SautiKit action." }, 404);

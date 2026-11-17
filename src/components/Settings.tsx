@@ -105,7 +105,7 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
   const testApiConnections = async () => {
     if (demo) { setApiStatus("Sign in to test live API connections."); return; }
     if (!supabase || !businessId) { setApiStatus("Select a live business workspace first."); return; }
-    setApiStatus("Testing Supabase, Cloudflare and Retell…");
+    setApiStatus("Testing Supabase, Cloudflare and SautiKit…");
     try {
       await getAccessToken();
       const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -115,26 +115,14 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
       const response = await fetch(filesApi + "/health");
       const health = await response.json().catch(() => ({}));
       if (!response.ok || health.ok !== true) throw new Error("Cloudflare file API health check failed.");
-      const { data: retellConfig, error: retellConfigError } = await supabase.functions.invoke("twiga-retell", { body: { action: "get_config", businessId } });
-      if (retellConfigError) throw new Error("Retell configuration check failed: " + retellConfigError.message);
-      if (retellConfig?.error) throw new Error(String(retellConfig.error));
-      if (!retellConfig?.keyConfigured) {
-        setApiStatus("Supabase authentication and business access: OK · Cloudflare storage API: OK · Retell: API key still needs to be saved in Profile");
-        return;
-      }
-      if (!retellConfig.canManage) {
-        setApiStatus("Supabase: OK · Cloudflare storage: OK · Retell key is configured; owner/admin permission is required to test agent access");
-        return;
-      }
-      const { data: retellAgents, error: retellAgentsError } = await supabase.functions.invoke("twiga-retell", { body: { action: "list_agents", businessId } });
-      if (retellAgentsError) throw new Error("Retell API test failed: " + retellAgentsError.message);
-      if (retellAgents?.error) throw new Error(String(retellAgents.error));
-      const agentCount = Array.isArray(retellAgents?.agents) ? retellAgents.agents.length : 0;
-      const linked = !!retellAgentId && (retellAgents?.agents || []).some((agent: any) => agent.agent_id === retellAgentId);
-      setApiStatus("Supabase: OK · Cloudflare storage: OK · Retell API: OK (" + agentCount + " voice agents" + (linked ? ", this business linked" : "") + ")");
-    } catch (e) {
-      setApiStatus(e instanceof Error ? e.message : "API connection test failed.");
-    }
+      const { data: voiceConfig, error: voiceError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } });
+      if (voiceError) throw new Error("SautiKit configuration check failed: " + voiceError.message);
+      if (voiceConfig?.error) throw new Error(String(voiceConfig.error));
+      if (!voiceConfig?.keyConfigured) { setApiStatus("Supabase authentication and business access: OK · Cloudflare storage API: OK · SautiKit API key still needs to be saved in Connections."); return; }
+      if (!voiceConfig?.phoneLine) { setApiStatus("Supabase: OK · Cloudflare storage: OK · SautiKit key: OK · This business still needs an assigned AI phone line."); return; }
+      const inbound = voiceConfig.inboundVerified ? "provider route confirmed; physical call test pending" : "inbound route needs attention";
+      setApiStatus("Supabase: OK · Cloudflare storage: OK · SautiKit key: OK · AI line " + (voiceConfig.phoneLine.line_number || "assigned") + " · inbound " + inbound + " · outbound " + (voiceConfig.phoneLine.outbound_status || "unknown"));
+    } catch (e) { setApiStatus(e instanceof Error ? e.message : "API connection test failed."); }
   };
 
   const testReceptionist = async () => {
@@ -240,7 +228,7 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
           </h1>
           <p className="mt-1 text-sm text-neutral-500">
             Tune how your AI receptionist runs the front desk
-          </p>\n          <p className="mt-3 max-w-3xl text-xs leading-5 text-neutral-500">Live Retell voice, model and receptionist instructions are configured under Profile → AI Front Desk. The settings below are saved as workspace defaults; they do not silently change a published Retell agent.</p>
+          </p>\n          <p className="mt-3 max-w-3xl text-xs leading-5 text-neutral-500">Live SautiKit voice, model and receptionist instructions are configured in Phone & AI. The settings below are saved as workspace defaults; they do not silently change a published voice.</p>
         </div>
         <div className="flex items-center gap-3">
           {saved && (
@@ -261,13 +249,8 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
 
       <div className="grid gap-5 xl:grid-cols-2">
         <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Live voice test</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Test AI receptionist</h2><p className="mt-1 text-sm leading-6 text-neutral-500">Start a real browser microphone call with this business's published Retell agent. This does not use a phone number or SautiKit routing.</p></div>
-            <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{demo ? "Demo mode" : retellAgentId ? "Agent linked" : "Not connected"}</span>
-          </div>
-          {demo ? <p className="mt-4 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">Browser voice tests are available in your signed-in live workspace, not the sample demo.</p> : !businessId || !retellAgentId ? <div className="mt-4 rounded-xl bg-neutral-50 p-3"><p className="text-sm text-neutral-700">Connect a Retell account and publish a business receptionist in Profile → AI Front Desk first.</p><button onClick={onOpenProfile} className="mt-3 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Open AI Front Desk profile</button></div> : <div className="mt-4 flex flex-wrap items-center gap-3"><button onClick={testReceptionist} disabled={callBusy} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{callBusy ? "Connecting…" : callSession.current ? "End test call" : "Start browser call"}</button><span className="text-sm text-neutral-600">Call status: {callStatus}</span></div>}
-          <div className="mt-4 flex flex-wrap items-center gap-2"><button onClick={testApiConnections} disabled={callBusy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700">Test API connections</button>{apiStatus && <span className="text-xs text-neutral-500">{apiStatus}</span>}</div>
-          <p className="mt-3 text-xs text-neutral-500">The browser call is billed by Retell while connected. The current test agent configuration targets approximately $0.0828/min for the AI stack, excluding carrier charges.</p>
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">SautiKit phone controls</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Voice, inbound & scheduled calls</h2><p className="mt-1 text-sm leading-6 text-neutral-500">Manage the proven female voice, choose provider-listed male voices, edit receptionist instructions, test a real phone call and schedule customer callbacks in Phone & AI.</p></div><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">SautiKit</span></div>
+          <div className="mt-4 flex flex-wrap items-center gap-2"><button onClick={onOpenProfile} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Open Phone & AI</button><button onClick={testApiConnections} disabled={callBusy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700">Test API connections</button>{apiStatus && <span className="text-xs text-neutral-500">{apiStatus}</span>}</div>
         </section>
 
         <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
@@ -354,8 +337,9 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
             </Field>
           </Section>
 
-          <Section icon={IconMic} title="Live Retell voice" desc="Manage the published phone receptionist in Profile → AI Front Desk">
-            <p className="text-sm leading-6 text-neutral-600">Choose one of the British test voices, publish a separate receptionist for this business, and test it in the browser from your Profile. TWIGA applies a calm tone where supported and a slightly slower 0.9× speaking speed. These workspace preferences below do not overwrite the published Retell agent.</p>
+          <Section icon={IconMic} title="SautiKit voice & call settings" desc="Manage the published phone receptionist in Phone & AI">
+            <p className="text-sm leading-6 text-neutral-600">Choose from the live SautiKit catalogue, including the preferred Woman voice and available male options. Publish greetings and inbound/outbound instructions, test a real phone call, and schedule consent-based callbacks from Phone & AI.</p>
+            <button onClick={onOpenProfile} className="mt-3 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Open Phone & AI</button>
           </Section>
 
           <Section icon={IconChat} title="Greeting & Closing Scripts" desc="The first and last thing callers hear">

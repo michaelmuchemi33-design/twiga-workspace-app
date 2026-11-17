@@ -19,10 +19,18 @@ export default function ScheduledCallsPanel({ businessId, defaultPhone, defaultR
   const [scheduledAt, setScheduledAt] = useState(() => localDateTimeValue(new Date(Date.now() + 60 * 60 * 1000)));
   const [delayMinutes, setDelayMinutes] = useState("0");
   const [repeat, setRepeat] = useState("none");
+  const [repeatCount, setRepeatCount] = useState("4");
+  const [triggerType, setTriggerType] = useState("timer");
+  const [onlyIfMissed, setOnlyIfMissed] = useState(false);
+  const [sourceCallId, setSourceCallId] = useState("");
+  const [onlyIfUnpaid, setOnlyIfUnpaid] = useState(false);
+  const [orderId, setOrderId] = useState("");
   const [authorised, setAuthorised] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [calls, setCalls] = useState<any[]>([]);
+  const [missedCalls, setMissedCalls] = useState<any[]>([]);
+  const [unpaidOrders, setUnpaidOrders] = useState<any[]>([]);
   useEffect(() => { if (defaultPhone) setContactsText(defaultPhone); }, [defaultPhone]);
   const loadCalls = useCallback(async () => {
     if (!supabase || !businessId) return;
@@ -30,6 +38,12 @@ export default function ScheduledCallsPanel({ businessId, defaultPhone, defaultR
     if (error) throw new Error(error.message);
     if (data?.error) throw new Error(String(data.error));
     setCalls(Array.isArray(data.calls) ? data.calls : []);
+    const [missedResult, ordersResult] = await Promise.all([
+      supabase.from("twiga_call_records").select("id,created_at,from_number,to_number,status").eq("business_id", businessId).eq("direction", "inbound").in("status", ["missed", "no_answer", "failed"]).order("created_at", { ascending: false }).limit(20),
+      supabase.from("twiga_orders").select("id,order_number,customer_name,customer_phone,total_amount,payment_status,created_at").eq("business_id", businessId).eq("payment_status", "unpaid").order("created_at", { ascending: false }).limit(30),
+    ]);
+    setMissedCalls(missedResult.error ? [] : (missedResult.data || []));
+    setUnpaidOrders(ordersResult.error ? [] : (ordersResult.data || []));
   }, [businessId]);
   useEffect(() => {
     void loadCalls().catch((error) => setNotice(error instanceof Error ? error.message : "Scheduled calls could not be loaded."));
@@ -46,18 +60,22 @@ export default function ScheduledCallsPanel({ businessId, defaultPhone, defaultR
     if (invalidCount) return setNotice("Correct the " + invalidCount + " invalid phone number(s) before scheduling.");
     if (validNumbers.length > 100) return setNotice("Schedule up to 100 recipients at a time.");
     if (!reason.trim()) return setNotice("Enter the reason for calling.");
+    if ((triggerType === "missed_call" || onlyIfMissed) && !sourceCallId.trim()) return setNotice("Enter the source missed-call record ID for this condition.");
+    if (onlyIfUnpaid && !orderId.trim()) return setNotice("Enter the order ID for the unpaid-order condition.");
+    const repeats = Math.max(1, Math.min(30, Number(repeatCount) || 1));
     const when = delayMinutes === "0" ? new Date(scheduledAt) : new Date(Date.now() + Number(delayMinutes) * 60000);
     if (!Number.isFinite(when.getTime()) || when.getTime() < Date.now() + 30000) return setNotice("Choose a future call time at least 30 seconds from now.");
     setBusy(true); setNotice("");
     try {
       const { data, error } = await supabase!.functions.invoke("twiga-scheduled-calls", {
         body: { action: "schedule", businessId, contacts: validNumbers.map((phone) => ({ phone })),
-          reason: reason.trim(), scheduledAt: when.toISOString(), repeat, timezone: "Africa/Nairobi", authorised: true },
+          reason: reason.trim(), scheduledAt: when.toISOString(), repeat, repeatCount: repeat === "none" ? 1 : repeats, timezone: "Africa/Nairobi", authorised: true,
+          triggerType, onlyIfMissed, sourceCallId: sourceCallId.trim(), onlyIfUnpaid, orderId: orderId.trim(), callingWindowStart: "08:00", callingWindowEnd: "20:00" },
       });
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(String(data.error));
       setNotice(data.message || (String(data.scheduledCount || validNumbers.length) + " call(s) scheduled."));
-      setAuthorised(false);
+      setAuthorised(false); setSourceCallId(""); setOrderId(""); setOnlyIfMissed(false); setOnlyIfUnpaid(false);
       await loadCalls();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "The calls could not be scheduled.");
@@ -110,6 +128,18 @@ export default function ScheduledCallsPanel({ businessId, defaultPhone, defaultR
               <option value="none">One-time call</option><option value="daily">Repeat daily</option><option value="weekly">Repeat weekly</option>
             </select>
           </label>
+          <label className="block text-sm font-medium text-neutral-700">Call trigger type
+            <select value={triggerType} onChange={(event) => setTriggerType(event.target.value)} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm">
+              <option value="timer">Timer · at selected time</option><option value="missed_call">Missed-call callback</option><option value="appointment_reminder">Appointment reminder</option><option value="follow_up">Customer follow-up</option><option value="conditional">Conditional outreach</option>
+            </select>
+          </label>
+          {repeat !== "none" && <label className="block text-sm font-medium text-neutral-700">Total calls in this repeat series
+            <input type="number" min={2} max={30} value={repeatCount} onChange={(event) => setRepeatCount(event.target.value)} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm" />
+          </label>}
+        </div>
+        <div className="grid gap-3 rounded-xl border border-neutral-200 p-3 sm:grid-cols-2">
+          <div><label className="flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" checked={onlyIfMissed} onChange={(event) => setOnlyIfMissed(event.target.checked)} className="mt-1" />Only call if the source inbound call is still missed or unanswered</label><select value={sourceCallId} onChange={(event) => setSourceCallId(event.target.value)} className="mt-2 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"><option value="">Select a missed inbound call…</option>{missedCalls.map(call => <option key={call.id} value={call.id}>{new Date(call.created_at).toLocaleString()} · {call.from_number || call.to_number || "Unknown number"} · {call.status}</option>)}</select>{!missedCalls.length && <p className="mt-1 text-xs text-neutral-500">No missed inbound calls are recorded for this business yet.</p>}</div>
+          <div><label className="flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" checked={onlyIfUnpaid} onChange={(event) => setOnlyIfUnpaid(event.target.checked)} className="mt-1" />Only call if the related order is still unpaid</label><select value={orderId} onChange={(event) => setOrderId(event.target.value)} className="mt-2 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"><option value="">Select an unpaid order…</option>{unpaidOrders.map(order => <option key={order.id} value={order.id}>#{order.order_number || order.id.slice(0, 8)} · {order.customer_name || order.customer_phone || "Customer"} · KSh {Number(order.total_amount || 0).toLocaleString()}</option>)}</select>{!unpaidOrders.length && <p className="mt-1 text-xs text-neutral-500">No unpaid orders are recorded for this business yet.</p>}</div>
         </div>
         <label className="flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" checked={authorised} onChange={(event) => setAuthorised(event.target.checked)} className="mt-1" />
           <span>I confirm every recipient has authorised these calls and can be contacted for this stated purpose.</span></label>
@@ -128,7 +158,7 @@ export default function ScheduledCallsPanel({ businessId, defaultPhone, defaultR
                 <p className="mt-1 text-xs text-neutral-500">{item.task} · {new Date(item.due_at).toLocaleString("en-KE", { timeZone: "Africa/Nairobi" })}</p>
                 <p className="mt-1 text-xs text-neutral-500">{item.metadata?.repeat && item.metadata.repeat !== "none" ? "Repeats " + item.metadata.repeat : "One-time"} · {item.metadata?.dispatch_status || item.status}</p></div>
               <div className="flex items-center gap-2"><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-700">{item.status}</span>
-                {item.status === "pending" && <button type="button" onClick={() => void cancel(String(item.metadata?.series_id || item.id))} disabled={busy} className="text-xs font-semibold text-orange-700 underline">Cancel</button>}</div>
+                {["pending", "scheduled", "waiting_for_provider"].includes(item.status) && <button type="button" onClick={() => void cancel(String(item.metadata?.series_id || item.id))} disabled={busy} className="text-xs font-semibold text-orange-700 underline">Cancel</button>}</div>
             </div>
           ))}</div>}
       </div>
