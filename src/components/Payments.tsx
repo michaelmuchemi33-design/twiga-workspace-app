@@ -335,7 +335,7 @@ export default function Payments() {
       </section>
     </div> : <div className="grid gap-6 lg:grid-cols-3">
       <section className="rounded-2xl border border-neutral-200 bg-neutral-950 p-5 text-white shadow-lg lg:col-span-2">
-        <h2 className="text-lg font-semibold">Optional business-specific PalPluss API key</h2><p className="mt-1 text-sm text-neutral-400">TWIGA normally uses the central PalPluss account configured by the platform administrator. Add a separate business API key only if this business has its own PalPluss account.</p>
+        <h2 className="text-lg font-semibold text-white">This business’s PalPluss API key</h2><p className="mt-1 text-sm text-neutral-300">Connect the PalPluss account that belongs to this business. The key is stored privately for this workspace and used only by TWIGA’s server.</p>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} placeholder="pk_live_…" className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-700 bg-neutral-900 px-3 font-mono text-sm text-white placeholder:text-neutral-500" /><button onClick={saveKey} disabled={busy || keyDraft.trim().length < 20} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Checking…" : "Validate & save"}</button></div>
         <p className="mt-3 text-xs leading-5 text-neutral-400">PalPluss uses one API key for server-to-server requests. TWIGA stores it in encrypted Vault and creates the Basic Authorization header server-side. Do not paste the key into the public Paylink field.</p>
       </section>
