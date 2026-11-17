@@ -15,9 +15,51 @@ Deno.serve(async(req:Request)=>{
  if(!adminRow) return json({isAdmin:false,error:"Platform administrator access required."},403);
  try{
   const body=await req.json().catch(()=>({})),action=String(body.action||"get_config");
+  if(action==="openrouter.status"){
+   const {data:ref,error:refError}=await admin.from("twiga_platform_secret_refs").select("secret_last4,updated_at").eq("provider","openrouter").maybeSingle();
+   if(refError) throw refError;
+   const {data:vaultKey}=await admin.rpc("twiga_get_platform_secret",{p_provider:"openrouter"});
+   const apiKey=String(vaultKey||Deno.env.get("OPENROUTER_API_KEY")||"");
+   let freeModelCount=0;
+   if(apiKey){
+    const response=await fetch("https://openrouter.ai/api/v1/models",{headers:{Authorization:"Bearer "+apiKey,Accept:"application/json"}});
+    if(response.ok){const payload=await response.json().catch(()=>({}));freeModelCount=(Array.isArray(payload.data)?payload.data:[]).filter((m:any)=>String(m.id||"").endsWith(":free")&&Number(m.pricing?.prompt)===0&&Number(m.pricing?.completion)===0&&(!m.architecture?.output_modalities||m.architecture.output_modalities.includes("text"))&&!/xai|grok/i.test(m.id)).length;}
+   }
+   return json({isAdmin:true,keyConfigured:!!apiKey,keyLast4:ref?.secret_last4||apiKey.slice(-4),updatedAt:ref?.updated_at||null,freeModelCount,freeOnly:true,provider:"OpenRouter"});
+  }
+  if(action==="openrouter.save"){
+   const apiKey=String(body.apiKey||"").trim();
+   if(apiKey.length<20||apiKey.length>500)return json({error:"Enter a valid OpenRouter API key."},400);
+   const check=await fetch("https://openrouter.ai/api/v1/models",{headers:{Authorization:"Bearer "+apiKey,Accept:"application/json"}});
+   if(!check.ok)return json({error:check.status===401?"OpenRouter rejected this API key. Check it and try again.":"Could not validate the OpenRouter API key (HTTP "+check.status+")."},400);
+   const payload=await check.json().catch(()=>({}));
+   const freeModels=(Array.isArray(payload.data)?payload.data:[]).filter((m:any)=>String(m.id||"").endsWith(":free")&&Number(m.pricing?.prompt)===0&&Number(m.pricing?.completion)===0&&(!m.architecture?.output_modalities||m.architecture.output_modalities.includes("text"))&&!/xai|grok/i.test(m.id));
+   if(freeModels.length<10)return json({error:"OpenRouter currently exposes only "+freeModels.length+" eligible free text models for this key. TWIGA requires at least 10 before enabling rotation. No paid models will be used."},400);
+   const {data:last4,error:saveError}=await admin.rpc("twiga_set_platform_secret",{p_provider:"openrouter",p_secret:apiKey,p_updated_by:user.id});
+   if(saveError){console.error("OpenRouter Vault save failed",saveError.message);return json({error:"OpenRouter key validated but could not be stored in encrypted Supabase Vault."},500);}
+   return json({isAdmin:true,keyConfigured:true,keyLast4:last4,freeModelCount:freeModels.length,freeOnly:true,message:"OpenRouter key validated and saved in encrypted Supabase Vault. "+freeModels.length+" eligible free text models are available for rotation; paid models and xAI are excluded."});
+  }
+  if(action==="openrouter.test"){
+   const {data:vaultKey,error:keyError}=await admin.rpc("twiga_get_platform_secret",{p_provider:"openrouter"});
+   const apiKey=String(vaultKey||Deno.env.get("OPENROUTER_API_KEY")||"");
+   if(keyError&&!apiKey)throw keyError;
+   if(!apiKey)return json({error:"OpenRouter is not connected."},503);
+   const catalog=await fetch("https://openrouter.ai/api/v1/models",{headers:{Authorization:"Bearer "+apiKey,Accept:"application/json"}});
+   if(!catalog.ok)return json({error:"OpenRouter model catalogue test failed (HTTP "+catalog.status+")."},502);
+   const payload=await catalog.json().catch(()=>({}));
+   const free=(Array.isArray(payload.data)?payload.data:[]).filter((m:any)=>String(m.id||"").endsWith(":free")&&Number(m.pricing?.prompt)===0&&Number(m.pricing?.completion)===0&&(!m.architecture?.output_modalities||m.architecture.output_modalities.includes("text"))&&!/xai|grok/i.test(m.id));
+   if(free.length<10)return json({error:"Only "+free.length+" eligible free models were found; at least 10 are required."},503);
+   const first=free.find((m:any)=>/nemotron-3-ultra|nemotron-3.5-super-vl|ernie-5.5|inkling-2-small/i.test(m.id))||free[0];
+   const inference=await fetch("https://openrouter.ai/api/v1/chat/completions",{method:"POST",headers:{Authorization:"Bearer "+apiKey,"Content-Type":"application/json","HTTP-Referer":"https://twiga.co.ke","X-Title":"TWIGA Free Model Test"},body:JSON.stringify({model:first.id,messages:[{role:"user",content:"Reply with exactly: TWIGA FREE MODEL TEST OK"}],max_tokens:30,temperature:0})});
+   if(!inference.ok)return json({error:"Free model catalogue is available, but the inference test failed (HTTP "+inference.status+")."},502);
+   const result=await inference.json().catch(()=>({}));
+   const reply=String(result.choices?.[0]?.message?.content||"").trim();
+   if(!reply)return json({error:"The selected free model returned no text."},502);
+   return json({isAdmin:true,working:true,modelUsed:String(result.model||first.id),reply,freeModelCount:free.length,freeOnly:true});
+  }
   if(action==="get_config"){
-   const {data:ref}=await admin.from("twiga_platform_secret_refs").select("secret_last4,updated_at").eq("provider","openrouter").maybeSingle();
-   return json({isAdmin:true,keyConfigured:!!ref||!!Deno.env.get("OPENROUTER_API_KEY"),keySource:ref?"vault":Deno.env.get("OPENROUTER_API_KEY")?"environment":"missing",keyLast4:ref?.secret_last4||"",updatedAt:ref?.updated_at||null});
+   const {data:ref}=await admin.from("twiga_platform_secret_refs").select("secret_last4,updated_at").eq("provider","xai").maybeSingle();
+   return json({isAdmin:true,keyConfigured:!!ref||!!Deno.env.get("XAI_API_KEY"),keySource:ref?"vault":Deno.env.get("XAI_API_KEY")?"environment":"missing",keyLast4:ref?.secret_last4||"",updatedAt:ref?.updated_at||null});
   }
   if(action==="retell.platform.status"){
    const {data:ref,error:refError}=await admin.from("twiga_platform_secret_refs").select("secret_last4,updated_at").eq("provider","retell_platform_api_key").maybeSingle();
@@ -74,13 +116,13 @@ Deno.serve(async(req:Request)=>{
    if(secretError){console.error("Google OAuth client secret save failed",secretError.message);return json({error:"Client ID saved, but the Google OAuth client secret could not be stored."},500);}
    return json({isAdmin:true,clientIdConfigured:true,clientSecretConfigured:true,message:"Google OAuth credentials saved in encrypted Supabase Vault. Business owners will authorize their own Google accounts.",clientSecretLast4:last4});
   }
-  if(action==="save_openrouter_key"){
-   const apiKey=String(body.apiKey||"").trim(); if(apiKey.length<20||apiKey.length>500) return json({error:"Enter a valid OpenRouter API key."},400);
-   const check=await fetch("https://openrouter.ai/api/v1/models",{headers:{Authorization:"Bearer "+apiKey,Accept:"application/json"}});
-   if(!check.ok) return json({error:check.status===401?"OpenRouter rejected this API key. Check it and try again.":"Could not validate the OpenRouter key or account."},400);
-   const {data:last4,error}=await admin.rpc("twiga_set_platform_secret",{p_provider:"openrouter",p_secret:apiKey,p_updated_by:user.id});
-   if(error){console.error("OpenRouter Vault save failed",error.message);return json({error:"Key validated but could not be stored in Vault."},500);}
-   return json({isAdmin:true,keyConfigured:true,keyLast4:last4,message:"OpenRouter setup key validated and saved in encrypted Supabase Vault."});
+  if(action==="save_xai_key"){
+   const apiKey=String(body.apiKey||"").trim(); if(apiKey.length<20||apiKey.length>500) return json({error:"Enter a valid xAI API key."},400);
+   const check=await fetch("https://api.x.ai/v1/models",{headers:{Authorization:"Bearer "+apiKey,Accept:"application/json"}});
+   if(!check.ok) return json({error:check.status===401?"xAI rejected this API key. Check it and try again.":"Could not validate the xAI key or account."},400);
+   const {data:last4,error}=await admin.rpc("twiga_set_platform_secret",{p_provider:"xai",p_secret:apiKey,p_updated_by:user.id});
+   if(error){console.error("xAI Vault save failed",error.message);return json({error:"Key validated but could not be stored in Vault."},500);}
+   return json({isAdmin:true,keyConfigured:true,keyLast4:last4,message:"Grok setup key validated and saved in encrypted Supabase Vault."});
   }
   return json({error:"Unknown platform secret action."},404);
  }catch(e){console.error("twiga-platform-secrets",e);return json({error:"Platform secret operation failed."},500);}
