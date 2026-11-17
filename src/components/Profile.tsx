@@ -415,7 +415,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       </div>
     </section>
 
-    <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Payments</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Payments are managed by TWIGA</h2><p className="mt-2 text-sm leading-6 text-neutral-600">Your payment provider connection is managed centrally. Add your business Till or Paybill and choose customer payment options in the Payments section. You do not need a separate provider login or API key.</p></section>ion>
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Payments</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Payments are managed by TWIGA</h2><p className="mt-2 text-sm leading-6 text-neutral-600">Your payment provider connection is managed centrally. Add your business Till or Paybill and choose customer payment options in the Payments section. You do not need a separate provider login or API key.</p></section>
 
 
     {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
