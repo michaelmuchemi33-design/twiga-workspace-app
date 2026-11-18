@@ -81,7 +81,7 @@ const ACTIONS = {
     if (prev) return prev;
     const items = (d.items || []).map(it => {
       const qty = num(it.qty || 1, 'quantity', 0.01), price = num(it.unitPrice, 'price', 0);
-      return {itemId: txt(it.itemId, 40), name: txt(it.name, 120), qty: qty, price: price, total: Math.round(qty * price * 100) / 100};
+      return {itemId: txt(it.itemId, 40), name: txt(it.name, 120), qty: qty, price: price, total: Math.round(qty * price * 100) / 100, kind: it.kind === 'service' ? 'service' : 'product'};
     }).filter(it => it.name);
     if (!items.length) throw new Error('Add at least one item.');
     for (const it of items) {
@@ -273,7 +273,7 @@ async function aiCreateOrder(env, ctx, args, callId, toolId) {
   const items = Array.from(totals.entries()).map(([id, qty]) => {
     const item = byId.get(id);
     if (Number(item.TrackStock) === 1 && Number(item.Stock || 0) < qty) throw new Error('There is not enough stock for ' + item.Name + '.');
-    return {itemId: item.ItemId, name: item.Name, qty: qty, unitPrice: Number(item.Price || 0)};
+    return {itemId: item.ItemId, name: item.Name, qty: qty, unitPrice: Number(item.Price || 0), kind: String(item.Kind || '').toLowerCase() === 'service' ? 'service' : 'product'};
   });
   const txn = ('vapi-' + safeToolKey(callId) + '-' + safeToolKey(toolId)).slice(0, 100);
   const order = await ACTIONS.createOrder(env, ctx, {
