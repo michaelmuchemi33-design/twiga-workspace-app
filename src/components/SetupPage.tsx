@@ -1,8 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Message = { id: string; role: "ai" | "user"; text: string };
 type Profile = Record<string, any>;
+type BusinessFile = { file_id: string; name: string; content_type: string; size_bytes: number; created_at: string };
+type UploadedFileContext = { name: string; contentType: string; content: string; note?: string };
+const BUSINESS_FILES_API = "https://twiga-business-files.twiga-ke.workers.dev/v1";
+const formatFileSize = (bytes: number) => bytes < 1024 ? bytes + " B" : bytes < 1024 * 1024 ? (bytes / 1024).toFixed(1) + " KB" : (bytes / (1024 * 1024)).toFixed(1) + " MB";
 
 const areas = [
   { key: "identity", label: "Business identity", fields: ["business_name", "business_type"] },
@@ -64,12 +68,36 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [pendingFileContext, setPendingFileContext] = useState<UploadedFileContext[]>([]);
+  const [businessFiles, setBusinessFiles] = useState<BusinessFile[]>([]);
+  const [storageUsedBytes, setStorageUsedBytes] = useState(0);
+  const [storageQuotaBytes, setStorageQuotaBytes] = useState(500 * 1024 * 1024);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [fileMessage, setFileMessage] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const isEditing = Boolean(businessId);
+
+  const refreshBusinessFiles = useCallback(async () => {
+    if (demo || !businessId || !supabase) { setBusinessFiles([]); setStorageUsedBytes(0); return; }
+    const { data, error } = await supabase.auth.getSession();
+    if (error || !data.session?.access_token) throw new Error("Sign in again to access business files.");
+    const response = await fetch(`${BUSINESS_FILES_API}/${encodeURIComponent(businessId)}`, { headers: { Authorization: `Bearer ${data.session.access_token}` } });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Could not load business files.");
+    setBusinessFiles(Array.isArray(result.files) ? result.files : []);
+    setStorageUsedBytes(Number(result.usedBytes || 0));
+    setStorageQuotaBytes(Number(result.quotaBytes || 500 * 1024 * 1024));
+  }, [businessId, demo]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "auto" });
   }, [messages, thinking]);
+
+  useEffect(() => {
+    void refreshBusinessFiles().catch((e) => setFileMessage(e instanceof Error ? e.message : "Business files could not be loaded."));
+  }, [refreshBusinessFiles]);
 
   useEffect(() => {
     if (demo || !supabase) return;
@@ -118,21 +146,71 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
 
   const send = async (value?: string) => {
     const text = (value ?? input).trim();
-    if (!text || thinking) return;
+    const attachments = [...selectedFiles];
+    if ((!text && !attachments.length && !pendingFileContext.length) || thinking) return;
     if (demo) { setError("Sign in to configure a real business workspace. Sample business data is disabled."); return; }
     if (!supabase || !ownerName.trim() || !ownerEmail.trim()) { setError("Your Google account profile is still loading. Please try again in a moment."); return; }
-    const next = [...messages, { id: String(Date.now()), role: "user" as const, text }];
-    setMessages(next);
-    setInput("");
+    if (attachments.length && !businessId) { setError("Save your business workspace first, then upload its documents."); return; }
+    if (attachments.length + pendingFileContext.length > 8) { setError("Upload up to 8 files in one setup request."); return; }
     setThinking(true);
+    setUploadingFiles(attachments.length > 0);
     setError("");
     setNotice("");
+    setFileMessage("");
+    let uploadedFiles = [...pendingFileContext];
     try {
+      if (attachments.length) {
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        if (sessionError || !token) throw new Error("Sign in again before uploading business files.");
+        const fallbackTypes: Record<string, string> = {
+          txt: "text/plain", csv: "text/csv", md: "text/plain", json: "text/plain",
+          pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
+          webp: "image/webp", gif: "image/gif",
+          docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        };
+        let remainingText = 12000;
+        for (let index = 0; index < attachments.length; index++) {
+          const file = attachments[index];
+          if (!file.size || file.size > 25 * 1024 * 1024) throw new Error(file.name + " must be between 1 byte and 25 MB.");
+          const extension = file.name.split(".").pop()?.toLowerCase() || "";
+          const contentType = file.type === "text/markdown" || file.type === "application/json" ? "text/plain" : (file.type || fallbackTypes[extension] || "application/octet-stream");
+          const uploadFile = new File([file], file.name, { type: contentType });
+          const form = new FormData();
+          form.append("file", uploadFile, file.name);
+          const response = await fetch(`${BUSINESS_FILES_API}/${encodeURIComponent(businessId)}`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error || ("Could not upload " + file.name + "."));
+          const readable = ["txt", "csv", "md", "json"].includes(extension) || ["text/plain", "text/csv"].includes(contentType);
+          let content = "";
+          let note = "";
+          if (readable && remainingText > 0) {
+            content = (await file.text()).slice(0, Math.min(4000, remainingText));
+            remainingText -= content.length;
+          } else {
+            note = "Stored in the business workspace. Text extraction is not available for this format yet; do not infer its contents.";
+          }
+          uploadedFiles.push({ name: file.name, contentType, content, note });
+          setPendingFileContext([...uploadedFiles]);
+          setSelectedFiles(attachments.slice(index + 1));
+        }
+        setSelectedFiles([]);
+        setUploadingFiles(false);
+        await refreshBusinessFiles().catch((e) => setFileMessage(e instanceof Error ? e.message : "Files uploaded, but the file list could not refresh."));
+      }
+      const userText = text || "Please review the uploaded business files and use their readable details to build or update my business profile.";
+      const fileNames = uploadedFiles.length ? "\nFiles: " + uploadedFiles.map((file) => file.name).join(", ") : "";
+      const next = [...messages, { id: String(Date.now()), role: "user" as const, text: userText + fileNames }];
+      setMessages(next);
+      setInput("");
       const { data, error: invokeError } = await supabase.functions.invoke("twiga-setup-assistant", {
         body: {
           messages: next.map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text })),
           ownerProfile: { name: ownerName.trim(), email: ownerEmail.trim() },
           existingProfile: profile,
+          uploadedFiles,
         },
       });
       if (invokeError) throw new Error(await edgeFunctionError(invokeError));
@@ -141,12 +219,46 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       setProfile((old) => ({ ...old, ...(data.businessProfile || {}), setup_details: { ...(old.setup_details || {}), ...(data.businessProfile?.setup_details || {}) } }));
       setMissing(Array.isArray(data.missingFields) ? data.missingFields : []);
       setReady(data.readyToBuild === true);
-      if (data.modelUsed) setNotice("AI response received · " + String(data.modelUsed));
+      if (uploadedFiles.length) {
+        const readableCount = uploadedFiles.filter((file) => file.content).length;
+        setNotice(uploadedFiles.length + " file(s) saved. The AI read " + readableCount + " text-based file(s); other formats are stored for download but are not yet parsed into the profile.");
+      } else if (data.modelUsed) setNotice("AI response received · " + String(data.modelUsed));
+      setPendingFileContext([]);
     } catch (e) {
       const message = e instanceof Error ? e.message : "The setup assistant could not reply.";
       setError(message);
       setMessages((m) => [...m, { id: String(Date.now() + 2), role: "ai", text: "I couldn't complete that reply. Your saved details have not been changed. " + message }]);
-    } finally { setThinking(false); }
+      if (uploadedFiles.length) setFileMessage("Your uploaded files are saved. You can retry the AI update without uploading them again.");
+    } finally { setThinking(false); setUploadingFiles(false); }
+  };
+
+  const downloadBusinessFile = async (file: BusinessFile) => {
+    if (!supabase || !businessId) return;
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) throw new Error("Sign in again to download this file.");
+      const response = await fetch(`${BUSINESS_FILES_API}/${encodeURIComponent(businessId)}/${encodeURIComponent(file.file_id)}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw new Error("Could not download this file.");
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url; link.download = file.name; document.body.appendChild(link); link.click(); link.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) { setFileMessage(e instanceof Error ? e.message : "Could not download this file."); }
+  };
+
+  const deleteBusinessFile = async (file: BusinessFile) => {
+    if (!supabase || !businessId || !window.confirm("Delete " + file.name + " from this business workspace?")) return;
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) throw new Error("Sign in again to manage business files.");
+      const response = await fetch(`${BUSINESS_FILES_API}/${encodeURIComponent(businessId)}/${encodeURIComponent(file.file_id)}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Could not delete this file.");
+      await refreshBusinessFiles();
+      setFileMessage("File deleted from this business workspace.");
+    } catch (e) { setFileMessage(e instanceof Error ? e.message : "Could not delete this file."); }
   };
 
   const buildWorkspace = async () => {
@@ -248,9 +360,11 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
           {thinking && <div className="mr-auto rounded-2xl bg-neutral-100 px-4 py-3 text-sm text-neutral-500">Checking your business details and preparing the next step…</div>}
         </div>
         <div className="border-t border-neutral-100 p-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-neutral-500">Tell TWIGA everything at once or make changes in normal language. English and Kiswahili are supported.</p><button type="button" onClick={() => setInput(fullSetupBrief)} disabled={thinking || building} className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-800 hover:bg-orange-100 disabled:opacity-40">Insert complete setup prompt</button></div>
-          <div className="flex items-end gap-2"><textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} placeholder="Describe your business or paste the full setup brief…" rows={5} className="min-h-[76px] flex-1 resize-y rounded-xl border border-neutral-200 p-3 text-sm outline-none focus:border-orange-400" /><button onClick={() => void send()} disabled={thinking || !input.trim() || loadingProfile} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">Send</button></div>
-          <p className="mt-2 text-[11px] text-neutral-400">Enter to send · Shift + Enter for a new line</p>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-neutral-500">Tell TWIGA what to configure or update. You can attach up to 8 business files.</p><button type="button" onClick={() => setInput(fullSetupBrief)} disabled={thinking || building} className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-xs font-semibold text-orange-800 hover:bg-orange-100 disabled:opacity-40">Insert complete setup prompt</button></div>
+          <input ref={fileInputRef} type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,text/plain,text/csv,.txt,.csv,.md,.json,.pdf,.docx,.xlsx,.pptx" className="hidden" onChange={(e) => { const incoming = Array.from(e.target.files || []); setSelectedFiles((current) => [...current, ...incoming].slice(0, Math.max(0, 8 - pendingFileContext.length))); e.currentTarget.value = ""; }} />
+          {selectedFiles.length > 0 && <div className="mb-3 flex flex-wrap gap-2">{selectedFiles.map((file, index) => <span key={file.name + index} className="rounded-lg bg-neutral-100 px-2.5 py-1.5 text-xs text-neutral-700">{file.name} · {formatFileSize(file.size)}<button type="button" onClick={() => setSelectedFiles((current) => current.filter((_, i) => i !== index))} className="ml-2 font-bold text-neutral-500" aria-label={"Remove " + file.name}>×</button></span>)}</div>}
+          <div className="flex flex-wrap items-end gap-2"><button type="button" onClick={() => fileInputRef.current?.click()} disabled={thinking || building || !businessId} className="rounded-xl border border-neutral-200 px-3 py-3 text-sm font-semibold text-neutral-700 disabled:opacity-40">Attach files</button><textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} placeholder="Describe your business, ask for an update, or paste the setup brief…" rows={5} className="min-h-[76px] min-w-0 flex-1 resize-y rounded-xl border border-neutral-200 p-3 text-sm outline-none focus:border-orange-400" /><button onClick={() => void send()} disabled={thinking || (!input.trim() && !selectedFiles.length && !pendingFileContext.length) || loadingProfile} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{uploadingFiles ? "Uploading…" : thinking ? "Working…" : "Send"}</button></div>
+          <p className="mt-2 text-[11px] text-neutral-400">Text, CSV, Markdown and JSON are read into the AI profile draft. PDF, Word, Excel, PowerPoint and images are stored privately for download but are not yet text-extracted.</p>
         </div>
       </section>
 
@@ -263,6 +377,12 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
           {missing.length > 0 && <div className="mt-4 rounded-xl bg-neutral-50 p-3"><p className="text-xs font-semibold text-neutral-700">Useful details still missing</p><ul className="mt-2 list-inside list-disc space-y-1 text-xs text-neutral-500">{missing.slice(0,8).map((x) => <li key={x}>{x}</li>)}</ul></div>}
           <button onClick={buildWorkspace} disabled={!ready || building || loadingProfile} className="mt-5 w-full rounded-xl bg-neutral-950 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{building ? "Saving & configuring…" : isEditing ? "Save business & AI settings" : "Create business workspace"}</button>
           <p className="mt-2 text-[11px] leading-5 text-neutral-400">You can save a first draft when the business name, type and description are ready. Complete the remaining areas later.</p>
+        </div>
+        <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-semibold text-neutral-900">Business files</h3><span className="text-[11px] text-neutral-500">{businessFiles.length} files</span></div>
+          <p className="mt-2 text-xs leading-5 text-neutral-500">Private storage for this business. {formatFileSize(storageUsedBytes)} used of {formatFileSize(storageQuotaBytes)}. Files stay scoped to this workspace.</p>
+          {!businessId ? <p className="mt-3 rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600">Create your workspace to enable secure file storage.</p> : businessFiles.length ? <div className="mt-3 max-h-64 space-y-2 overflow-y-auto">{businessFiles.map((file) => <div key={file.file_id} className="flex items-center gap-2 rounded-lg bg-neutral-50 p-2"><div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-neutral-800">{file.name}</p><p className="text-[10px] text-neutral-500">{formatFileSize(file.size_bytes)} · {file.content_type}</p></div><button type="button" onClick={() => void downloadBusinessFile(file)} className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-[10px] font-semibold text-neutral-700">Get</button><button type="button" onClick={() => void deleteBusinessFile(file)} className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-[10px] font-semibold text-neutral-700">Delete</button></div>)}</div> : <p className="mt-3 rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600">No business files uploaded yet.</p>}
+          {fileMessage && <p role="status" className="mt-3 text-xs text-neutral-600">{fileMessage}</p>}
         </div>
         <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
         <h3 className="text-sm font-semibold text-neutral-900">AI decisions and callback approvals</h3>
