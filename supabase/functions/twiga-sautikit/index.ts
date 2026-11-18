@@ -11,24 +11,32 @@ const API = "https://api.sautikit.com";
 
 type Row = Record<string, any>;
 
+const COMPOSIO_PROXY_API = "https://backend.composio.dev/api/v3.1/tools/execute/proxy";
+const COMPOSIO_SAUTIKIT_CONNECTED_ACCOUNT_ID = "custom_sauti_kit_primly-telyn";
+
 async function skRequest(key: string, path: string, method = "GET", body?: unknown) {
-  const response = await fetch(API + path, {
-    method,
-    headers: {
-      Authorization: "Bearer " + key,
-      Accept: "application/json",
-      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  const response = await fetch(COMPOSIO_PROXY_API, {
+    method: "POST",
+    headers: { "x-api-key": key, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      connected_account_id: COMPOSIO_SAUTIKIT_CONNECTED_ACCOUNT_ID,
+      endpoint: path,
+      method,
+      ...(body === undefined ? {} : { body }),
+    }),
+    signal: AbortSignal.timeout(20000),
   });
   const raw = await response.text();
-  let data: Row = {};
-  try { data = raw ? JSON.parse(raw) : {}; } catch { data = { message: raw.slice(0, 500) }; }
-  if (!response.ok) {
-    const message = String(data?.error?.message || data?.message || data?.error || "SautiKit request failed (HTTP " + response.status + ").");
-    throw Object.assign(new Error(message), { status: response.status, details: data?.error || null });
+  let envelope: Row = {};
+  try { envelope = raw ? JSON.parse(raw) : {}; } catch { envelope = { message: raw.slice(0, 500) }; }
+  const upstreamStatus = Number(envelope.status ?? response.status);
+  const data = envelope.data ?? envelope;
+  if (!response.ok || (Number.isFinite(upstreamStatus) && upstreamStatus >= 400)) {
+    const details = data?.error || envelope?.error || data;
+    const message = String(details?.message || details?.detail || details?.error_description || (typeof details === "string" ? details : "") || envelope?.message || "Composio could not proxy the SautiKit request.");
+    throw Object.assign(new Error(message), { status: response.status >= 400 ? response.status : (Number.isFinite(upstreamStatus) ? upstreamStatus : 502), details });
   }
-  return data;
+  return data as Row;
 }
 
 function resolveProviderVoice(voices: unknown[], requested: string): string {
@@ -105,9 +113,9 @@ Deno.serve(async (req: Request) => {
 
     if (action === "admin_list_numbers") {
       if (!isPlatformAdmin) return json({ error: "Only a TWIGA platform administrator can view the shared SautiKit number inventory." }, 403);
-      const { data: apiKey, error: secretError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "sautikit_platform_api_key" });
+      const { data: apiKey, error: secretError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "composio_sautikit_api_key" });
       if (secretError) throw secretError;
-      if (!apiKey) return json({ error: "Connect the shared SautiKit API key in Admin before listing numbers." }, 409);
+      if (!apiKey) return json({ error: "Connect the Composio Project API key in TWIGA Connections before listing numbers." }, 409);
       const inventory = await skRequest(String(apiKey), "/v1/numbers");
       const numbers = Array.isArray(inventory?.data) ? inventory.data : [];
       const { data: assignedRows, error: assignedError } = await admin.from("twiga_phone_lines")
@@ -145,7 +153,7 @@ Deno.serve(async (req: Request) => {
       const targetBusinessId = String(body.businessId || "").trim();
       const providerNumberId = String(body.numberId || "").trim();
       if (!targetBusinessId || !providerNumberId) return json({ error: "Choose a business and a SautiKit number." }, 400);
-      const { data: apiKey, error: secretError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "sautikit_platform_api_key" });
+      const { data: apiKey, error: secretError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "composio_sautikit_api_key" });
       if (secretError) throw secretError;
       if (!apiKey) return json({ error: "Connect the shared SautiKit API key in Admin before assigning numbers." }, 409);
       const [inventory, businessResult, assignedResult] = await Promise.all([
@@ -242,13 +250,13 @@ Deno.serve(async (req: Request) => {
       }
 
       const { data: last4, error: saveError } = await admin.rpc("twiga_set_platform_secret", {
-        p_provider: "sautikit_platform_api_key",
+        p_provider: "composio_sautikit_api_key",
         p_secret: apiKey,
         p_updated_by: user.id,
       });
       if (saveError) {
         console.error("SautiKit Vault save failed:", saveError.message);
-        return json({ error: "SautiKit key validated, but could not be stored in encrypted Vault." }, 500);
+        return json({ error: "Composio connection validated, but could not be stored in encrypted Vault." }, 500);
       }
       return json({
         connected: true,
@@ -262,10 +270,10 @@ Deno.serve(async (req: Request) => {
         agentCheckError,
         models: catalog.data,
         message: numberCount === 0
-          ? "SautiKit key is stored securely, but this workspace has no claimed phone numbers yet."
+          ? "Composio connection is stored securely, but this workspace has no claimed phone numbers yet."
           : matchedLines.length
-            ? "SautiKit key is stored securely and a saved TWIGA line matches a number in this workspace."
-            : "SautiKit key is stored securely, but no saved TWIGA phone-line reference matches a number in this workspace.",
+            ? "Composio connection is stored securely and a saved TWIGA line matches a number in this workspace."
+            : "Composio connection is stored securely, but no saved TWIGA phone-line reference matches a number in this workspace.",
       });
     }
 
@@ -286,10 +294,10 @@ Deno.serve(async (req: Request) => {
 
     const { data: keyRef, error: keyRefError } = await admin
       .from("twiga_platform_secret_refs").select("secret_last4,updated_at")
-      .eq("provider", "sautikit_platform_api_key").maybeSingle();
+      .eq("provider", "composio_sautikit_api_key").maybeSingle();
     if (keyRefError) throw keyRefError;
     const { data: apiKey, error: secretError } = await admin.rpc("twiga_get_platform_secret", {
-      p_provider: "sautikit_platform_api_key",
+      p_provider: "composio_sautikit_api_key",
     });
     if (secretError) throw secretError;
     const key = String(apiKey || "");
@@ -336,7 +344,7 @@ Deno.serve(async (req: Request) => {
       }
       const scripts = settings.sautikit_scripts && typeof settings.sautikit_scripts === "object" ? settings.sautikit_scripts : {};
       if (!key) {
-        providerError = "TWIGA's central SautiKit server connection is not configured. No customer API key is needed; the platform team must finish the one-time provider connection.";
+        providerError = "TWIGA's Composio connection to the existing SautiKit workspace is not configured. A TWIGA platform administrator must add the Composio Project API key once; business customers do not need provider credentials.";
       }
       const liveInboundRoute = number?.routing?.inbound_agent || number?.inbound_agent || number?.routing?.inboundAgent;
       const liveInboundAgentId = liveInboundRoute?.agent_id || liveInboundRoute?.agentId;
