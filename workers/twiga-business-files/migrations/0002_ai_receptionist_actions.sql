@@ -52,3 +52,18 @@ CREATE TABLE IF NOT EXISTS ai_notifications (
   read_at TEXT
 );
 CREATE INDEX IF NOT EXISTS ai_notifications_business_status ON ai_notifications (business_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ai_appointments (
+  appointment_id TEXT PRIMARY KEY,
+  business_id TEXT NOT NULL,
+  customer_name TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  service TEXT NOT NULL,
+  scheduled_at TEXT NOT NULL,
+  duration_minutes INTEGER NOT NULL,
+  notes TEXT,
+  consent_confirmed INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ai_appointments_business_status ON ai_appointments (business_id, status, scheduled_at);
