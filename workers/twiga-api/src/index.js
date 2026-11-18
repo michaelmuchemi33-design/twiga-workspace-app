@@ -98,7 +98,7 @@ const ACTIONS = {
     const branch = txt(d.branch, 80) || 'Main branch';
     const source = d.source === 'ai_receptionist' ? 'ai_receptionist' : 'pos';
     const itemLines = items.map(it => ({productId: it.itemId, name: it.name, qty: it.qty, unitPrice: it.price, total: it.total, kind: it.kind || 'product'}));
-    const stockCommitted = paid >= total;
+    const stockCommitted = source === 'pos' && paid >= total;
     await room(env, biz, size(customer, d.notes) + items.length * 160);
     const out = {ok: true, orderId: orderId, total: total, status: status};
     const st = [env.DB.prepare('INSERT INTO orders (business_id, order_id, created_at, date, customer, phone, type, status, total, paid, method, notes, staff, branch, updated_at, items_json, source, subtotal, payment_status, stock_committed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(biz, orderId, t, txt(d.date, 20) || today(), customer, txt(d.phone, 30), type, status, total, paid, method, txt(d.notes, 300), txt(d.staff, 80), branch, t, JSON.stringify(itemLines), source, total, paid >= total ? 'paid' : 'unpaid', stockCommitted ? 1 : 0)];
