@@ -530,15 +530,10 @@ Deno.serve(async (req: Request) => {
       const contacts = Array.from(unique.values()).slice(0, 500);
       const authorization = req.headers.get("authorization") || "";
       if (!authorization.startsWith("Bearer ")) throw new HttpError(401, "Sign in to TWIGA again before saving imported contacts.");
-      const workerResponse = await fetch("https://twiga-api.twiga-ke.workers.dev", {
+      const workerResponse = await fetch("https://twiga-business-files.twiga-ke.workers.dev/v1/contacts/" + encodeURIComponent(businessId), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          token: authorization.slice("Bearer ".length).trim(),
-          business_id: businessId,
-          action: "saveContacts",
-          data: { contacts, source: "google" },
-        }),
+        headers: { Authorization: authorization, "Content-Type": "application/json" },
+        body: JSON.stringify({ contacts, source: "google" }),
         signal: AbortSignal.timeout(20000),
       });
       const workerText = await workerResponse.text();
