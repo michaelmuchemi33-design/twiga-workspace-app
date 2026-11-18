@@ -50,15 +50,12 @@ export default function Customers() {
     if (!supabase || !businessId) throw new Error("Choose a signed-in business workspace first.");
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
     if (sessionError || !sessionData.session?.access_token) throw new Error("Your sign-in has expired. Sign in again.");
-    const response = await fetch("https://twiga-api.twiga-ke.workers.dev", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        token: sessionData.session.access_token,
-        business_id: businessId,
-        action,
-        data,
-      }),
+    const endpoint = `https://twiga-business-files.twiga-ke.workers.dev/v1/contacts/${encodeURIComponent(businessId)}`;
+    const listQuery = new URLSearchParams({ q: String(data.q || ""), limit: String(data.limit || 200) });
+    const response = await fetch(action === "listContacts" ? endpoint + "?" + listQuery.toString() : endpoint, {
+      method: action === "listContacts" ? "GET" : "POST",
+      headers: { Authorization: `Bearer ${sessionData.session.access_token}`, ...(action === "saveContacts" ? { "Content-Type": "application/json" } : {}) },
+      ...(action === "saveContacts" ? { body: JSON.stringify(data) } : {}),
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || result?.ok !== true) throw new Error(String(result?.error || "Cloudflare could not complete the contact operation."));
