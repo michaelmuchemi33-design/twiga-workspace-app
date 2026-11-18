@@ -26,7 +26,9 @@ async function ensureSchema(env) {
       env.DB.prepare("CREATE TABLE IF NOT EXISTS files (file_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, object_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, uploaded_by TEXT NOT NULL, created_at TEXT NOT NULL)"),
       env.DB.prepare("CREATE INDEX IF NOT EXISTS files_business_created ON files (business_id, created_at DESC)"),
       env.DB.prepare("CREATE TABLE IF NOT EXISTS usage (business_id TEXT PRIMARY KEY, bytes_used INTEGER NOT NULL DEFAULT 0)"),
-      env.DB.prepare("CREATE TABLE IF NOT EXISTS r2_usage (business_id TEXT PRIMARY KEY, bytes_used INTEGER NOT NULL DEFAULT 0)")
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS r2_usage (business_id TEXT PRIMARY KEY, bytes_used INTEGER NOT NULL DEFAULT 0)"),
+      env.DB.prepare("CREATE TRIGGER IF NOT EXISTS usage_quota_insert BEFORE INSERT ON usage WHEN NEW.bytes_used > 524288000 BEGIN SELECT RAISE(ABORT, 'D1_STORAGE_QUOTA'); END"),
+      env.DB.prepare("CREATE TRIGGER IF NOT EXISTS usage_quota_update BEFORE UPDATE ON usage WHEN NEW.bytes_used > 524288000 BEGIN SELECT RAISE(ABORT, 'D1_STORAGE_QUOTA'); END")
     ])
       .catch((e) => { schemaReady = null; throw e; });
   }
