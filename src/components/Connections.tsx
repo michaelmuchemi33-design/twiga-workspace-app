@@ -112,7 +112,23 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       if (provider === "grok") setXaiKey(""); else setSautikitKey("");
       setProviderMessage(data?.message || (provider === "grok" ? "Grok key validated and saved in encrypted storage." : "Composio Project API key validated and saved in encrypted storage."));
       await refreshProviders();
-    } catch (e) { setProviderMessage(e instanceof Error ? e.message : "Could not save provider key."); }
+    } catch (e: any) {
+      // Supabase FunctionsHttpError keeps the Edge Function response in context.
+      // Read its JSON body so provider errors (401/403/Vault failures) are shown
+      // instead of the unhelpful "Edge Function returned a non-2xx status code".
+      let detail = "";
+      const response = e?.context;
+      if (response && typeof response.clone === "function") {
+        try {
+          const payload = await response.clone().json();
+          detail = String(payload?.error || payload?.message || "");
+        } catch {
+          try { detail = (await response.clone().text()).slice(0, 500); } catch { /* no readable response body */ }
+        }
+      }
+      const status = Number(response?.status || e?.status || 0);
+      setProviderMessage(detail || (status ? "Connection failed (HTTP " + status + "). " : "") + (e instanceof Error ? e.message : "Could not save provider key."));
+    }
     finally { setProviderBusy(false); }
   };
 
