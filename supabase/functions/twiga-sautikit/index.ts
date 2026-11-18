@@ -614,7 +614,8 @@ Deno.serve(async (req: Request) => {
         const published = publishedEnvelope?.revision || publishedEnvelope?.data?.revision || publishedEnvelope?.data || publishedEnvelope;
         revision = Number(published?.revision || published?.current_revision || published?.version || createdAgent?.current_revision || 1);
         await skRequest(key, "/v1/numbers/" + encodeURIComponent(numberId) + "/routing", "PUT", {
-          voice_callback_url: callbackUrl,
+          // Keep lifecycle events and human handover callbacks separate from voice actions.
+          // SautiKit's managed agent handles the live conversation.
           events_url: callbackUrl,
           inbound_agent: {
             enabled: true,
@@ -689,7 +690,7 @@ Deno.serve(async (req: Request) => {
         revision = Number(published?.revision || published?.current_revision || published?.version || revision || 1);
       }
       await skRequest(key, "/v1/numbers/" + encodeURIComponent(numberId) + "/routing", "PUT", {
-        voice_callback_url: callbackUrl,
+        // Do not reuse the call-events URL as a voice-actions endpoint.
         events_url: callbackUrl,
         inbound_agent: {
           enabled: true,
