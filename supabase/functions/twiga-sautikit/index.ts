@@ -36,7 +36,7 @@ async function attachOperationalTools(
 ) {
   const base = {
     agent_id: agentId,
-    url: "https://twiga-business-files.twiga-ke.workers.dev/v1/ai-catalog/" + encodeURIComponent(businessId),
+    url: "https://twiga-business-files.twiga-ke.workers.dev/v1/ai-action/" + encodeURIComponent(businessId),
     method: "POST",
     headers: { "x-twiga-ai-tool-secret": secret },
     timeout_ms: 12000,
@@ -88,9 +88,9 @@ async function attachOperationalTools(
 async function attachCrmTools(key: string, businessId: string, agentId: string, secret: string, leadToolId: string, orderToolId: string) {
   const base = {
     agent_id: agentId,
-    url: "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-ai-actions",
+    url: "https://twiga-business-files.twiga-ke.workers.dev/v1/ai-action/" + encodeURIComponent(businessId),
     method: "POST",
-    headers: { "x-twiga-tool-secret": secret },
+    headers: { "x-twiga-ai-tool-secret": secret },
     timeout_ms: 12000,
   };
   await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/tools/" + encodeURIComponent(leadToolId), "PUT", {
@@ -972,10 +972,10 @@ Deno.serve(async (req: Request) => {
           name: "book_appointment",
           purpose: "saving this caller's appointment request to this business after the caller explicitly agrees",
           description: "Create a pending appointment request for this business. Ask the caller for their name, phone number, service and preferred date/time with timezone. Ask for explicit consent before saving. The team must confirm the final slot; never claim it is confirmed.",
-          url: "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-booking-tool",
+          url: "https://twiga-business-files.twiga-ke.workers.dev/v1/ai-action/" + encodeURIComponent(businessId),
           method: "POST",
-          headers: { "x-twiga-tool-secret": bookingSecret },
-          body_params: { business_id: businessId, agent_id: createdAgentId },
+          headers: { "x-twiga-ai-tool-secret": bookingSecret },
+          body_params: { business_id: businessId, agent_id: createdAgentId, action: "book_appointment" },
           timeout_ms: 12000,
           parameters: {
             type: "object",
@@ -1022,7 +1022,7 @@ Deno.serve(async (req: Request) => {
             },
           },
         });
-        const boundSettings = { ...nextSettings, ai_agent_bound: true, sautikit_booking_tool_ready: true, sautikit_operational_tools_ready: true, sautikit_knowledge_tool_ready: true, sautikit_drive_tool_ready: true, sautikit_cloudflare_files_tool_ready: true, inbound_agent_revision: revision };
+        const boundSettings = { ...nextSettings, ai_agent_bound: true, sautikit_booking_tool_ready: true, sautikit_operational_tools_ready: true, sautikit_knowledge_tool_ready: true, sautikit_drive_tool_ready: true, sautikit_cloudflare_files_tool_id: fileToolId, sautikit_cloudflare_files_tool_ready: true, inbound_agent_revision: revision };
         const { error: saveBoundError } = await admin.from("twiga_phone_lines")
           .update({ settings: boundSettings, inbound_enabled: true, inbound_status: "testing", outbound_enabled: true, outbound_status: "active", updated_at: new Date().toISOString() })
           .eq("id", line.id);
@@ -1055,21 +1055,25 @@ Deno.serve(async (req: Request) => {
         });
         if (bookingSecretSaveError) throw new Error("Could not create the business's encrypted appointment-tool credential: " + bookingSecretSaveError.message);
       }
+      await registerCloudflareFilesSecret(auth, businessId, bookingSecret);
       const toolId = String(settings.sautikit_booking_tool_id || crypto.randomUUID());
       const taskToolId = String(settings.sautikit_task_tool_id || crypto.randomUUID());
       const followupToolId = String(settings.sautikit_followup_tool_id || crypto.randomUUID());
       const leadToolId = String(settings.sautikit_lead_tool_id || crypto.randomUUID());
       const orderToolId = String(settings.sautikit_order_tool_id || crypto.randomUUID());
+      const knowledgeToolId = String(settings.sautikit_knowledge_tool_id || crypto.randomUUID());
+      const driveToolId = String(settings.sautikit_drive_tool_id || crypto.randomUUID());
+      const fileToolId = String(settings.sautikit_cloudflare_files_tool_id || crypto.randomUUID());
       await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/tools/" + encodeURIComponent(toolId), "PUT", {
         agent_id: agentId,
         tool_id: toolId,
         name: "book_appointment",
         purpose: "saving this caller's appointment request to this business after the caller explicitly agrees",
         description: "Create a pending appointment request for this business. Ask the caller for their name, phone number, service and preferred date/time with timezone. Ask for explicit consent before saving. The team must confirm the final slot; never claim it is confirmed.",
-        url: "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-booking-tool",
+        url: "https://twiga-business-files.twiga-ke.workers.dev/v1/ai-action/" + encodeURIComponent(businessId),
         method: "POST",
-        headers: { "x-twiga-tool-secret": String(bookingSecret) },
-        body_params: { business_id: businessId, agent_id: agentId },
+        headers: { "x-twiga-ai-tool-secret": String(bookingSecret) },
+        body_params: { business_id: businessId, agent_id: agentId, action: "book_appointment" },
         timeout_ms: 12000,
         parameters: {
           type: "object",
@@ -1088,6 +1092,9 @@ Deno.serve(async (req: Request) => {
       });
       await attachOperationalTools(key, businessId, agentId, bookingSecret, taskToolId, followupToolId);
       await attachCrmTools(key, businessId, agentId, bookingSecret, leadToolId, orderToolId);
+      await attachKnowledgeTools(key, businessId, agentId, bookingSecret, knowledgeToolId);
+      await attachDriveSearchTool(key, businessId, agentId, bookingSecret, driveToolId);
+      await attachCloudflareFilesTool(key, businessId, agentId, bookingSecret, fileToolId);
       const agentEnvelope = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId));
       const agentData = agentEnvelope?.agent || agentEnvelope?.data?.agent || agentEnvelope?.data || agentEnvelope;
       let revision = Number(agentData?.current_revision || 0);
@@ -1116,6 +1123,9 @@ Deno.serve(async (req: Request) => {
         sautikit_booking_tool_id: toolId, sautikit_booking_tool_ready: true,
         sautikit_task_tool_id: taskToolId, sautikit_followup_tool_id: followupToolId,
         sautikit_lead_tool_id: leadToolId, sautikit_order_tool_id: orderToolId, sautikit_operational_tools_ready: true,
+        sautikit_knowledge_tool_id: knowledgeToolId, sautikit_knowledge_tool_ready: true,
+        sautikit_drive_tool_id: driveToolId, sautikit_drive_tool_ready: true,
+        sautikit_cloudflare_files_tool_id: fileToolId, sautikit_cloudflare_files_tool_ready: true,
         inbound_agent_revision: revision,
       };
       const { error: saveError } = await admin.from("twiga_phone_lines")
@@ -1265,10 +1275,10 @@ Deno.serve(async (req: Request) => {
         agent_id: agentId, tool_id: bookingToolId, name: "book_appointment",
         purpose: "save a pending appointment request for this business after the caller explicitly agrees",
         description: "Capture the caller's name, phone, service, requested date and time, and explicit consent. Create a pending request for staff confirmation. Do not claim the appointment is finally confirmed until the business confirms it.",
-        url: "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-booking-tool",
+        url: "https://twiga-business-files.twiga-ke.workers.dev/v1/ai-action/" + encodeURIComponent(businessId),
         method: "POST",
-        headers: { "x-twiga-tool-secret": bookingSecret },
-        body_params: { business_id: businessId, agent_id: agentId },
+        headers: { "x-twiga-ai-tool-secret": bookingSecret },
+        body_params: { business_id: businessId, agent_id: agentId, action: "book_appointment" },
         timeout_ms: 12000,
         parameters: {
           type: "object",
