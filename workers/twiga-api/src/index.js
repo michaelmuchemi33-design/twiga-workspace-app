@@ -10,6 +10,19 @@ const num = (v, label, min) => { const n = Number(v); if (!isFinite(n) || n < (m
 const rid = p => p + '-' + today().slice(2).replace(/-/g, '') + '-' + Math.random().toString(16).slice(2, 7).toUpperCase();
 const size = (...s) => 120 + s.reduce((a, x) => a + String(x == null ? '' : x).length, 0);
 
+let usageSchemaReady;
+async function ensureUsageSchema(env) {
+  if (!usageSchemaReady) {
+    usageSchemaReady = env.DB.batch([
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS usage (business_id TEXT PRIMARY KEY, bytes_used INTEGER NOT NULL DEFAULT 0)"),
+      env.DB.prepare("CREATE TRIGGER IF NOT EXISTS usage_quota_insert BEFORE INSERT ON usage WHEN NEW.bytes_used > 524288000 BEGIN SELECT RAISE(ABORT, 'D1_STORAGE_QUOTA'); END"),
+      env.DB.prepare("CREATE TRIGGER IF NOT EXISTS usage_quota_update BEFORE UPDATE ON usage WHEN NEW.bytes_used > 524288000 BEGIN SELECT RAISE(ABORT, 'D1_STORAGE_QUOTA'); END")
+    ]).catch((e) => { usageSchemaReady = null; throw e; });
+  }
+  return usageSchemaReady;
+}
+
+
 export default {
   async fetch(req, env) {
     if (req.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
@@ -18,6 +31,7 @@ export default {
     try {
       const b = await req.json();
       const ctx = await authorize(env, b.token, b.business_id);
+      await ensureUsageSchema(env);
       const fn = ACTIONS[b.action];
       if (!fn) throw new Error('Unknown action');
       return json(await fn(env, ctx, b.data || {}, txt(b.txn, 100)));
@@ -493,6 +507,7 @@ async function vapiHook(req, env) {
     }
   }
   if (m.type === 'tool-calls') {
+    await ensureUsageSchema(env);
     const calls = Array.isArray(m.toolCallList) ? m.toolCallList : [];
     let d;
     try { d = await getAiLineConfig(env, num); }
