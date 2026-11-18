@@ -11,32 +11,131 @@ const API = "https://api.sautikit.com";
 
 type Row = Record<string, any>;
 
-const COMPOSIO_PROXY_API = "https://backend.composio.dev/api/v3.1/tools/execute/proxy";
-const COMPOSIO_SAUTIKIT_CONNECTED_ACCOUNT_ID = "custom_sauti_kit_primly-telyn";
-
 async function skRequest(key: string, path: string, method = "GET", body?: unknown) {
-  const response = await fetch(COMPOSIO_PROXY_API, {
-    method: "POST",
-    headers: { "x-api-key": key, "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({
-      connected_account_id: COMPOSIO_SAUTIKIT_CONNECTED_ACCOUNT_ID,
-      endpoint: path,
-      method,
-      ...(body === undefined ? {} : { body }),
-    }),
+  const response = await fetch(API + path, {
+    method,
+    headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", Accept: "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(20000),
   });
   const raw = await response.text();
-  let envelope: Row = {};
-  try { envelope = raw ? JSON.parse(raw) : {}; } catch { envelope = { message: raw.slice(0, 500) }; }
-  const upstreamStatus = Number(envelope.status ?? response.status);
-  const data = envelope.data ?? envelope;
-  if (!response.ok || (Number.isFinite(upstreamStatus) && upstreamStatus >= 400)) {
-    const details = data?.error || envelope?.error || data;
-    const message = String(details?.message || details?.detail || details?.error_description || (typeof details === "string" ? details : "") || envelope?.message || "Composio could not proxy the SautiKit request.");
-    throw Object.assign(new Error(message), { status: response.status >= 400 ? response.status : (Number.isFinite(upstreamStatus) ? upstreamStatus : 502), details });
+  let payload: Row = {};
+  try { payload = raw ? JSON.parse(raw) : {}; } catch { payload = { message: raw.slice(0, 500) }; }
+  if (!response.ok) {
+    const details = payload?.error || payload;
+    const message = String(details?.message || details?.detail || details?.resolution || (typeof details === "string" ? details : "") || payload?.message || ("SautiKit returned HTTP " + response.status));
+    throw Object.assign(new Error(message), { status: response.status, details });
   }
-  return data as Row;
+  return payload as Row;
+}
+
+
+async function attachOperationalTools(
+  key: string, businessId: string, agentId: string, secret: string,
+  taskToolId: string, followupToolId: string,
+) {
+  const base = {
+    agent_id: agentId,
+    url: "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-ai-actions",
+    method: "POST",
+    headers: { "x-twiga-tool-secret": secret },
+    timeout_ms: 12000,
+  };
+  await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/tools/" + encodeURIComponent(taskToolId), "PUT", {
+    ...base,
+    tool_id: taskToolId,
+    name: "create_staff_task",
+    purpose: "record practical work for this business's staff in TWIGA",
+    description: "Create a task for the business team when a customer request needs human work, a supplier needs contacting, stock or prices need checking, a complaint needs review, or a promise needs tracking. This only records a task; it does not place a call, send a message, change a price, refund money or make a payment. Tell the customer the team will follow up only after the task is saved.",
+    body_params: { business_id: businessId, agent_id: agentId, action: "create_staff_task" },
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short action title for the staff team." },
+        description: { type: "string", description: "What happened and what staff should do next." },
+        category: { type: "string", description: "Relevant area such as sales, operations, customer_support, delivery, stock, finance, bookings or compliance." },
+        priority: { type: "string", enum: ["low", "normal", "high", "urgent"] },
+        due_at: { type: "string", description: "Optional future due time as ISO 8601 with timezone." },
+        customer_name: { type: "string" },
+        phone: { type: "string" },
+      },
+      required: ["title", "description", "category", "priority"],
+      additionalProperties: false,
+    },
+  });
+  await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/tools/" + encodeURIComponent(followupToolId), "PUT", {
+    ...base,
+    tool_id: followupToolId,
+    name: "request_customer_followup",
+    purpose: "request a consent-based callback from a business customer",
+    description: "Use only after the customer explicitly says they want this business to call them back, confirms the callback phone number, and agrees to a specific future time. Never infer consent from merely giving a phone number, being a missed call, or asking a question. The business workspace may require owner approval before dispatch. If it does, TWIGA creates an approval task and no call is placed yet. Do not say the call is booked unless the tool confirms it was scheduled.",
+    body_params: { business_id: businessId, agent_id: agentId, action: "request_customer_followup" },
+    parameters: {
+      type: "object",
+      properties: {
+        customer_name: { type: "string" },
+        phone: { type: "string", description: "Customer's confirmed callback number, international format preferred." },
+        reason: { type: "string", description: "Why the customer wants a callback." },
+        scheduled_at: { type: "string", description: "A specific future ISO 8601 date-time including timezone, agreed with the customer." },
+        recipient_consent_confirmed: { type: "boolean", description: "True only after the customer explicitly agrees to receive this callback." },
+      },
+      required: ["customer_name", "phone", "reason", "scheduled_at", "recipient_consent_confirmed"],
+      additionalProperties: false,
+    },
+  });
+}
+ 
+async function attachCrmTools(key: string, businessId: string, agentId: string, secret: string, leadToolId: string, orderToolId: string) {
+  const base = {
+    agent_id: agentId,
+    url: "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-ai-actions",
+    method: "POST",
+    headers: { "x-twiga-tool-secret": secret },
+    timeout_ms: 12000,
+  };
+  await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/tools/" + encodeURIComponent(leadToolId), "PUT", {
+    ...base, tool_id: leadToolId, name: "capture_customer_lead",
+    purpose: "save an inbound customer enquiry into this business CRM",
+    description: "Save the name, contact details and enquiry of a person who has contacted this business and wants information or a quote. This is an internal CRM record only; it does not give consent to market to or call the customer. Never invent a phone number, email, product interest or consent.",
+    body_params: { business_id: businessId, agent_id: agentId, action: "capture_customer_lead" },
+    parameters: {
+      type: "object",
+      properties: {
+        customer_name: { type: "string" },
+        phone: { type: "string" },
+        email: { type: "string" },
+        interest: { type: "string", description: "What the customer asked about." },
+        source: { type: "string", description: "Inbound phone, WhatsApp, web enquiry or other real source." },
+      },
+      required: ["customer_name", "interest", "source"],
+      additionalProperties: false,
+    },
+  });
+  await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/tools/" + encodeURIComponent(orderToolId), "PUT", {
+    ...base, tool_id: orderToolId, name: "create_order_request",
+    purpose: "record a customer's order request for staff confirmation",
+    description: "Use only when the customer clearly asks to place an order or service request and has confirmed the items and quantities. Capture the customer's verified name, reachable contact and requested items. Use exact unit prices and totals only when retrieved from this business's verified catalogue; otherwise omit price and total for staff to quote. This creates a pending order request only. It does not confirm stock, deduct inventory, charge money, send an M-Pesa prompt or mark anything paid. Tell the customer staff must confirm availability and final price.",
+    body_params: { business_id: businessId, agent_id: agentId, action: "create_order_request" },
+    parameters: {
+      type: "object",
+      properties: {
+        customer_name: { type: "string" },
+        phone: { type: "string" },
+        email: { type: "string" },
+        items: { type: "array", items: { type: "object", properties: {
+          name: { type: "string" }, sku: { type: "string" },
+          quantity: { type: "number", minimum: 1 },
+          unit_price: { type: "number", minimum: 0 },
+          notes: { type: "string" },
+        }, required: ["name","quantity"], additionalProperties: false } },
+        total_amount: { type: "number", minimum: 0 },
+        currency: { type: "string" },
+        order_notes: { type: "string" },
+      },
+      required: ["customer_name","items"],
+      additionalProperties: false,
+    },
+  });
 }
 
 function resolveProviderVoice(voices: unknown[], requested: string): string {
@@ -63,12 +162,29 @@ function setupDetailLines(value: unknown) {
     whatsapp_number: "WHATSAPP NUMBER", contact_email: "BUSINESS CONTACT EMAIL",
     social_links: "SOCIAL LINKS", languages: "SUPPORTED LANGUAGES",
     special_instructions: "SPECIAL INSTRUCTIONS", outbound_call_rules: "OUTBOUND CALL RULES",
+    industry_archetype: "INDUSTRY AND OPERATING MODEL", customer_journey: "CUSTOMER JOURNEY",
+    operating_playbook: "OPERATING PLAYBOOK", decision_policy: "AI DECISION POLICY",
+    action_approval_matrix: "OWNER APPROVAL MATRIX", followup_playbook: "FOLLOW-UP PLAYBOOK",
+    initial_task_templates: "INITIAL STAFF TASKS", integration_plan: "INTEGRATION READINESS PLAN",
   };
   return Object.entries(labels).map(([key,label]) => {
     const v = details[key];
     const rendered = Array.isArray(v) || (v && typeof v === "object") ? JSON.stringify(v) : String(v || "");
     return rendered.trim() ? label + ": " + rendered.slice(0, 3000) : "";
   }).filter(Boolean).join("\n");
+}
+
+function composePrompt(core: string, greeting: string, inbound: string, outbound: string) {
+  const marker = "----- TWIGA FRONT DESK SETTINGS -----";
+  const cleanCore = String(core || "").split(marker)[0].trim();
+  return [
+    cleanCore,
+    marker,
+    "OPENING GREETING:\n" + greeting,
+    "INBOUND CALL INSTRUCTIONS:\n" + inbound,
+    "OUTBOUND CALL INSTRUCTIONS:\n" + outbound,
+    "GLOBAL SAFETY: Use only verified information from this business workspace. Never invent prices, stock, availability, bookings, orders, payments, or integration status. Never ask for passwords, PINs, OTPs, card numbers, or security codes. Respect requests not to be called again. If information is missing, say the team will confirm it.",
+  ].filter(Boolean).join("\n\n");
 }
 
 const PRODUCT_CATALOG_MARKER = "----- TWIGA LIVE PRODUCT & SERVICE CATALOGUE -----";
@@ -85,14 +201,14 @@ async function buildProductCatalogue(admin: any, businessId: string): Promise<st
     const price = String(p.currency || "KES") + " " + Number(p.price || 0).toLocaleString("en-KE");
     const stock = p.item_type === "service" || p.track_stock === false
       ? "Availability: service / no stock tracking"
-      : "Available stock: " + Number(p.stock_quantity || 0) + " " + String(p.unit || "units");
+      : "Last saved available stock: " + Number(p.stock_quantity || 0) + " " + String(p.unit || "units");
     return "- " + kind + ": " + String(p.name || "").slice(0, 120)
       + (p.category ? " | Category: " + String(p.category).slice(0, 80) : "")
       + " | Price: " + price + " | " + stock
       + (p.sku ? " | SKU: " + String(p.sku).slice(0, 60) : "")
       + (p.description ? " | Details: " + String(p.description).slice(0, 360) : "");
   });
-  return "Only quote the exact listed price and catalogue details. For tracked stock, use the last saved stock count as a guide and never promise availability without checking. Never create a discount or variation that is not listed.\n"
+  return "Quote only the exact listed price and details. Stock counts are the last saved balance, not a live reservation; never promise stock without checking. Never create unlisted discounts or variations. If information is missing, ask the team to confirm.\n"
     + "ACTIVE CATALOGUE (" + products.length + (products.length === 80 ? "+, first 80 shown" : "") + "):\n" + rows.join("\n");
 }
 
@@ -107,18 +223,7 @@ function withProductCatalogue(core: string, catalogue: string) {
   return [cleanCore, marker + "\n" + catalogue, frontDesk].filter(Boolean).join("\n\n");
 }
 
-function composePrompt(core: string, greeting: string, inbound: string, outbound: string) {
-  const marker = "----- TWIGA FRONT DESK SETTINGS -----";
-  const cleanCore = String(core || "").split(marker)[0].trim();
-  return [
-    cleanCore,
-    marker,
-    "OPENING GREETING:\n" + greeting,
-    "INBOUND CALL INSTRUCTIONS:\n" + inbound,
-    "OUTBOUND CALL INSTRUCTIONS:\n" + outbound,
-    "GLOBAL SAFETY: Use only verified information from this business workspace. Never invent prices, stock, availability, bookings, orders, payments, or integration status. Never ask for passwords, PINs, OTPs, card numbers, or security codes. Respect requests not to be called again. If information is missing, say the team will confirm it.",
-  ].filter(Boolean).join("\n\n");
-}
+
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -149,9 +254,9 @@ Deno.serve(async (req: Request) => {
 
     if (action === "admin_list_numbers") {
       if (!isPlatformAdmin) return json({ error: "Only a TWIGA platform administrator can view the shared SautiKit number inventory." }, 403);
-      const { data: apiKey, error: secretError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "composio_sautikit_api_key" });
+      const { data: apiKey, error: secretError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "sautikit_platform_api_key" });
       if (secretError) throw secretError;
-      if (!apiKey) return json({ error: "Connect the Composio Project API key in TWIGA Connections before listing numbers." }, 409);
+      if (!apiKey) return json({ error: "Connect the SautiKit platform API key in TWIGA Connections before listing numbers." }, 409);
       const inventory = await skRequest(String(apiKey), "/v1/numbers");
       const numbers = Array.isArray(inventory?.data) ? inventory.data : [];
       const { data: assignedRows, error: assignedError } = await admin.from("twiga_phone_lines")
@@ -189,7 +294,7 @@ Deno.serve(async (req: Request) => {
       const targetBusinessId = String(body.businessId || "").trim();
       const providerNumberId = String(body.numberId || "").trim();
       if (!targetBusinessId || !providerNumberId) return json({ error: "Choose a business and a SautiKit number." }, 400);
-      const { data: apiKey, error: secretError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "composio_sautikit_api_key" });
+      const { data: apiKey, error: secretError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "sautikit_platform_api_key" });
       if (secretError) throw secretError;
       if (!apiKey) return json({ error: "Connect the shared SautiKit API key in Admin before assigning numbers." }, 409);
       const [inventory, businessResult, assignedResult] = await Promise.all([
@@ -247,70 +352,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "connect") {
-      if (!isPlatformAdmin) return json({ error: "Only a TWIGA platform administrator can connect the shared SautiKit account." }, 403);
-      const apiKey = String(body.apiKey || "").trim();
-      if (apiKey.length < 20 || apiKey.length > 4000) return json({ error: "Enter a valid SautiKit API key." }, 400);
-      const catalog = await skRequest(apiKey, "/v1/models");
-      if (!Array.isArray(catalog?.data) || !catalog.data.length) return json({ error: "SautiKit returned no voice models. Check that this key has model read access." }, 400);
-
-      let workspaceId: string | null = null;
-      try {
-        const encoded = apiKey.split(".")[1] || "";
-        const normalized = encoded.replace(/-/g, "+").replace(/_/g, "/");
-        workspaceId = JSON.parse(atob(normalized)).workspace_id || null;
-      } catch { /* Some provider keys are opaque rather than JWTs. */ }
-
-      let numberCount: number | null = null;
-      let agentCount: number | null = null;
-      let numberCheckError: string | null = null;
-      let agentCheckError: string | null = null;
-      let matchedLines: Array<{ lineNumber: string; providerReference: string }> = [];
-      try {
-        const numberResult = await skRequest(apiKey, "/v1/numbers");
-        const numbers = Array.isArray(numberResult?.data) ? numberResult.data : [];
-        numberCount = numbers.length;
-        const availableIds = new Set(numbers.map((n: any) => String(n.id || n.number_id || "")));
-        const { data: savedLines, error: linesError } = await admin.from("twiga_phone_lines")
-          .select("line_number,provider_reference").eq("provider", "sautikit");
-        if (linesError) throw linesError;
-        matchedLines = (savedLines || []).filter((line: any) => availableIds.has(String(line.provider_reference)))
-          .map((line: any) => ({ lineNumber: line.line_number, providerReference: line.provider_reference }));
-      } catch (error) {
-        numberCheckError = String((error as Error)?.message || "Could not list SautiKit numbers.").slice(0, 240);
-      }
-      try {
-        const agentResult = await skRequest(apiKey, "/v1/agents");
-        agentCount = Array.isArray(agentResult?.data) ? agentResult.data.length : 0;
-      } catch (error) {
-        agentCheckError = String((error as Error)?.message || "Could not list SautiKit agents.").slice(0, 240);
-      }
-
-      const { data: last4, error: saveError } = await admin.rpc("twiga_set_platform_secret", {
-        p_provider: "composio_sautikit_api_key",
-        p_secret: apiKey,
-        p_updated_by: user.id,
-      });
-      if (saveError) {
-        console.error("SautiKit Vault save failed:", saveError.message);
-        return json({ error: "Composio connection validated, but could not be stored in encrypted Vault." }, 500);
-      }
-      return json({
-        connected: true,
-        keyLast4: last4,
-        workspaceId,
-        modelCount: catalog.data.length,
-        numberCount,
-        agentCount,
-        matchedLines,
-        numberCheckError,
-        agentCheckError,
-        models: catalog.data,
-        message: numberCount === 0
-          ? "Composio connection is stored securely, but this workspace has no claimed phone numbers yet."
-          : matchedLines.length
-            ? "Composio connection is stored securely and a saved TWIGA line matches a number in this workspace."
-            : "Composio connection is stored securely, but no saved TWIGA phone-line reference matches a number in this workspace.",
-      });
+      return json({ error: "Composio proxy keys are no longer used for SautiKit calls. Select this business and connect its SautiKit workspace API key in Connections & permissions." }, 410);
     }
 
     if (!businessId) return json({ error: "Choose a business workspace first." }, 400);
@@ -320,6 +362,56 @@ Deno.serve(async (req: Request) => {
     if (!membership && !isPlatformAdmin) return json({ error: "You are not authorised for this business." }, 403);
     const canManage = isPlatformAdmin || ["owner", "admin"].includes(String(membership?.role || ""));
 
+    if (action === "connect_business") {
+      if (!isPlatformAdmin) return json({ error: "SautiKit credentials are managed centrally by the TWIGA platform administrator. Ask TWIGA to connect the shared provider account." }, 403);
+      if (!canManage && !isPlatformAdmin) return json({ error: "Only an authorised administrator can manage this SautiKit connection." }, 403);
+      const directKey = String(body.apiKey || "").trim();
+      if (directKey.length < 20 || directKey.length > 4000) return json({ error: "Enter a SautiKit workspace API key from this business's SautiKit console." }, 400);
+      let modelsResponse: Row, numbersResponse: Row, agentsResponse: Row;
+      try {
+        [modelsResponse, numbersResponse, agentsResponse] = await Promise.all([
+          skRequest(directKey, "/v1/models"),
+          skRequest(directKey, "/v1/numbers"),
+          skRequest(directKey, "/v1/agents"),
+        ]);
+      } catch (error) {
+        const failure = error as Error & { status?: number };
+        if (failure.status === 401 || failure.status === 403) {
+          return json({ error: "SautiKit rejected this key. Create a workspace API key in the SautiKit workspace that owns this business's phone number. A personal/KYC key or Composio key will not work." }, failure.status);
+        }
+        throw error;
+      }
+      const models = Array.isArray(modelsResponse?.data) ? modelsResponse.data : [];
+      const numbers = Array.isArray(numbersResponse?.data) ? numbersResponse.data : [];
+      const agents = Array.isArray(agentsResponse?.data) ? agentsResponse.data : [];
+      if (!models.length) return json({ error: "The SautiKit key authenticated, but this workspace returned no voice models. Check workspace access and API-key scopes." }, 409);
+      const { data: existingLine, error: existingLineError } = await admin.from("twiga_phone_lines")
+        .select("provider_reference,line_number,settings").eq("business_id", businessId)
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (existingLineError) throw existingLineError;
+      const savedNumberId = String(existingLine?.provider_reference || "");
+      const matchingNumber = savedNumberId ? numbers.find((n: Row) => String(n.id || n.number_id || "") === savedNumberId) : null;
+      const savedAgentId = String(existingLine?.settings?.inbound_agent_id || "");
+      const matchingAgent = savedAgentId ? agents.find((a: Row) => String(a.id || a.agent_id || "") === savedAgentId) : null;
+      const { data: keyLast4, error: saveError } = await admin.rpc("twiga_set_business_provider_secret", {
+        p_business_id: businessId, p_provider: "sautikit", p_secret: directKey, p_updated_by: user.id,
+      });
+      if (saveError) throw saveError;
+      return json({
+        connected: true, direct: true, keyLast4,
+        workspaceId: numbers[0]?.workspace_id || agents[0]?.workspace_id || null,
+        modelCount: models.length, numberCount: numbers.length, agentCount: agents.length,
+        availableNumbers: numbers.map((n: Row) => ({ id: String(n.id || n.number_id || ""), e164: String(n.e164 || n.phone_number || n.number_e164 || ""), status: String(n.status || "unknown"), capabilities: Array.isArray(n.capabilities) ? n.capabilities : [] })),
+        savedNumberMatched: !!matchingNumber, savedAgentMatched: !!matchingAgent,
+        phoneNumber: matchingNumber?.e164 || matchingNumber?.phone_number || existingLine?.line_number || null,
+        message: matchingNumber && matchingAgent
+          ? "This business's SautiKit workspace is connected directly. Its saved number and receptionist agent both belong to this workspace."
+          : !numbers.length
+            ? "The SautiKit workspace key is valid and saved securely, but this workspace has no phone numbers yet. Add or assign a number in this workspace before enabling calls."
+            : "The SautiKit workspace key is valid and saved securely. The current TWIGA phone-line reference does not match a number in this workspace; choose a number owned by this workspace before enabling calls.",
+      });
+    }
+
     const { data: line, error: lineError } = await admin
       .from("twiga_phone_lines").select("*").eq("business_id", businessId)
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -328,25 +420,101 @@ Deno.serve(async (req: Request) => {
     const agentId = String(settings.inbound_agent_id || "");
     const numberId = String(line?.provider_reference || "");
 
-    const { data: keyRef, error: keyRefError } = await admin
-      .from("twiga_platform_secret_refs").select("secret_last4,updated_at")
-      .eq("provider", "composio_sautikit_api_key").maybeSingle();
-    if (keyRefError) throw keyRefError;
-    const { data: apiKey, error: secretError } = await admin.rpc("twiga_get_platform_secret", {
-      p_provider: "composio_sautikit_api_key",
+    const { data: businessKeyRef, error: businessKeyRefError } = await admin
+      .from("twiga_business_provider_secret_refs").select("secret_last4,updated_at")
+      .eq("business_id", businessId).eq("provider", "sautikit").maybeSingle();
+    if (businessKeyRefError) throw businessKeyRefError;
+    const { data: businessApiKey, error: businessSecretError } = await admin.rpc("twiga_get_business_provider_secret", {
+      p_business_id: businessId, p_provider: "sautikit",
     });
-    if (secretError) throw secretError;
-    const key = String(apiKey || "");
+    if (businessSecretError) throw businessSecretError;
+    const { data: platformKeyRef, error: platformRefError } = await admin
+      .from("twiga_platform_secret_refs").select("secret_last4,updated_at")
+      .eq("provider", "sautikit_platform_api_key").maybeSingle();
+    if (platformRefError) throw platformRefError;
+    const { data: platformApiKey, error: platformSecretError } = await admin.rpc("twiga_get_platform_secret", {
+      p_provider: "sautikit_platform_api_key",
+    });
+    if (platformSecretError) throw platformSecretError;
+    // Shared platform credentials take priority so all customer workspaces use TWIGA's
+    // centrally managed provider account. A business credential is retained only as a
+    // migration fallback until the platform administrator connects the shared key.
+    const keySource = platformApiKey ? "platform" : businessApiKey ? "business" : "missing";
+    const key = String(platformApiKey || businessApiKey || "");
+    const keyRef = platformApiKey ? platformKeyRef : businessKeyRef;
+
+    if (action === "assign_business_number") {
+      if (!canManage) return json({ error: "Only this business's owner or administrator can assign its SautiKit number." }, 403);
+      if (keySource === "platform" && !isPlatformAdmin) return json({ error: "Shared SautiKit numbers are allocated by the TWIGA platform administrator." }, 403);
+      const selectedNumberId = String(body.numberId || "").trim();
+      if (!selectedNumberId) return json({ error: "Choose a number from this business's connected SautiKit workspace." }, 400);
+      const inventory = await skRequest(key, "/v1/numbers");
+      const numbers = Array.isArray(inventory?.data) ? inventory.data : [];
+      const selected = numbers.find((n: Row) => String(n.id || n.number_id || "") === selectedNumberId);
+      if (!selected) return json({ error: "That number does not belong to this business's connected SautiKit workspace." }, 404);
+      if (String(selected.status || "").toLowerCase() !== "active") return json({ error: "Only active SautiKit numbers can be assigned." }, 409);
+      const phone = String(selected.e164 || selected.phone_number || selected.number_e164 || "").trim();
+      if (!/^\\+[1-9]\\d{7,14}$/.test(phone)) return json({ error: "SautiKit returned an invalid E.164 phone number." }, 502);
+      const { data: existingOwner, error: ownerError } = await admin.from("twiga_phone_lines")
+        .select("business_id,line_number").eq("provider", "sautikit").eq("provider_reference", selectedNumberId).maybeSingle();
+      if (ownerError) throw ownerError;
+      if (existingOwner && String(existingOwner.business_id) !== businessId) {
+        return json({ error: "This SautiKit number is already assigned to another TWIGA business. Choose a different number." }, 409);
+      }
+      const currentSettings: Row = line?.settings && typeof line.settings === "object" ? line.settings : {};
+      const nextSettings = {
+        ...currentSettings, provider_status: "active", ai_agent_bound: false,
+        inbound_agent_id: null, inbound_agent_provider: null, inbound_agent_name: null,
+        inbound_agent_revision: null, inbound_route_verified_at: null,
+        provider_verified_at: null, provider_verified_via: null,
+      };
+      const payload = {
+        business_id: businessId, line_number: phone, carrier: "sautikit",
+        connection_method: "sautikit_managed", provider: "sautikit",
+        provider_reference: selectedNumberId, inbound_enabled: false, outbound_enabled: false,
+        inbound_status: "not_configured", outbound_status: "not_configured",
+        settings: nextSettings, updated_at: new Date().toISOString(),
+      };
+      const saved = line
+        ? await admin.from("twiga_phone_lines").update(payload).eq("id", line.id).select("*").single()
+        : await admin.from("twiga_phone_lines").insert(payload).select("*").single();
+      if (saved.error) throw saved.error;
+      return json({ assigned: true, phoneLine: saved.data, message: phone + " is now assigned to this business. Create or link its receptionist agent and configure inbound routing before enabling calls." });
+    }
 
     if (action === "get_config") {
       const { data: businessProfile } = await admin.from("twiga_business_profiles")
         .select("setup_details").eq("business_id", businessId).maybeSingle();
       const profileSetup: Row = businessProfile?.setup_details && typeof businessProfile.setup_details === "object" ? businessProfile.setup_details : {};
       const savedVoicePreference: Row = profileSetup.voice_preference && typeof profileSetup.voice_preference === "object" ? profileSetup.voice_preference : {};
-      if (!line) return json({
-        phoneLine: null, keyConfigured: !!key, isPlatformAdmin,
-        voicePreference: { voice: savedVoicePreference.voice || "Woman", gender: savedVoicePreference.gender || (savedVoicePreference.voice === "Man" ? "male" : "female"), model: savedVoicePreference.model || "sautikit-flash" },
-      });
+      if (!line) {
+        let availableNumbers: Row[] = [];
+        let providerError = "";
+        if (key) {
+          try {
+            if (keySource !== "platform" || isPlatformAdmin) {
+              const inventory = await skRequest(key, "/v1/numbers");
+              availableNumbers = Array.isArray(inventory?.data) ? inventory.data.map((n: Row) => ({
+                id: String(n.id || n.number_id || ""), e164: String(n.e164 || n.phone_number || n.number_e164 || ""),
+                status: String(n.status || "unknown"), capabilities: Array.isArray(n.capabilities) ? n.capabilities : [],
+              })) : [];
+            } else {
+              providerError = "The shared SautiKit account is connected. TWIGA will allocate a number to this business after its workspace is reviewed.";
+            }
+          } catch (error) {
+            providerError = error instanceof Error ? error.message : "SautiKit number inventory could not be loaded.";
+          }
+        } else {
+          providerError = "The shared SautiKit API connection is not configured yet. The TWIGA administrator must connect it in Profile → Platform settings.";
+        }
+        return json({
+          phoneLine: null, keyConfigured: !!key, keyLast4: keyRef?.secret_last4 || "",
+          keyScope: keySource, keySource,
+          serverProxyReady: !!key, serverDirectReady: !!key, isPlatformAdmin,
+          availableNumbers, providerError,
+          voicePreference: { voice: savedVoicePreference.voice || "Woman", gender: savedVoicePreference.gender || (savedVoicePreference.voice === "Man" ? "male" : "female"), model: savedVoicePreference.model || "sautikit-flash" },
+        });
+      }
       const verificationAt = String(settings.provider_verified_at || "");
       const verificationEpoch = Date.parse(verificationAt);
       const verificationFresh = Number.isFinite(verificationEpoch)
@@ -354,7 +522,7 @@ Deno.serve(async (req: Request) => {
         && Date.now() - verificationEpoch >= 0
         && Date.now() - verificationEpoch <= 7 * 24 * 60 * 60 * 1000;
       const savedProviderVerification = verificationFresh
-        && settings.provider_verified_via === "composio_sautikit"
+        && settings.provider_verified_via === "sautikit_direct"
         && String(line.provider || "") === "sautikit"
         && !!numberId
         && !!line.provider_reference
@@ -368,12 +536,24 @@ Deno.serve(async (req: Request) => {
       let agent: Row | null = null;
       let number: Row | null = null;
       let providerError = "";
+      let availableNumbers: Row[] = [];
       if (key) {
-        const [catalogResult, agentResult, numberResult] = await Promise.allSettled([
+        const [catalogResult, agentResult, numberResult, numbersListResult] = await Promise.allSettled([
           skRequest(key, "/v1/models"),
           agentId ? skRequest(key, "/v1/agents/" + encodeURIComponent(agentId)) : Promise.resolve(null),
           numberId ? skRequest(key, "/v1/numbers/" + encodeURIComponent(numberId)) : Promise.resolve(null),
+          skRequest(key, "/v1/numbers"),
         ]);
+        if (numbersListResult.status === "fulfilled") {
+          availableNumbers = (keySource !== "platform" || isPlatformAdmin) && Array.isArray(numbersListResult.value?.data)
+            ? numbersListResult.value.data.map((n: Row) => ({
+              id: String(n.id || n.number_id || ""), e164: String(n.e164 || n.phone_number || n.number_e164 || ""),
+              status: String(n.status || "unknown"), capabilities: Array.isArray(n.capabilities) ? n.capabilities : [],
+            })) : [];
+        } else {
+          const message = "Number inventory: " + (numbersListResult.reason instanceof Error ? numbersListResult.reason.message : "number inventory lookup failed.");
+          providerError = [providerError, message].filter(Boolean).join(" · ");
+        }
         if (catalogResult.status === "fulfilled") {
           models = Array.isArray(catalogResult.value?.data) ? catalogResult.value.data : [];
           if (!models.length) providerError = "SautiKit returned an empty voice/model catalogue.";
@@ -427,9 +607,9 @@ Deno.serve(async (req: Request) => {
       const liveInboundVerified = !!(liveInboundRoute?.enabled && verifiedAgent?.id && liveInboundAgentId === agentId);
       const providerConnected = !!((number && verifiedAgent?.id === agentId) || savedProviderVerification);
       if (!key && savedProviderVerification) {
-        providerError = "SautiKit, the assigned number and receptionist agent were verified through Composio at " + verificationAt + ". TWIGA's server-side Composio Project API key is not saved yet, so live calls remain paused.";
+        providerError = "SautiKit, the assigned number and receptionist agent were previously verified directly at " + verificationAt + ". The shared TWIGA SautiKit API key must be restored before live calls can resume.";
       } else if (!key) {
-        providerError = "TWIGA's deployed server is missing its Composio Project API key. The SautiKit account and assigned line cannot be refreshed until the platform credential is saved.";
+        providerError = "The shared TWIGA SautiKit workspace API key is not configured. The platform administrator must connect it before phone service can be activated.";
       }
 
       const scripts = settings.sautikit_scripts && typeof settings.sautikit_scripts === "object" ? settings.sautikit_scripts : {};
@@ -437,10 +617,12 @@ Deno.serve(async (req: Request) => {
         isPlatformAdmin,
         keyConfigured: !!key,
         serverProxyReady: !!key,
+        serverDirectReady: !!key,
         providerConnected,
-        providerConnectionSource: number && verifiedAgent ? "live_composio_lookup" : savedProviderVerification ? "saved_composio_verification" : null,
+        providerConnectionSource: number && verifiedAgent ? "live_sautikit_direct_lookup" : savedProviderVerification ? "saved_sautikit_direct_verification" : null,
         providerVerificationAt: verificationAt || null,
         keyLast4: keyRef?.secret_last4 || "",
+        keyScope: keySource, keySource,
         keyUpdatedAt: keyRef?.updated_at || null,
         numberVerified: !!number || savedProviderVerification,
         providerNumber: String(verifiedNumber?.phone_number || verifiedNumber?.number_e164 || verifiedNumber?.phoneNumber || verifiedNumber?.number || line?.line_number || ""),
@@ -465,6 +647,7 @@ Deno.serve(async (req: Request) => {
         agent: verifiedAgent,
         number: verifiedNumber,
         models,
+        availableNumbers,
         scripts: {
           greeting: scripts.greeting || "Hello, karibu! Thank you for calling {{business_name}}. How can I help you today?",
           inbound: scripts.inbound || "Answer in the caller's language (Kenyan English or Kiswahili). Identify why they are calling, use verified business information, and capture appointment or order requests for the team to confirm. Never claim that a booking, order or payment is complete until TWIGA confirms it was saved.",
@@ -514,39 +697,39 @@ Deno.serve(async (req: Request) => {
       return json({ saved: true, voice: providerVoice, gender: selectedVoice === "Man" ? "male" : "female", model: selectedModel, phoneLine: savedLine, message: "Your " + (selectedVoice === "Man" ? "male" : "female") + " voice preference has been saved." });
     }
 
-    if (!key) return json({ error: "TWIGA's central SautiKit server connection still needs its one-time platform credential. No customer API key is required. Live calls are safely paused until the platform connection is completed." }, 503);
+    if (!key) return json({ error: "The shared SautiKit provider connection is not configured yet. TWIGA must connect it once in Platform admin settings; business users do not need provider API keys." }, 503);
     if (action === "sync_catalog") {
-      if (!canManage) return json({ error: "Only this business owner or admin can sync the receptionist catalogue." }, 403);
-      if (!line || !numberId || !agentId) return json({ synced: false, reason: "agent_not_configured", message: "Save the business receptionist first. The product catalogue is saved and ready to sync when its SautiKit agent is created." });
-      const catalogue = await buildProductCatalogue(admin, businessId);
+      if (!canManage) return json({ error: "Only this business's owner or administrator can sync its receptionist catalogue." }, 403);
+      if (!line || !agentId) return json({ synced: false, reason: "agent_not_configured", message: "The catalogue is saved and will be included when this business's SautiKit receptionist is created." });
+      const catalogueText = await buildProductCatalogue(admin, businessId);
       const agentEnvelope = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId));
-      const agent = agentEnvelope?.agent || agentEnvelope?.data?.agent || agentEnvelope?.data || agentEnvelope;
-      if (!agent?.id || String(agent.id) !== agentId) return json({ error: "The saved SautiKit agent could not be verified. The phone route was not changed." }, 409);
-      const nextPrompt = withProductCatalogue(String(agent.base_prompt || ""), catalogue);
+      const currentAgent = agentEnvelope?.agent || agentEnvelope?.data?.agent || agentEnvelope?.data || agentEnvelope;
+      if (!currentAgent?.id || String(currentAgent.id) !== agentId) return json({ error: "Could not verify this business's saved SautiKit agent. Its phone route was not changed." }, 409);
+      const nextPrompt = withProductCatalogue(String(currentAgent.base_prompt || ""), catalogueText);
       const updated = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId), "PUT", {
-        name: String(agent.name || settings.inbound_agent_name || "TWIGA AI Receptionist"),
+        name: String(currentAgent.name || settings.inbound_agent_name || "TWIGA AI Receptionist"),
         base_prompt: nextPrompt,
-        accent: String(agent.accent || "Kenyan English and Kiswahili"),
-        speech_style: String(agent.speech_style || "Warm, natural, clear Kenyan English and Kiswahili. Short turns and natural pauses."),
-        model: String(agent.model || settings.inbound_model_id || "sautikit-flash"),
-        voice: String(agent.voice || settings.inbound_voice || "Woman"),
-        max_call_minutes: Number(agent.max_call_minutes || 8),
+        model: String(currentAgent.model || settings.inbound_model_id || "sautikit-flash"),
+        voice: String(currentAgent.voice || settings.inbound_voice || "Woman"),
+        accent: String(currentAgent.accent || "Kenyan English and Kiswahili"),
+        speech_style: String(currentAgent.speech_style || "Warm, clear, natural Kenyan English and Kiswahili; short turns and natural pauses."),
+        max_call_minutes: Number(currentAgent.max_call_minutes || 8),
       });
       const published = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/publish", "POST", {});
+      const productCount = await admin.from("twiga_products").select("id", { count: "exact", head: true }).eq("business_id", businessId).eq("is_active", true);
       const nextSettings = {
         ...settings,
         product_catalogue_synced_at: new Date().toISOString(),
-        product_catalogue_agent_revision: Number(published.revision || (Number(settings.inbound_agent_revision || 0) + 1)),
-        product_catalogue_item_count: (await admin.from("twiga_products").select("id", { count: "exact", head: true }).eq("business_id", businessId).eq("is_active", true)).count || 0,
+        product_catalogue_agent_revision: Number(published.revision || settings.inbound_agent_revision || 0),
+        product_catalogue_item_count: productCount.count || 0,
       };
-      const { error: saveError } = await admin.from("twiga_phone_lines")
+      const { error: settingsError } = await admin.from("twiga_phone_lines")
         .update({ settings: nextSettings, updated_at: new Date().toISOString() }).eq("id", line.id);
-      if (saveError) throw saveError;
+      if (settingsError) throw settingsError;
       return json({
-        synced: true, agentId, revision: Number(published.revision || 0),
-        items: nextSettings.product_catalogue_item_count,
+        synced: true, agentId, revision: Number(published.revision || 0), items: productCount.count || 0,
         inboundRouteChanged: false,
-        message: "The SautiKit receptionist has been updated with this business's current product and service catalogue. Its existing inbound phone route was left untouched.",
+        message: "Updated the existing SautiKit receptionist with this business's current products and services. TWIGA did not change the number, routing, or inbound call settings.",
       });
     }
     if (!line || !numberId) return json({ error: "This receptionist does not have a linked SautiKit phone number yet. Existing phone routing was not changed." }, 409);
@@ -599,12 +782,13 @@ Deno.serve(async (req: Request) => {
         "BUSINESS-SPECIFIC INSTRUCTIONS: " + String(profile.assistant_instructions || body.corePrompt || "").slice(0, 5000),
         "ADDITIONAL SETUP DETAILS:\n" + setupDetailLines(profile.setup_details),
       ].filter((value) => !value.endsWith(": "));
-      const productCatalogue = await buildProductCatalogue(admin, businessId);
       const corePrompt = [
         "You are the dedicated AI receptionist for " + businessName + ". You serve only this business workspace. Do not mix information with another business.",
         profileFacts.join("\n"),
         "Use only the profile and verified information for this business. If a price, stock level, booking slot, order status or payment status is not available, say the team will confirm it. Never invent a booking, order or payment. Never request passwords, PINs, OTPs, card numbers or security codes. When a caller asks to make an appointment, collect their name, phone, service and preferred date/time with timezone; ask permission to save the request; then use book_appointment. Only say the request was saved if the tool returns success, and explain that the team must confirm the final slot.",
+        "OPERATIONAL TOOLS: Use capture_customer_lead to save genuine inbound customer enquiries into this business CRM; this does not create marketing consent. Use create_order_request only when the customer clearly asks to place an order and confirms items and quantities; it creates a pending order for staff confirmation, never a charge, stock deduction or paid order. Use create_staff_task to log internal work. Use request_customer_followup only after the customer explicitly asks for a callback, agrees to be called, confirms the number and agrees to a specific future time. The server enforces this business's approval setting. When owner approval is required, no call is placed until an owner/admin approves the task in TWIGA Organize. Never claim an order, task or follow-up is confirmed or scheduled unless its tool confirms it."
       ].join("\n\n");
+      const productCatalogue = await buildProductCatalogue(admin, businessId);
       const basePrompt = composePrompt(withProductCatalogue(corePrompt, productCatalogue), scripts.greeting, scripts.inbound, scripts.outbound);
       const agentName = businessName + " · TWIGA Receptionist";
       const createdEnvelope = await skRequest(key, "/v1/agents", "POST", {
@@ -646,10 +830,15 @@ Deno.serve(async (req: Request) => {
         ai_agent_bound: false,
         sautikit_booking_tool_id: toolId,
         sautikit_booking_tool_ready: false,
+        sautikit_task_tool_id: crypto.randomUUID(),
+        sautikit_followup_tool_id: crypto.randomUUID(),
+        sautikit_lead_tool_id: crypto.randomUUID(),
+        sautikit_order_tool_id: crypto.randomUUID(),
+        sautikit_operational_tools_ready: false,
         sautikit_scripts: scripts,
       };
       const { error: saveAgentError } = await admin.from("twiga_phone_lines")
-        .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", updated_at: new Date().toISOString() })
+        .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", outbound_enabled: true, outbound_status: "active", updated_at: new Date().toISOString() })
         .eq("id", line.id);
       if (saveAgentError) throw saveAgentError;
 
@@ -681,6 +870,12 @@ Deno.serve(async (req: Request) => {
             additionalProperties: false,
           },
         });
+        await attachOperationalTools(
+          key, businessId, createdAgentId, bookingSecret,
+          String(nextSettings.sautikit_task_tool_id), String(nextSettings.sautikit_followup_tool_id),
+        );
+        await attachCrmTools(key, businessId, createdAgentId, bookingSecret,
+          String(nextSettings.sautikit_lead_tool_id), String(nextSettings.sautikit_order_tool_id));
         const publishedEnvelope = await skRequest(key, "/v1/agents/" + encodeURIComponent(createdAgentId) + "/publish", "POST", {});
         const published = publishedEnvelope?.revision || publishedEnvelope?.data?.revision || publishedEnvelope?.data || publishedEnvelope;
         revision = Number(published?.revision || published?.current_revision || published?.version || createdAgent?.current_revision || 1);
@@ -700,9 +895,9 @@ Deno.serve(async (req: Request) => {
             },
           },
         });
-        const boundSettings = { ...nextSettings, ai_agent_bound: true, sautikit_booking_tool_ready: true, inbound_agent_revision: revision };
+        const boundSettings = { ...nextSettings, ai_agent_bound: true, sautikit_booking_tool_ready: true, sautikit_operational_tools_ready: true, inbound_agent_revision: revision };
         const { error: saveBoundError } = await admin.from("twiga_phone_lines")
-          .update({ settings: boundSettings, inbound_enabled: true, inbound_status: "testing", updated_at: new Date().toISOString() })
+          .update({ settings: boundSettings, inbound_enabled: true, inbound_status: "testing", outbound_enabled: true, outbound_status: "active", updated_at: new Date().toISOString() })
           .eq("id", line.id);
         if (saveBoundError) throw saveBoundError;
         return json({
@@ -721,11 +916,23 @@ Deno.serve(async (req: Request) => {
 
     if (action === "bind_agent") {
       if (!agentId) return json({ error: "Create this business's receptionist first." }, 409);
-      const { data: bookingSecret, error: bookingSecretError } = await admin.rpc("twiga_get_provider_secret", {
+      const { data: existingBookingSecret, error: bookingSecretError } = await admin.rpc("twiga_get_provider_secret", {
         p_business_id: businessId, p_provider: "sautikit_booking_tool_secret",
       });
-      if (bookingSecretError || !bookingSecret) return json({ error: "This business's appointment-tool credential is not saved. Recreate the business agent or contact TWIGA support." }, 409);
+      if (bookingSecretError) throw bookingSecretError;
+      let bookingSecret = String(existingBookingSecret || "");
+      if (!bookingSecret) {
+        bookingSecret = Array.from(crypto.getRandomValues(new Uint8Array(32))).map((x) => x.toString(16).padStart(2, "0")).join("");
+        const { error: bookingSecretSaveError } = await admin.rpc("twiga_set_provider_secret", {
+          p_business_id: businessId, p_provider: "sautikit_booking_tool_secret", p_secret: bookingSecret, p_updated_by: user.id,
+        });
+        if (bookingSecretSaveError) throw new Error("Could not create the business's encrypted appointment-tool credential: " + bookingSecretSaveError.message);
+      }
       const toolId = String(settings.sautikit_booking_tool_id || crypto.randomUUID());
+      const taskToolId = String(settings.sautikit_task_tool_id || crypto.randomUUID());
+      const followupToolId = String(settings.sautikit_followup_tool_id || crypto.randomUUID());
+      const leadToolId = String(settings.sautikit_lead_tool_id || crypto.randomUUID());
+      const orderToolId = String(settings.sautikit_order_tool_id || crypto.randomUUID());
       await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/tools/" + encodeURIComponent(toolId), "PUT", {
         agent_id: agentId,
         tool_id: toolId,
@@ -752,6 +959,8 @@ Deno.serve(async (req: Request) => {
           additionalProperties: false,
         },
       });
+      await attachOperationalTools(key, businessId, agentId, bookingSecret, taskToolId, followupToolId);
+      await attachCrmTools(key, businessId, agentId, bookingSecret, leadToolId, orderToolId);
       const agentEnvelope = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId));
       const agentData = agentEnvelope?.agent || agentEnvelope?.data?.agent || agentEnvelope?.data || agentEnvelope;
       let revision = Number(agentData?.current_revision || 0);
@@ -777,10 +986,13 @@ Deno.serve(async (req: Request) => {
       });
       const nextSettings = {
         ...settings, ai_agent_bound: true, inbound_agent_provider: "sautikit-managed",
-        sautikit_booking_tool_id: toolId, sautikit_booking_tool_ready: true, inbound_agent_revision: revision,
+        sautikit_booking_tool_id: toolId, sautikit_booking_tool_ready: true,
+        sautikit_task_tool_id: taskToolId, sautikit_followup_tool_id: followupToolId,
+        sautikit_lead_tool_id: leadToolId, sautikit_order_tool_id: orderToolId, sautikit_operational_tools_ready: true,
+        inbound_agent_revision: revision,
       };
       const { error: saveError } = await admin.from("twiga_phone_lines")
-        .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", updated_at: new Date().toISOString() })
+        .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", outbound_enabled: true, outbound_status: "active", updated_at: new Date().toISOString() })
         .eq("id", line.id);
       if (saveError) throw saveError;
       return json({ bound: true, bookingToolReady: true, agentId, revision, message: "The business appointment tool is connected, the agent is published and SautiKit confirmed the inbound route. Keep it in testing until a real incoming call is answered." });
@@ -865,7 +1077,6 @@ Deno.serve(async (req: Request) => {
         .select("business_summary,what_they_sell,what_they_do,products_and_services,target_customers,unique_selling_points,service_area,opening_hours,delivery_and_payment,returns_and_refunds,frequently_asked_questions,brand_voice,reply_language,assistant_instructions,setup_details")
         .eq("business_id", businessId).maybeSingle();
       if (businessProfileError) throw businessProfileError;
-      const productCatalogue = await buildProductCatalogue(admin, businessId);
       const profileFacts = [
         "BUSINESS SUMMARY: " + String(businessProfile?.business_summary || "").slice(0, 2500),
         "WHAT THE BUSINESS DOES: " + String(businessProfile?.what_they_do || "").slice(0, 1800),
@@ -883,10 +1094,18 @@ Deno.serve(async (req: Request) => {
         "BUSINESS-SPECIFIC INSTRUCTIONS: " + String(businessProfile?.assistant_instructions || "").slice(0, 5000),
         "ADDITIONAL SETUP DETAILS:\n" + setupDetailLines(businessProfile?.setup_details),
       ].filter((value) => !value.endsWith(": "));
-      const corePrompt = [String(body.corePrompt || agent.base_prompt || ""), profileFacts.join("\n")].filter(Boolean).join("\n\n");
+      const corePrompt = [
+        String(body.corePrompt || agent.base_prompt || ""),
+        profileFacts.join("\n"),
+        "TWIGA BUSINESS OPERATIONS TOOLS: You have tools for this business only. Use capture_customer_lead to save a genuine inbound enquiry; this creates a CRM record but does not give permission to market to or call the person. Use create_order_request only when a customer asks to order and confirms items and quantities. It saves a pending order for staff to verify prices, stock and delivery; it does not charge money or deduct stock. Use create_staff_task whenever staff must do follow-up work, contact a supplier, verify stock/prices, resolve an issue, prepare a quote or complete a promised action. Use book_appointment only after obtaining the caller's details and explicit consent; the slot remains pending staff confirmation. Use request_customer_followup only when the customer explicitly asks for a callback, agrees to receive it, confirms the callback number and agrees to a specific future time. The server enforces the business approval policy: when owner approval is required, do not tell the caller the call is scheduled until an owner/admin approves it. Never infer consent from a missed call or a shared phone number. Do not initiate payment requests, refunds, top-ups, purchases, discounts, bulk campaigns or other money-moving actions. Do not claim any tool action succeeded until the tool returns success.",
+      ].filter(Boolean).join("\n\n");
+      const productCatalogue = await buildProductCatalogue(admin, businessId);
       const basePrompt = composePrompt(withProductCatalogue(corePrompt, productCatalogue), scripts.greeting, scripts.inbound, scripts.outbound);
+      const { data: businessForAgent, error: businessForAgentError } = await admin.from("businesses").select("name").eq("id", businessId).maybeSingle();
+      if (businessForAgentError) throw businessForAgentError;
+      const businessNameForAgent = String(businessForAgent?.name || "Business").trim().slice(0, 120);
       const updateBody = {
-        name: String(agent.name || "TWIGA Product Demo Guide"),
+        name: businessNameForAgent + " · TWIGA Receptionist",
         base_prompt: basePrompt,
         accent: String(agent.accent || "Kenyan English and Kiswahili"),
         speech_style: String(agent.speech_style || "Warm, natural, clear Kenyan English and Kiswahili. Short turns and natural pauses."),
@@ -894,13 +1113,57 @@ Deno.serve(async (req: Request) => {
         voice: providerVoice,
         max_call_minutes: Number(agent.max_call_minutes || 8),
       };
+      // Upgrade legacy published agents in-place: ensure the booking credential and all business tools exist.
+      const { data: savedBookingSecret, error: savedBookingSecretError } = await admin.rpc("twiga_get_provider_secret", {
+        p_business_id: businessId, p_provider: "sautikit_booking_tool_secret",
+      });
+      if (savedBookingSecretError) throw savedBookingSecretError;
+      let bookingSecret = String(savedBookingSecret || "");
+      if (!bookingSecret) {
+        bookingSecret = Array.from(crypto.getRandomValues(new Uint8Array(32))).map((x) => x.toString(16).padStart(2, "0")).join("");
+        const { error: secretSaveError } = await admin.rpc("twiga_set_provider_secret", {
+          p_business_id: businessId, p_provider: "sautikit_booking_tool_secret", p_secret: bookingSecret, p_updated_by: user.id,
+        });
+        if (secretSaveError) throw new Error("Could not securely create this business's appointment-tool credential: " + secretSaveError.message);
+      }
+      const bookingToolId = String(settings.sautikit_booking_tool_id || crypto.randomUUID());
+      const taskToolId = String(settings.sautikit_task_tool_id || crypto.randomUUID());
+      const followupToolId = String(settings.sautikit_followup_tool_id || crypto.randomUUID());
+      const leadToolId = String(settings.sautikit_lead_tool_id || crypto.randomUUID());
+      const orderToolId = String(settings.sautikit_order_tool_id || crypto.randomUUID());
+      await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/tools/" + encodeURIComponent(bookingToolId), "PUT", {
+        agent_id: agentId, tool_id: bookingToolId, name: "book_appointment",
+        purpose: "save a pending appointment request for this business after the caller explicitly agrees",
+        description: "Capture the caller's name, phone, service, requested date and time, and explicit consent. Create a pending request for staff confirmation. Do not claim the appointment is finally confirmed until the business confirms it.",
+        url: "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-booking-tool",
+        method: "POST",
+        headers: { "x-twiga-tool-secret": bookingSecret },
+        body_params: { business_id: businessId, agent_id: agentId },
+        timeout_ms: 12000,
+        parameters: {
+          type: "object",
+          properties: {
+            customer_name: { type: "string" },
+            phone: { type: "string" },
+            service: { type: "string" },
+            scheduled_at: { type: "string", description: "ISO 8601 date-time including timezone." },
+            duration_minutes: { type: "integer", minimum: 15, maximum: 240 },
+            notes: { type: "string" },
+            consent_confirmed: { type: "boolean" },
+          },
+          required: ["customer_name","phone","service","scheduled_at","consent_confirmed"],
+          additionalProperties: false,
+        },
+      });
+      await attachOperationalTools(key, businessId, agentId, bookingSecret, taskToolId, followupToolId);
+      await attachCrmTools(key, businessId, agentId, bookingSecret, leadToolId, orderToolId);
       const updated = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId), "PUT", updateBody);
       const published = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/publish", "POST");
       const nextSettings = {
         ...settings,
         inbound_agent_provider: "sautikit-managed",
         inbound_agent_id: agentId,
-        inbound_agent_name: String(agent.name || "TWIGA Product Demo Guide"),
+        inbound_agent_name: businessNameForAgent + " · TWIGA Receptionist",
         inbound_agent_revision: Number(published.revision || (Number(settings.inbound_agent_revision || 0) + 1)),
         inbound_model_id: modelId,
         inbound_voice: providerVoice,
@@ -908,11 +1171,18 @@ Deno.serve(async (req: Request) => {
         ai_agent_bound: true,
         provider_status: "active",
         prompt_profile: "twiga-dashboard-managed-v1",
-        sautkit_scripts: scripts,
+        sautikit_scripts: scripts,
+        sautikit_booking_tool_id: bookingToolId,
+        sautikit_booking_tool_ready: true,
+        sautikit_task_tool_id: taskToolId,
+        sautikit_followup_tool_id: followupToolId,
+        sautikit_lead_tool_id: leadToolId,
+        sautikit_order_tool_id: orderToolId,
+        sautikit_operational_tools_ready: true,
         last_published_at: new Date().toISOString(),
       };
       const { error: updateLineError } = await admin.from("twiga_phone_lines")
-        .update({ settings: nextSettings, updated_at: new Date().toISOString() })
+        .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", outbound_enabled: true, outbound_status: "active", updated_at: new Date().toISOString() })
         .eq("id", line.id);
       if (updateLineError) throw updateLineError;
       return json({
@@ -924,7 +1194,9 @@ Deno.serve(async (req: Request) => {
         aiRatePerMinute: Number(selectedModel.rate_per_minute_minor || 0) / 100,
         agent: updated,
         inboundRoutePreserved: true,
-        message: "Voice and receptionist instructions published. The existing inbound number remains bound to this same agent.",
+        bookingToolReady: true,
+        operationalToolsReady: true,
+        message: "Voice and instructions published to the existing agent. TWIGA verified the number binding and reattached booking, customer-lead, order-request, staff-task and consent-based callback tools. Inbound remains in testing until an actual incoming call has been answered."
       });
     }
 
