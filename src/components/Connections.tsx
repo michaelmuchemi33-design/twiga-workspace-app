@@ -102,7 +102,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   const saveProviderKey = async (provider: "grok" | "sautikit") => {
     const apiKey = (provider === "grok" ? xaiKey : sautikitKey).trim();
     if (!apiKey || !supabase) { setProviderMessage("Paste the API key first."); return; }
-    setProviderBusy(true); setProviderMessage(provider === "grok" ? "Validating the xAI key…" : "Validating the SautiKit key…");
+    setProviderBusy(true); setProviderMessage(provider === "grok" ? "Validating the xAI key…" : "Validating the Composio Project API key…");
     try {
       const functionName = provider === "grok" ? "twiga-platform-secrets" : "twiga-sautikit";
       const actionName = provider === "grok" ? "save_xai_key" : "connect";
@@ -110,7 +110,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(String(data.error));
       if (provider === "grok") setXaiKey(""); else setSautikitKey("");
-      setProviderMessage(data?.message || (provider === "grok" ? "Grok key validated and saved in encrypted storage." : "SautiKit key validated and saved in encrypted storage."));
+      setProviderMessage(data?.message || (provider === "grok" ? "Grok key validated and saved in encrypted storage." : "Composio Project API key validated and saved in encrypted storage."));
       await refreshProviders();
     } catch (e) { setProviderMessage(e instanceof Error ? e.message : "Could not save provider key."); }
     finally { setProviderBusy(false); }
@@ -176,14 +176,14 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       </div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5">
         <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">AI phone provider</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">SautiKit</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${sautikitConfig.keyConfigured ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{sautikitConfig.keyConfigured ? "Connected" : "API key needed"}</span></div>
-        <p className="mt-2 text-sm leading-6 text-neutral-600">SautiKit powers the proven female voice, male voice options, inbound agent and outbound customer calls. Voice selection and call scheduling are in Phone & AI.</p>
+        <p className="mt-2 text-sm leading-6 text-neutral-600">TWIGA accesses the existing SautiKit account through your connected Composio workspace. The Composio Project API key is stored only in encrypted Supabase Vault; SautiKit credentials remain inside Composio.</p>
         {sautikitConfig.phoneLine?.line_number && <p className="mt-2 text-sm font-semibold text-neutral-900">Assigned AI line: {sautikitConfig.phoneLine.line_number}</p>}
         {sautikitConfig.isPlatformAdmin ? <>
           {sautikitConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Encrypted API key saved{sautikitConfig.keyLast4 ? ` · ending ${sautikitConfig.keyLast4}` : ""}.</p>}
-          <label className="mt-4 block text-sm font-medium text-neutral-800">{sautikitConfig.keyConfigured ? "Replace SautiKit API key" : "SautiKit API key"}<input type="password" autoComplete="new-password" value={sautikitKey} onChange={e => setSautikitKey(e.target.value)} placeholder="Paste SautiKit API key" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
-          <p className="mt-2 text-xs text-neutral-500">Use the key from your existing SautiKit account. It is validated and stored securely when connected.</p>
-          <a href="https://app.sautikit.com/developers/api-keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Get a SautiKit API key ↗</a>
-          <button onClick={() => void saveProviderKey("sautikit")} disabled={providerBusy || !sautikitKey.trim()} className="mt-3 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save SautiKit key</button>
+          <label className="mt-4 block text-sm font-medium text-neutral-800">{sautikitConfig.keyConfigured ? "Replace Composio Project API key" : "Composio Project API key"}<input type="password" autoComplete="new-password" value={sautikitKey} onChange={e => setSautikitKey(e.target.value)} placeholder="Paste Composio Project API key" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
+          <p className="mt-2 text-xs text-neutral-500">Use a Composio Project API key from the same Composio project that owns the active `sautikit` connection. The key must have Proxy Execute permission. TWIGA uses it only server-side; customers never need it.</p>
+          <a href="https://dashboard.composio.dev/" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Open Composio dashboard ↗</a>
+          <button onClick={() => void saveProviderKey("sautikit")} disabled={providerBusy || !sautikitKey.trim()} className="mt-3 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & connect SautiKit via Composio</button>
         </> : <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">The provider key is managed centrally by TWIGA. Your business line and voice settings remain separate.</p>}
       </div>
     </section>
