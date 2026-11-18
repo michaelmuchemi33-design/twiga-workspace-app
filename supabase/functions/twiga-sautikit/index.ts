@@ -300,7 +300,7 @@ Deno.serve(async (req: Request) => {
       const profileSetup: Row = businessProfile?.setup_details && typeof businessProfile.setup_details === "object" ? businessProfile.setup_details : {};
       const savedVoicePreference: Row = profileSetup.voice_preference && typeof profileSetup.voice_preference === "object" ? profileSetup.voice_preference : {};
       if (!line) return json({
-        phoneLine: null, keyConfigured: !!keyRef, isPlatformAdmin,
+        phoneLine: null, keyConfigured: !!key, isPlatformAdmin,
         voicePreference: { voice: savedVoicePreference.voice || "Woman", gender: savedVoicePreference.gender || (savedVoicePreference.voice === "Man" ? "male" : "female"), model: savedVoicePreference.model || "sautikit-flash" },
       });
       let models: Row[] = [];
@@ -340,7 +340,7 @@ Deno.serve(async (req: Request) => {
       const liveInboundVerified = !!(liveInboundRoute?.enabled && agent?.id && liveInboundAgentId === agentId);
       return json({
         isPlatformAdmin,
-        keyConfigured: !!keyRef,
+        keyConfigured: !!key,
         keyLast4: keyRef?.secret_last4 || "",
         keyUpdatedAt: keyRef?.updated_at || null,
         numberVerified: !!number,
@@ -418,8 +418,8 @@ Deno.serve(async (req: Request) => {
       return json({ saved: true, voice: providerVoice, gender: selectedVoice === "Man" ? "male" : "female", model: selectedModel, phoneLine: savedLine, message: "Your " + (selectedVoice === "Man" ? "male" : "female") + " voice preference has been saved." });
     }
 
-    if (!key) return json({ error: "Connect the SautiKit API key in Connections before changing phone routing." }, 409);
-    if (!line || !numberId) return json({ error: "This business does not yet have a SautiKit number ID linked to its phone line. Verify the number in the same SautiKit workspace first." }, 409);
+    if (!key) return json({ error: "Live calling is temporarily unavailable. Please try again shortly." }, 503);
+    if (!line || !numberId) return json({ error: "This receptionist is not ready to place a call yet. Please try again shortly." }, 503);
     if (!canManage && ["create_agent", "bind_agent", "publish_agent", "send_call", "configure_forwarding"].includes(action)) return json({ error: "Only the business owner, admin or TWIGA platform administrator can change or call from this receptionist." }, 403);
 
     const callbackUrl = "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-sautikit-callback";
