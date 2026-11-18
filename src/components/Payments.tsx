@@ -39,8 +39,6 @@ export default function Payments() {
   const [tab, setTab] = useState<Tab>("collect");
   const [connected, setConnected] = useState(false);
   const [keyLast4, setKeyLast4] = useState("");
-  const [keyDraft, setKeyDraft] = useState("");
-  const [base64Draft, setBase64Draft] = useState("");
   const [balance, setBalance] = useState<any>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
@@ -82,34 +80,11 @@ export default function Payments() {
   }, [businessId]);
 
   useEffect(() => {
-    if (!businessId || !supabase) return;
+    if (demoMode || !businessId || !supabase) return;
     void loadPendingOrders();
     const channel = supabase.channel("twiga-payment-orders-" + businessId).on("postgres_changes", { event: "*", schema: "public", table: "twiga_orders", filter: "business_id=eq." + businessId }, () => { void loadPendingOrders(); }).subscribe();
-    if (demoMode) return <div className="space-y-6">
-    <header className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
-      <p className="text-xs font-semibold uppercase tracking-wider text-orange-600">Sample payment workspace</p>
-      <h1 className="mt-1 text-2xl font-bold text-neutral-950">Payments & M-Pesa</h1>
-      <p className="mt-2 text-sm text-neutral-600">Explore sample payment requests and statuses. Demo mode never sends a real STK prompt or saves payment credentials.</p>
-    </header>
-    <div className="grid gap-4 sm:grid-cols-3">
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs text-neutral-500">Sample transactions</p><p className="mt-1 text-2xl font-bold text-neutral-950">{samplePayments.length}</p></div>
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs text-neutral-500">Sample collected</p><p className="mt-1 text-2xl font-bold text-neutral-950">KSh {samplePayments.filter((x) => x.status === "paid").reduce((sum, x) => sum + x.amount, 0).toLocaleString()}</p></div>
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs text-neutral-500">Awaiting payment</p><p className="mt-1 text-2xl font-bold text-neutral-950">{samplePayments.filter((x) => x.status === "pending").length}</p></div>
-    </div>
-    <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
-      <h2 className="text-lg font-semibold text-neutral-950">Sample payment activity</h2>
-      <div className="mt-3 divide-y divide-neutral-100">
-        {samplePayments.map((payment) => <div key={payment.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-          <div><p className="text-sm font-semibold text-neutral-900">{payment.customer}</p><p className="mt-1 text-xs text-neutral-500">{payment.phone} · {payment.note}</p></div>
-          <div className="flex items-center gap-3"><strong className="text-sm text-neutral-950">KSh {payment.amount.toLocaleString()}</strong><span className={"rounded-full px-3 py-1 text-xs font-semibold " + (payment.status === "paid" ? "bg-neutral-900 text-white" : payment.status === "pending" ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600")}>{payment.status}</span></div>
-        </div>)}
-      </div>
-      <p className="mt-4 rounded-xl bg-orange-50 p-3 text-xs leading-5 text-orange-900">To connect a real PalPluss account, leave demo mode and open Connections & permissions. API keys and Base64 credentials should only be entered in the authenticated business workspace.</p>
-    </section>
-  </div>;
-
   return () => { void supabase.removeChannel(channel); };
-  }, [businessId, loadPendingOrders]);
+  }, [businessId, loadPendingOrders, demoMode]);
 
   const loadTransactions = useCallback(async () => {
     if (!supabase || !businessId) { setTransactions([]); return; }
@@ -132,28 +107,7 @@ export default function Payments() {
     }
   }, [businessId, invoke, loadTransactions, loadChannels]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
-
-  const saveKey = async () => {
-    setBusy(true);
-    setMessage("");
-    try {
-      const data = await invoke("save_key", {
-        ...(keyDraft.trim() ? { apiKey: keyDraft.trim() } : {}),
-        ...(base64Draft.trim() ? { basicAuthorization: base64Draft.trim() } : {}),
-      });
-      setKeyDraft("");
-      setBase64Draft("");
-      setConnected(true);
-      setKeyLast4(data.keyLast4 || "");
-      setBalance(data.balance || null);
-      setMessage(data.message || "PalPluss key securely connected.");
-      await loadTransactions();
-      await loadChannels();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "PalPluss credential could not be saved.");
-    } finally { setBusy(false); }
-  };
+  useEffect(() => { if (!demoMode) void refresh(); }, [refresh, demoMode]);
 
   const createStk = async () => {
     if (!customer.trim() || !phone.trim() || Number(amount) < 1) return;
@@ -231,6 +185,29 @@ export default function Payments() {
   const collected = transactions.filter((t) => String(t.status).toUpperCase() === "SUCCESS").reduce((sum, t) => sum + Number(t.amount || 0), 0);
   const pending = transactions.filter((t) => ["PENDING", "PROCESSING"].includes(String(t.status).toUpperCase())).reduce((sum, t) => sum + Number(t.amount || 0), 0);
 
+if (demoMode) return (<div className="space-y-6">
+    <header className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wider text-orange-600">Sample payment workspace</p>
+      <h1 className="mt-1 text-2xl font-bold text-neutral-950">Payments & M-Pesa</h1>
+      <p className="mt-2 text-sm text-neutral-600">Explore sample payment requests and statuses. Demo mode never sends a real STK prompt or saves payment credentials.</p>
+    </header>
+    <div className="grid gap-4 sm:grid-cols-3">
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs text-neutral-500">Sample transactions</p><p className="mt-1 text-2xl font-bold text-neutral-950">{samplePayments.length}</p></div>
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs text-neutral-500">Sample collected</p><p className="mt-1 text-2xl font-bold text-neutral-950">KSh {samplePayments.filter((x) => x.status === "paid").reduce((sum, x) => sum + x.amount, 0).toLocaleString()}</p></div>
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs text-neutral-500">Awaiting payment</p><p className="mt-1 text-2xl font-bold text-neutral-950">{samplePayments.filter((x) => x.status === "pending").length}</p></div>
+    </div>
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <h2 className="text-lg font-semibold text-neutral-950">Sample payment activity</h2>
+      <div className="mt-3 divide-y divide-neutral-100">
+        {samplePayments.map((payment) => <div key={payment.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+          <div><p className="text-sm font-semibold text-neutral-900">{payment.customer}</p><p className="mt-1 text-xs text-neutral-500">{payment.phone} · {payment.note}</p></div>
+          <div className="flex items-center gap-3"><strong className="text-sm text-neutral-950">KSh {payment.amount.toLocaleString()}</strong><span className={"rounded-full px-3 py-1 text-xs font-semibold " + (payment.status === "paid" ? "bg-neutral-900 text-white" : payment.status === "pending" ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600")}>{payment.status}</span></div>
+        </div>)}
+      </div>
+      <p className="mt-4 rounded-xl bg-orange-50 p-3 text-xs leading-5 text-orange-900">To connect a real PalPluss account, leave demo mode and open Connections & permissions. API keys and Base64 credentials should only be entered in the authenticated business workspace.</p>
+    </section>
+  </div>);
+
   return <div className="space-y-6">
     <header className="flex flex-col gap-4 rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between">
       <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-500">Collections · M-Pesa</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Payments</h1><p className="mt-1 text-sm text-neutral-500">Real PalPluss STK Push requests and confirmed transaction records.</p></div>
@@ -242,7 +219,7 @@ export default function Payments() {
       <div className="mt-4 grid gap-3 md:grid-cols-2">{pendingOrders.map((order) => <div key={order.id} className="rounded-xl border border-neutral-200 bg-white p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-semibold text-neutral-950">{order.customer_name || "Customer"}</p><p className="mt-1 text-xs text-neutral-500">{order.customer_phone || "No phone captured"} · {order.order_number}</p></div><strong className="whitespace-nowrap text-sm text-neutral-950">KES {Number(order.total_amount).toLocaleString()}</strong></div><p className="mt-2 line-clamp-2 text-xs text-neutral-600">{order.description || "Order captured during AI receptionist call."}</p><button onClick={() => void requestOrderPayment(order)} disabled={!connected || !selectedChannelId || busy || !order.customer_phone || Number(order.total_amount) < 1} className="mt-3 w-full rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Working…" : "Approve & send M-Pesa prompt"}</button></div>)}</div>
     </section>}
 
-    <div className="flex rounded-xl border border-neutral-200 bg-white p-1 shadow-sm"><button onClick={() => setTab("collect")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "collect" ? "bg-neutral-950 text-white" : "text-neutral-500")}>Collect</button><button onClick={() => setTab("keys")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "keys" ? "bg-neutral-950 text-white" : "text-neutral-500")}>API & connection</button></div>
+    <div className="flex rounded-xl border border-neutral-200 bg-white p-1 shadow-sm"><button onClick={() => setTab("collect")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "collect" ? "bg-neutral-950 text-white" : "text-neutral-500")}>Collect</button><button onClick={() => setTab("keys")} className={"rounded-lg px-4 py-2 text-sm font-medium " + (tab === "keys" ? "bg-neutral-950 text-white" : "text-neutral-500")}>Provider status</button></div>
 
     {tab === "collect" ? <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
       <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm lg:col-span-2">
@@ -259,7 +236,7 @@ export default function Payments() {
 
       <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-semibold text-neutral-950">New M-Pesa STK Push</h2><p className="mt-1 text-sm text-neutral-500">The customer receives a payment prompt on their phone.</p>
-        {!connected && <div className="mt-4 rounded-xl bg-orange-50 p-3 text-sm text-orange-900">Ask the TWIGA administrator to connect the central PalPluss account in Profile, or add a business-specific key in API & connection.</div>}
+        {!connected && <div className="mt-4 rounded-xl bg-orange-50 p-3 text-sm text-orange-900">The shared PalPluss account is managed by TWIGA. Ask the platform administrator to connect it in Profile if it is not available.</div>}
         <div className="mt-4 space-y-3">
           {channels.length > 0 && <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">Collect into business Till / Paybill<select value={selectedChannelId} onChange={(e) => setSelectedChannelId(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-normal normal-case">{channels.map((x) => <option key={x.provider_channel_id} value={x.provider_channel_id}>{x.name} · {x.type === "TILL_NUMBER" ? "Till" : "Paybill"} {x.shortcode}{x.is_default ? " · Default" : ""}</option>)}</select></label>}
           {channels.length === 0 && connected && <p className="rounded-xl bg-orange-50 p-3 text-xs text-orange-900">Add this business's Till or Paybill below before sending a routed payment request.</p>}
@@ -287,21 +264,29 @@ export default function Payments() {
         </div>
       </section>
     </div> : <div className="grid gap-6 lg:grid-cols-3">
-      <section className="rounded-2xl border border-neutral-200 bg-neutral-950 p-5 text-white shadow-lg lg:col-span-2">
-        <h2 className="text-lg font-semibold">PalPluss API & Basic Base64 authentication</h2>
-        <p className="mt-1 text-sm leading-6 text-neutral-400">Connect this business's own PalPluss account. You may provide either the raw API key or the Base64 Basic Authorization value from your integration setup. TWIGA validates the credential against the PalPluss service wallet and stores only the decoded API key in encrypted Supabase Vault.</p>
-        <label className="mt-4 block text-xs font-semibold text-neutral-300">PalPluss API key
-          <input type="password" autoComplete="new-password" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} placeholder="Paste PalPluss API key" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-700 bg-neutral-900 px-3 font-mono text-sm text-white placeholder:text-neutral-500" />
-        </label>
-        <div className="my-4 flex items-center gap-3"><div className="h-px flex-1 bg-neutral-800" /><span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">or paste Base64 Basic Authorization</span><div className="h-px flex-1 bg-neutral-800" /></div>
-        <label className="block text-xs font-semibold text-neutral-300">Base64 Authorization value
-          <input type="password" autoComplete="new-password" value={base64Draft} onChange={(e) => setBase64Draft(e.target.value)} placeholder="Basic YXBpX2tleTo= or YXBpX2tleTo=" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-700 bg-neutral-900 px-3 font-mono text-sm text-white placeholder:text-neutral-500" />
-        </label>
-        <div className="mt-4 flex flex-wrap items-center gap-3"><button onClick={saveKey} disabled={busy || (keyDraft.trim().length < 20 && base64Draft.trim().length < 8) || (!!keyDraft.trim() && !!base64Draft.trim())} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Validating…" : "Validate & securely save"}</button><a href="https://www.palpluss.com/" target="_blank" rel="noreferrer" className="text-xs font-semibold text-orange-300 underline">Open PalPluss console</a></div>
-        <p className="mt-3 text-xs leading-5 text-neutral-400">PalPluss API authentication is HTTP Basic, not an OAuth bearer-token flow. Authorization is Basic Base64(API_KEY + colon). If you paste the full Basic header or only its Base64 value, TWIGA decodes and validates it server-side, stores the API key securely, and recreates the Basic header for API requests. Do not paste Safaricom Daraja OAuth tokens here.</p>
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm lg:col-span-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Shared provider account</p>
+        <h2 className="mt-1 text-xl font-semibold text-neutral-950">PalPluss · Central TWIGA connection</h2>
+        <p className="mt-2 text-sm leading-6 text-neutral-600">TWIGA’s platform administrator manages the single PalPluss API key and service wallet for all businesses. This business does not need its own API key or Base64 credential. You manage only your own Till/Paybill channels in the Collect tab.</p>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <span className={"rounded-full px-3 py-1.5 text-xs font-semibold " + (connected ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600")}>{connected ? "Shared account connected" : "Waiting for TWIGA connection"}</span>
+          {keyLast4 && <span className="text-xs text-neutral-500">Credential ending {keyLast4}</span>}
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button onClick={refresh} disabled={busy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">{busy ? "Checking…" : "Refresh provider status"}</button>
+          <a href="https://www.palpluss.com/" target="_blank" rel="noreferrer" className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-orange-700">Open PalPluss ↗</a>
+        </div>
+        <p className="mt-4 rounded-xl bg-orange-50 p-3 text-xs leading-5 text-orange-950">Customer accounts cannot enter, view or replace the shared provider credentials. Contact the TWIGA platform administrator to configure or rotate provider keys.</p>
       </section>
-      <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><h2 className="font-semibold text-neutral-950">Connection</h2><div className="mt-4 flex justify-between border-b pb-3 text-sm"><span className="text-neutral-500">Status</span><strong>{connected ? "Connected" : "Not connected"}</strong></div><div className="mt-3 flex justify-between border-b pb-3 text-sm"><span className="text-neutral-500">Key</span><strong>{connected ? "•••• " + keyLast4 : "Not saved"}</strong></div><div className="mt-3 flex justify-between text-sm"><span className="text-neutral-500">Service wallet</span><strong>{balance?.availableBalance != null ? "KES " + Number(balance.availableBalance).toLocaleString() : "Not checked"}</strong></div><button onClick={refresh} disabled={busy || !connected} className="mt-4 w-full rounded-xl border px-4 py-2.5 text-sm font-semibold disabled:opacity-40">Refresh connection</button></section>
-    </div>}
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+        <h2 className="font-semibold text-neutral-950">Connection summary</h2>
+        <div className="mt-4 flex justify-between border-b pb-3 text-sm"><span className="text-neutral-500">Provider</span><strong>PalPluss</strong></div>
+        <div className="mt-3 flex justify-between border-b pb-3 text-sm"><span className="text-neutral-500">Managed by</span><strong>TWIGA</strong></div>
+        <div className="mt-3 flex justify-between border-b pb-3 text-sm"><span className="text-neutral-500">Data</span><strong>Business-isolated</strong></div>
+        <div className="mt-3 flex justify-between text-sm"><span className="text-neutral-500">Service wallet</span><strong>{balance?.availableBalance != null ? "KES " + Number(balance.availableBalance).toLocaleString() : "Not checked"}</strong></div>
+        <button onClick={refresh} disabled={busy || !connected} className="mt-4 w-full rounded-xl border px-4 py-2.5 text-sm font-semibold disabled:opacity-40">Refresh wallet & status</button>
+      </section>
+    </div>
 
     {message && <p className="rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{message}</p>}
   </div>;
