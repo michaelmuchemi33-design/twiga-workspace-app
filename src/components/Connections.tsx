@@ -19,6 +19,20 @@ function loadGoogleIdentity() {
   });
 }
 
+async function edgeFunctionError(error: any, fallback: string) {
+  const response = error?.context;
+  if (response && typeof response.clone === "function") {
+    try {
+      const payload = await response.clone().json();
+      if (typeof payload?.error === "string" && payload.error.trim()) return payload.error;
+      if (typeof payload?.message === "string" && payload.message.trim()) return payload.message;
+    } catch {
+      try { const body = await response.clone().text(); if (body.trim()) return body.slice(0, 500); } catch { /* no response body */ }
+    }
+  }
+  return error?.message || fallback;
+}
+
 export default function Connections({ businessId, demo = false, googleAuth }: { businessId: string; demo?: boolean; googleAuth?: { tokens?: { accessToken: string; refreshToken?: string } | null } }) {
   const [status, setStatus] = useState<any>({ connected: false });
   const [busy, setBusy] = useState(false);
@@ -56,7 +70,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       supabase.functions.invoke("twiga-platform-secrets", { body: { action: "get_config" } }),
     ]);
     if (sautikit.status === "fulfilled" && !sautikit.value.error && !sautikit.value.data?.error) setSautikitConfig(sautikit.value.data || {});
-    else setSautikitConfig({ isPlatformAdmin: false, providerError: sautikit.status === "rejected" ? String(sautikit.reason) : sautikit.value.error?.message });
+    else setSautikitConfig({ isPlatformAdmin: false, providerError: sautikit.status === "rejected" ? String(sautikit.reason) : await edgeFunctionError(sautikit.value.error, "SautiKit status could not be loaded.") });
     if (xai.status === "fulfilled" && !xai.value.error && !xai.value.data?.error) setXaiConfig(xai.value.data || {});
     else setXaiConfig({ isAdmin: false });
   }, [businessId]);
@@ -102,15 +116,15 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   const saveProviderKey = async (provider: "grok" | "sautikit") => {
     const apiKey = (provider === "grok" ? xaiKey : sautikitKey).trim();
     if (!apiKey || !supabase) { setProviderMessage("Paste the API key first."); return; }
-    setProviderBusy(true); setProviderMessage(provider === "grok" ? "Validating the xAI key…" : "Validating the Composio Project API key…");
+    setProviderBusy(true); setProviderMessage(provider === "grok" ? "Validating the xAI key…" : "Validating this business’s SautiKit workspace API key…");
     try {
       const functionName = provider === "grok" ? "twiga-platform-secrets" : "twiga-sautikit";
-      const actionName = provider === "grok" ? "save_xai_key" : "connect";
-      const { data, error } = await supabase.functions.invoke(functionName, { body: { action: actionName, apiKey } });
-      if (error) throw new Error(error.message);
+      const actionName = provider === "grok" ? "save_xai_key" : "connect_business";
+      const { data, error } = await supabase.functions.invoke(functionName, { body: { action: actionName, apiKey, ...(provider === "sautikit" ? { businessId } : {}) } });
+      if (error) throw error;
       if (data?.error) throw new Error(String(data.error));
       if (provider === "grok") setXaiKey(""); else setSautikitKey("");
-      setProviderMessage(data?.message || (provider === "grok" ? "Grok key validated and saved in encrypted storage." : "Composio Project API key validated and saved in encrypted storage."));
+      setProviderMessage(data?.message || (provider === "grok" ? "Grok key validated and saved in encrypted storage." : "This business’s SautiKit workspace key was validated and saved in encrypted storage."));
       await refreshProviders();
     } catch (e: any) {
       // Supabase FunctionsHttpError keeps the Edge Function response in context.
@@ -127,7 +141,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
         }
       }
       const status = Number(response?.status || e?.status || 0);
-      setProviderMessage(detail || (status ? "Connection failed (HTTP " + status + "). " : "") + (e instanceof Error ? e.message : "Could not save provider key."));
+      setProviderMessage(detail || (status ? "Connection failed (HTTP " + status + "). " : "") + await edgeFunctionError(e, "Could not save provider key."));
     }
     finally { setProviderBusy(false); }
   };
@@ -151,8 +165,8 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   const sautikitProviderConnected = sautikitConfig.providerConnected === true;
   const sautikitProxyReady = sautikitConfig.serverProxyReady === true || sautikitConfig.keyConfigured === true;
   const sautikitBadge = sautikitProviderConnected
-    ? (sautikitProxyReady ? "Connected · ready" : "Linked · server key needed")
-    : (sautikitProxyReady ? "Checking provider" : "Platform setup needed");
+    ? (sautikitProxyReady ? "Direct · ready" : "Linked · key needed")
+    : (sautikitProxyReady ? "Checking workspace" : "Connect workspace");
   return <div className="mx-auto max-w-5xl space-y-5">
     <header className="rounded-2xl border border-neutral-200 bg-white p-6">
       <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Workspace integrations</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Connections & permissions</h1>
@@ -196,16 +210,15 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
         </> : <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">Only the TWIGA platform administrator can manage this shared API key.</p>}
       </div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">AI phone provider</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">SautiKit</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${sautikitProviderConnected ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{sautikitBadge}</span></div>
-        <p className="mt-2 text-sm leading-6 text-neutral-600">{sautikitProviderConnected ? "The existing SautiKit workspace, assigned number and receptionist agent are verified through the connected Composio account." : "TWIGA accesses the existing SautiKit account through your connected Composio workspace. Its provider status is not yet confirmed for this business."} The Composio Project API key is stored only in encrypted Supabase Vault; SautiKit credentials remain inside Composio.</p>
-        {sautikitConfig.phoneLine?.line_number && <p className="mt-2 text-sm font-semibold text-neutral-900">Assigned AI line: {sautikitConfig.phoneLine.line_number}</p>}{sautikitConfig.providerConnected && <div className="mt-2 flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-orange-50 px-2.5 py-1 font-medium text-orange-800">SautiKit provider verified</span><span className={`rounded-full px-2.5 py-1 font-medium ${sautikitProxyReady ? "bg-orange-50 text-orange-800" : "bg-amber-50 text-amber-800"}`}>{sautikitProxyReady ? "TWIGA server proxy ready" : "TWIGA server proxy key still required"}</span></div>}
-        {sautikitConfig.isPlatformAdmin ? <>
-          {sautikitConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Encrypted API key saved{sautikitConfig.keyLast4 ? ` · ending ${sautikitConfig.keyLast4}` : ""}.</p>}
-          <label className="mt-4 block text-sm font-medium text-neutral-800">{sautikitConfig.keyConfigured ? "Replace Composio Project API key" : "Composio Project API key"}<input type="password" autoComplete="new-password" value={sautikitKey} onChange={e => setSautikitKey(e.target.value)} placeholder="Paste Composio Project API key (ak_…)" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
-          <p className="mt-2 text-xs text-neutral-500">In Composio, open Settings → Project Settings → API Keys and create a scoped Project API key for the same project that owns TWIGA’s active `sautikit` connection, with Proxy Execute set to Write. Composio Project API keys are shown in the `ak_…` format; a SautiKit Desk key or Composio user key will not work here. TWIGA stores the credential only in encrypted Supabase Vault; business customers never need provider keys.</p>
-          <a href="https://dashboard.composio.dev/" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Open Composio dashboard ↗</a>
-          <button onClick={() => void saveProviderKey("sautikit")} disabled={providerBusy || !sautikitKey.trim()} className="mt-3 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & connect SautiKit via Composio</button>
-        </> : <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">The provider key is managed centrally by TWIGA. Your business line and voice settings remain separate.</p>}
+        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">AI phone provider</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">SautiKit · Direct API</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${sautikitProviderConnected ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{sautikitBadge}</span></div>
+        <p className="mt-2 text-sm leading-6 text-neutral-600">Connect the SautiKit workspace that owns this business’s phone number. TWIGA calls SautiKit directly using HTTPS Bearer authentication; Composio is not in the phone-call path. Each business key is stored separately in encrypted Supabase Vault and is never exposed to the browser after saving.</p>
+        {sautikitConfig.phoneLine?.line_number && <p className="mt-2 text-sm font-semibold text-neutral-900">Saved AI line: {sautikitConfig.phoneLine.line_number}</p>}
+        {sautikitConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Encrypted credential saved{sautikitConfig.keyLast4 ? ` · ending ${sautikitConfig.keyLast4}` : ""}{sautikitConfig.keyScope ? ` · ${sautikitConfig.keyScope} scope` : ""}.</p>}
+        <label className="mt-4 block text-sm font-medium text-neutral-800">{sautikitConfig.keyScope === "business" ? "Replace this business’s SautiKit workspace API key" : "SautiKit workspace API key"}<input type="password" autoComplete="new-password" value={sautikitKey} onChange={e => setSautikitKey(e.target.value)} placeholder="Paste SautiKit workspace API key" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
+        <p className="mt-2 text-xs leading-5 text-neutral-500">Create the key inside the SautiKit workspace that owns this business’s phone number: Settings → API keys. Use a workspace key, not a personal/KYC key or Composio key. If the saved phone number belongs to a different SautiKit workspace, TWIGA will report that mismatch and keep calling disabled until the correct number is assigned.</p>
+        <a href="https://app.sautikit.com/developers/api-keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Open SautiKit API keys ↗</a>
+        <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => void saveProviderKey("sautikit")} disabled={providerBusy || !businessId || !sautikitKey.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{providerBusy ? "Checking…" : "Validate & connect this business"}</button><button onClick={() => void refreshProviders()} disabled={providerBusy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">Refresh status</button></div>
+        {sautikitConfig.providerError && <p role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{sautikitConfig.providerError}</p>}
       </div>
     </section>
     {providerMessage && <p role="status" className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">{providerMessage}</p>}
