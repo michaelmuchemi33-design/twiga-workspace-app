@@ -71,6 +71,42 @@ function setupDetailLines(value: unknown) {
   }).filter(Boolean).join("\n");
 }
 
+const PRODUCT_CATALOG_MARKER = "----- TWIGA LIVE PRODUCT & SERVICE CATALOGUE -----";
+
+async function buildProductCatalogue(admin: any, businessId: string): Promise<string> {
+  const { data, error } = await admin.from("twiga_products")
+    .select("name,sku,description,category,price,currency,unit,stock_quantity,item_type,track_stock,is_active")
+    .eq("business_id", businessId).eq("is_active", true).order("name").limit(80);
+  if (error) throw error;
+  const products = Array.isArray(data) ? data : [];
+  if (!products.length) return "No active products or services have been published in this business catalogue yet. Do not invent items or prices; offer to have the team confirm.";
+  const rows = products.map((p: Row) => {
+    const kind = p.item_type === "service" ? "SERVICE" : "PRODUCT";
+    const price = String(p.currency || "KES") + " " + Number(p.price || 0).toLocaleString("en-KE");
+    const stock = p.item_type === "service" || p.track_stock === false
+      ? "Availability: service / no stock tracking"
+      : "Available stock: " + Number(p.stock_quantity || 0) + " " + String(p.unit || "units");
+    return "- " + kind + ": " + String(p.name || "").slice(0, 120)
+      + (p.category ? " | Category: " + String(p.category).slice(0, 80) : "")
+      + " | Price: " + price + " | " + stock
+      + (p.sku ? " | SKU: " + String(p.sku).slice(0, 60) : "")
+      + (p.description ? " | Details: " + String(p.description).slice(0, 360) : "");
+  });
+  return "Only quote the exact listed price and catalogue details. For tracked stock, use the last saved stock count as a guide and never promise availability without checking. Never create a discount or variation that is not listed.\n"
+    + "ACTIVE CATALOGUE (" + products.length + (products.length === 80 ? "+, first 80 shown" : "") + "):\n" + rows.join("\n");
+}
+
+function withProductCatalogue(core: string, catalogue: string) {
+  const marker = PRODUCT_CATALOG_MARKER;
+  const text = String(core || "");
+  const frontDeskMarker = "----- TWIGA FRONT DESK SETTINGS -----";
+  const frontDeskAt = text.indexOf(frontDeskMarker);
+  const beforeFrontDesk = frontDeskAt >= 0 ? text.slice(0, frontDeskAt) : text;
+  const frontDesk = frontDeskAt >= 0 ? text.slice(frontDeskAt) : "";
+  const cleanCore = beforeFrontDesk.split(marker)[0].trim();
+  return [cleanCore, marker + "\n" + catalogue, frontDesk].filter(Boolean).join("\n\n");
+}
+
 function composePrompt(core: string, greeting: string, inbound: string, outbound: string) {
   const marker = "----- TWIGA FRONT DESK SETTINGS -----";
   const cleanCore = String(core || "").split(marker)[0].trim();
@@ -479,7 +515,41 @@ Deno.serve(async (req: Request) => {
     }
 
     if (!key) return json({ error: "TWIGA's central SautiKit server connection still needs its one-time platform credential. No customer API key is required. Live calls are safely paused until the platform connection is completed." }, 503);
-    if (!line || !numberId) return json({ error: "This receptionist does not have a linked SautiKit phone number yet. Live calls are safely paused until the line is assigned." }, 409);
+    if (action === "sync_catalog") {
+      if (!canManage) return json({ error: "Only this business owner or admin can sync the receptionist catalogue." }, 403);
+      if (!line || !numberId || !agentId) return json({ synced: false, reason: "agent_not_configured", message: "Save the business receptionist first. The product catalogue is saved and ready to sync when its SautiKit agent is created." });
+      const catalogue = await buildProductCatalogue(admin, businessId);
+      const agentEnvelope = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId));
+      const agent = agentEnvelope?.agent || agentEnvelope?.data?.agent || agentEnvelope?.data || agentEnvelope;
+      if (!agent?.id || String(agent.id) !== agentId) return json({ error: "The saved SautiKit agent could not be verified. The phone route was not changed." }, 409);
+      const nextPrompt = withProductCatalogue(String(agent.base_prompt || ""), catalogue);
+      const updated = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId), "PUT", {
+        name: String(agent.name || settings.inbound_agent_name || "TWIGA AI Receptionist"),
+        base_prompt: nextPrompt,
+        accent: String(agent.accent || "Kenyan English and Kiswahili"),
+        speech_style: String(agent.speech_style || "Warm, natural, clear Kenyan English and Kiswahili. Short turns and natural pauses."),
+        model: String(agent.model || settings.inbound_model_id || "sautikit-flash"),
+        voice: String(agent.voice || settings.inbound_voice || "Woman"),
+        max_call_minutes: Number(agent.max_call_minutes || 8),
+      });
+      const published = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/publish", "POST", {});
+      const nextSettings = {
+        ...settings,
+        product_catalogue_synced_at: new Date().toISOString(),
+        product_catalogue_agent_revision: Number(published.revision || (Number(settings.inbound_agent_revision || 0) + 1)),
+        product_catalogue_item_count: (await admin.from("twiga_products").select("id", { count: "exact", head: true }).eq("business_id", businessId).eq("is_active", true)).count || 0,
+      };
+      const { error: saveError } = await admin.from("twiga_phone_lines")
+        .update({ settings: nextSettings, updated_at: new Date().toISOString() }).eq("id", line.id);
+      if (saveError) throw saveError;
+      return json({
+        synced: true, agentId, revision: Number(published.revision || 0),
+        items: nextSettings.product_catalogue_item_count,
+        inboundRouteChanged: false,
+        message: "The SautiKit receptionist has been updated with this business's current product and service catalogue. Its existing inbound phone route was left untouched.",
+      });
+    }
+    if (!line || !numberId) return json({ error: "This receptionist does not have a linked SautiKit phone number yet. Existing phone routing was not changed." }, 409);
     if (!canManage && ["create_agent", "bind_agent", "publish_agent", "send_call", "configure_forwarding"].includes(action)) return json({ error: "Only the business owner, admin or TWIGA platform administrator can change or call from this receptionist." }, 403);
 
     const callbackUrl = "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-sautikit-callback";
@@ -529,12 +599,13 @@ Deno.serve(async (req: Request) => {
         "BUSINESS-SPECIFIC INSTRUCTIONS: " + String(profile.assistant_instructions || body.corePrompt || "").slice(0, 5000),
         "ADDITIONAL SETUP DETAILS:\n" + setupDetailLines(profile.setup_details),
       ].filter((value) => !value.endsWith(": "));
+      const productCatalogue = await buildProductCatalogue(admin, businessId);
       const corePrompt = [
         "You are the dedicated AI receptionist for " + businessName + ". You serve only this business workspace. Do not mix information with another business.",
         profileFacts.join("\n"),
         "Use only the profile and verified information for this business. If a price, stock level, booking slot, order status or payment status is not available, say the team will confirm it. Never invent a booking, order or payment. Never request passwords, PINs, OTPs, card numbers or security codes. When a caller asks to make an appointment, collect their name, phone, service and preferred date/time with timezone; ask permission to save the request; then use book_appointment. Only say the request was saved if the tool returns success, and explain that the team must confirm the final slot.",
       ].join("\n\n");
-      const basePrompt = composePrompt(corePrompt, scripts.greeting, scripts.inbound, scripts.outbound);
+      const basePrompt = composePrompt(withProductCatalogue(corePrompt, productCatalogue), scripts.greeting, scripts.inbound, scripts.outbound);
       const agentName = businessName + " · TWIGA Receptionist";
       const createdEnvelope = await skRequest(key, "/v1/agents", "POST", {
         name: agentName,
@@ -794,7 +865,9 @@ Deno.serve(async (req: Request) => {
         .select("business_summary,what_they_sell,what_they_do,products_and_services,target_customers,unique_selling_points,service_area,opening_hours,delivery_and_payment,returns_and_refunds,frequently_asked_questions,brand_voice,reply_language,assistant_instructions,setup_details")
         .eq("business_id", businessId).maybeSingle();
       if (businessProfileError) throw businessProfileError;
+      const productCatalogue = await buildProductCatalogue(admin, businessId);
       const profileFacts = [
+        PRODUCT_CATALOG_MARKER + "\n" + productCatalogue,
         "BUSINESS SUMMARY: " + String(businessProfile?.business_summary || "").slice(0, 2500),
         "WHAT THE BUSINESS DOES: " + String(businessProfile?.what_they_do || "").slice(0, 1800),
         "WHAT THE BUSINESS SELLS: " + String(businessProfile?.what_they_sell || "").slice(0, 1800),
