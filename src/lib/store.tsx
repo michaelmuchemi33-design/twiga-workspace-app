@@ -189,6 +189,75 @@ export const uid = () => Math.random().toString(36).slice(2, 9);
 export const stamp = () =>
   new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+const demoNow = Date.now();
+const demoAgo = (minutes: number) => new Date(demoNow - minutes * 60_000).toISOString();
+const demoTime = (minutes: number) => new Date(demoNow - minutes * 60_000).toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" });
+
+const demoProducts: Product[] = [
+  { id: "demo-haircut", name: "Classic haircut", price: 500, category: "Barber services", stock: 99, source: "manual", kind: "service", duration: "30 min" },
+  { id: "demo-beard", name: "Beard trim", price: 300, category: "Barber services", stock: 99, source: "manual", kind: "service", duration: "20 min" },
+  { id: "demo-braids", name: "Knotless braids", price: 4500, category: "Salon services", stock: 99, source: "manual", kind: "service", duration: "3 hr" },
+  { id: "demo-shampoo", name: "Moisture shampoo", price: 850, category: "Hair care", stock: 18, source: "manual", kind: "seller" },
+  { id: "demo-oil", name: "Natural hair oil", price: 650, category: "Hair care", stock: 4, source: "manual", kind: "seller" },
+  { id: "demo-conditioner", name: "Daily conditioner", price: 950, category: "Hair care", stock: 12, source: "manual", kind: "seller" },
+  { id: "demo-gel", name: "Styling gel", price: 400, category: "Styling", stock: 2, source: "manual", kind: "seller" },
+  { id: "demo-wash", name: "Wash & blow-dry", price: 1200, category: "Salon services", stock: 99, source: "manual", kind: "service", duration: "45 min" },
+];
+
+const demoTasks: Task[] = [
+  { id: "demo-task-1", label: "Confirm Amina's haircut booking", detail: "Check the 10:30 AM slot and confirm the barber is available.", status: "pending", time: "Due in 15 min" },
+  { id: "demo-task-2", label: "Call back Brian about a quote", detail: "Customer explicitly requested a callback after 2:00 PM. Approval is still required.", status: "pending", time: "Today · 2:00 PM" },
+  { id: "demo-task-3", label: "Restock natural hair oil", detail: "Only four bottles remain in the sample inventory.", status: "pending", time: "Today" },
+  { id: "demo-task-4", label: "Send order update to Wanjiku", detail: "Prepare an order status update for staff review.", status: "done", time: "Yesterday" },
+];
+
+const demoCustomers: Customer[] = [
+  { id: "demo-customer-1", name: "Amina Njeri", phone: "+254712345601", stage: "VIP", spend: 18500, lastVisit: "Today", followUpIn: 0 },
+  { id: "demo-customer-2", name: "Brian Otieno", phone: "+254712345602", stage: "Active", spend: 7200, lastVisit: "Yesterday", followUpIn: 1 },
+  { id: "demo-customer-3", name: "Wanjiku Mwangi", phone: "+254712345603", stage: "Active", spend: 12400, lastVisit: "2 days ago", followUpIn: 3 },
+  { id: "demo-customer-4", name: "Kevin Kiptoo", phone: "+254712345604", stage: "At Risk", spend: 3200, lastVisit: "34 days ago", followUpIn: 0 },
+  { id: "demo-customer-5", name: "Faith Wambui", phone: "+254712345605", stage: "New", spend: 0, lastVisit: "New lead", followUpIn: 2 },
+  { id: "demo-customer-6", name: "David Kamau", phone: "+254712345606", stage: "Active", spend: 5600, lastVisit: "Last week", followUpIn: 5 },
+];
+
+const demoSales: Sale[] = [
+  { id: "demo-sale-1", lines: [{ productId: "demo-haircut", name: "Classic haircut", price: 500, qty: 1 }, { productId: "demo-beard", name: "Beard trim", price: 300, qty: 1 }], total: 800, customer: "Amina Njeri", time: demoTime(35) },
+  { id: "demo-sale-2", lines: [{ productId: "demo-braids", name: "Knotless braids", price: 4500, qty: 1 }], total: 4500, customer: "Wanjiku Mwangi", time: demoTime(110) },
+  { id: "demo-sale-3", lines: [{ productId: "demo-shampoo", name: "Moisture shampoo", price: 850, qty: 2 }], total: 1700, customer: "Walk-in customer", time: demoTime(190) },
+];
+
+const demoPayments: Payment[] = [
+  { id: "demo-payment-1", customer: "Amina Njeri", phone: "+254712345601", amount: 800, note: "Haircut and beard trim", status: "paid", link: "#demo-payment-1", time: demoTime(30) },
+  { id: "demo-payment-2", customer: "Wanjiku Mwangi", phone: "+254712345603", amount: 4500, note: "Knotless braids deposit", status: "pending", link: "#demo-payment-2", time: demoTime(85) },
+  { id: "demo-payment-3", customer: "David Kamau", phone: "+254712345606", amount: 1200, note: "Wash and blow-dry", status: "expired", link: "#demo-payment-3", time: demoTime(220) },
+];
+
+const demoMessages: Message[] = [
+  { id: "demo-message-1", to: "Amina Njeri", phone: "+254712345601", body: "Your haircut booking request has been received. Our team will confirm your time shortly.", status: "delivered", time: demoTime(18) },
+  { id: "demo-message-2", to: "Wanjiku Mwangi", phone: "+254712345603", body: "Your order is being prepared. We will update you when it is ready for collection.", status: "sent", time: demoTime(70) },
+  { id: "demo-message-3", to: "Brian Otieno", phone: "+254712345602", body: "Thanks for contacting us. Would 2:00 PM work for the callback you requested?", status: "queued", time: demoTime(130) },
+];
+
+const demoLiveCalls: LiveCall[] = [
+  { id: "demo-live-1", caller: "Amina Njeri", phone: "+254712345601", intent: "Appointment request", duration: "2m 14s", sentiment: "positive" },
+  { id: "demo-live-2", caller: "Brian Otieno", phone: "+254712345602", intent: "Service pricing", duration: "1m 08s", sentiment: "neutral" },
+];
+
+const demoCallRecords: CallRecord[] = [
+  { id: "demo-call-1", provider: "demo", provider_call_id: "sample-001", channel: "phone", direction: "inbound", from_number: "+254712345601", to_number: "+254700000000", status: "completed", started_at: demoAgo(18), ended_at: demoAgo(16), duration_seconds: 134, summary: "Customer requested a haircut and beard trim. Appointment request saved for staff confirmation.", structured_data: { appointment_request: true, customer_name: "Amina Njeri" }, cost_usd: 0, created_at: demoAgo(18) },
+  { id: "demo-call-2", provider: "demo", provider_call_id: "sample-002", channel: "phone", direction: "inbound", from_number: "+254712345602", to_number: "+254700000000", status: "completed", started_at: demoAgo(63), ended_at: demoAgo(62), duration_seconds: 68, summary: "Asked about haircut and styling prices. AI answered from the sample catalogue.", structured_data: {}, cost_usd: 0, created_at: demoAgo(63) },
+  { id: "demo-call-3", provider: "demo", provider_call_id: "sample-003", channel: "phone", direction: "outbound", from_number: "+254700000000", to_number: "+254712345603", status: "no_answer", started_at: demoAgo(150), ended_at: demoAgo(149), duration_seconds: 0, summary: "Sample callback attempt. No answer.", structured_data: {}, cost_usd: 0, created_at: demoAgo(150) },
+  { id: "demo-call-4", provider: "demo", provider_call_id: "sample-004", channel: "phone", direction: "inbound", from_number: "+254712345604", to_number: "+254700000000", status: "missed", started_at: demoAgo(240), ended_at: null, duration_seconds: 0, summary: "Missed call. Create an internal task; callback requires customer consent and owner approval.", structured_data: {}, cost_usd: 0, created_at: demoAgo(240) },
+  { id: "demo-call-5", provider: "demo", provider_call_id: "sample-005", channel: "phone", direction: "inbound", from_number: "+254712345605", to_number: "+254700000000", status: "completed", started_at: demoAgo(350), ended_at: demoAgo(348), duration_seconds: 108, summary: "New customer requested information about salon services.", structured_data: { lead_captured: true }, cost_usd: 0, created_at: demoAgo(350) },
+];
+
+const demoSettings: Settings = {
+  business: { name: "TWIGA Sample Salon & Barber", currency: "KSh", dateFormat: "DD/MM/YYYY", timezone: "Africa/Nairobi", openTime: "08:00", closeTime: "19:00", holidayOverride: false, address: "Nairobi, Kenya · Sample location", parking: "Sample parking details", website: "https://example.com", faqs: "Sample prices, bookings, opening hours and payment questions." },
+  persona: { voice: "Woman", accent: "Kenyan English and Kiswahili", speed: 1, greeting: "Hello, karibu! Thank you for calling. How can I help you today?", closing: "Asante for calling. Have a lovely day!", tone: "Warm and professional", primaryLang: "English", fallbackLang: "Kiswahili" },
+  routing: { forwardOnAngry: true, forwardOnManager: true, forwardOnComplex: true, escalationNumber: "+254700000001", vipNumbers: "", vipKeywords: "manager,complaint,urgent", maxDuration: 20, silenceTimeout: 8 },
+  scheduling: { calendar: "Google Calendar · sample only", bufferMinutes: 15, minNotice: 2, cancellationPolicy: "Sample bookings require staff confirmation.", notifySms: true, notifyEmail: true, notifySlack: false, notifyPush: true, recording: false, disclaimer: "This is sample data. No real calls or messages are sent." },
+};
+
 const StoreContext = createContext<StoreValue | null>(null);
 
 const emptySettings: Settings = {
@@ -222,15 +291,15 @@ export function StoreProvider({
   userId?: string;
   businessId?: string;
 }) {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [sales, setSales] = useState<Sale[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [callRecords, setCallRecords] = useState<CallRecord[]>([]);
-  const [settings, setSettings] = useState<Settings>(emptySettings);
-  const [catalogSource, setCatalogSource] = useState("Not configured");
+  const [tasks, setTasks] = useState<Task[]>(demo ? demoTasks : []);
+  const [products, setProducts] = useState<Product[]>(demo ? demoProducts : []);
+  const [sales, setSales] = useState<Sale[]>(demo ? demoSales : []);
+  const [payments, setPayments] = useState<Payment[]>(demo ? demoPayments : []);
+  const [messages, setMessages] = useState<Message[]>(demo ? demoMessages : []);
+  const [customers, setCustomers] = useState<Customer[]>(demo ? demoCustomers : []);
+  const [callRecords, setCallRecords] = useState<CallRecord[]>(demo ? demoCallRecords : []);
+  const [settings, setSettings] = useState<Settings>(demo ? demoSettings : emptySettings);
+  const [catalogSource, setCatalogSource] = useState(demo ? "Sample catalogue" : "Not configured");
   const [sellMode, setSellMode] = useState<SellMode>("seller");
   const [palplusKey, setPalplusKey] = useState("");
   const [workspaceReady, setWorkspaceReady] = useState(demo || !businessId || !supabase);
@@ -333,7 +402,7 @@ export function StoreProvider({
 
   const value = useMemo<StoreValue>(
     () => ({
-      demoMode: false,
+      demoMode: demo,
       businessId,
       tasks,
       products,
@@ -341,7 +410,7 @@ export function StoreProvider({
       payments,
       messages,
       customers,
-      liveCalls: [],
+      liveCalls: demo ? demoLiveCalls : [],
       callRecords,
       settings,
       catalogSource,
