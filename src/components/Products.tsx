@@ -43,25 +43,21 @@ export default function Products() {
   const load = useCallback(async () => {
     if (demoMode) { setRows(products); return; }
     if (!supabase || !businessId) { setRows([]); return; }
-    const { data, error } = await supabase.from("twiga_products").select("*").eq("business_id", businessId).eq("is_active", true).order("name");
-    if (error) throw error;
-    const mapped = await Promise.all(((data || []) as ProductRow[]).map(async (row) => {
-      let imageUrl: string | null = null;
-      if (row.image_key) {
-        const { data: signed } = await supabase.storage.from("twiga-product-images").createSignedUrl(row.image_key, 3600);
-        imageUrl = signed?.signedUrl || null;
-      }
-      return {
-        id: row.id, name: row.name, price: Number(row.price || 0), category: row.category || "General",
-        stock: Number(row.stock_quantity || 0), source: "manual" as const,
-        kind: row.item_type === "service" ? "service" as const : "seller" as const,
-        description: row.description || "", sku: row.sku || "", barcode: row.barcode || "",
-        costPrice: row.cost_price == null ? undefined : Number(row.cost_price), unit: row.unit || "piece",
-        lowStockThreshold: Number(row.low_stock_threshold || 0), imageKey: row.image_key, imageUrl,
-        trackStock: row.track_stock !== false, itemType: row.item_type === "service" ? "service" as const : "product" as const,
-        currency: row.currency || "KES",
-      } satisfies Product;
-    }));
+    const session = await supabase.auth.getSession();
+    const token = session.data.session?.access_token;
+    if (!token) throw new Error("Sign in again to load your business catalogue.");
+    const response = await fetch(`https://twiga-business-files.twiga-ke.workers.dev/v1/products/${encodeURIComponent(businessId)}`, { headers: { Authorization: `Bearer ${token}` } });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Cloudflare could not load your product catalogue.");
+    const mapped = (Array.isArray(result.products) ? result.products : []).map((row: any) => ({
+      id: String(row.id), name: String(row.name || ""), price: Number(row.price || 0), category: row.category || "General",
+      stock: Number(row.stock || 0), source: "manual" as const, kind: row.kind === "service" ? "service" as const : "seller" as const,
+      description: row.description || "", sku: row.sku || "", barcode: row.barcode || "",
+      costPrice: row.costPrice == null ? undefined : Number(row.costPrice), unit: row.unit || "piece",
+      lowStockThreshold: Number(row.lowStockThreshold ?? 5), imageKey: row.imageKey || null, imageUrl: row.imageUrl || null,
+      trackStock: row.trackStock !== false, itemType: row.itemType === "service" ? "service" as const : "product" as const,
+      currency: row.currency || "KES",
+    } satisfies Product));
     setRows(mapped);
   }, [businessId, demoMode, products]);
 
@@ -99,35 +95,27 @@ export default function Products() {
         reset(); setMessage("Sample catalogue item saved. Demo changes are not sent to customers."); return;
       }
       const id = editing || crypto.randomUUID();
-      let imageKey = rows.find((x) => x.id === id)?.imageKey || null;
+      const session = await supabase!.auth.getSession();
+      const token = session.data.session?.access_token || "";
+      if (!token) throw new Error("Sign in again before saving catalogue items.");
+      const response = await fetch(`https://twiga-business-files.twiga-ke.workers.dev/v1/products/${encodeURIComponent(businessId!)}`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ product: { id, name: form.name.trim(), sku: form.sku.trim(), barcode: form.barcode.trim(),
+          description: form.description.trim(), category: form.category.trim() || "General", price: Number(form.price),
+          costPrice: form.costPrice === "" ? 0 : Number(form.costPrice), currency: "KES", unit: form.unit.trim() || "piece",
+          stock: form.kind === "service" ? 0 : Math.max(0, Number(form.stock) || 0), lowStockThreshold: Number(form.lowStockThreshold) || 0,
+          kind: form.kind, trackStock: form.kind !== "service" } }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Cloudflare could not save this catalogue item.");
       if (photo) {
         const compressed = await shrinkPhoto(photo);
-        const path = businessId + "/" + id + "/" + crypto.randomUUID() + ".webp";
-        const { error: uploadError } = await supabase!.storage.from("twiga-product-images").upload(path, compressed, { contentType: "image/webp", upsert: false });
-        if (uploadError) throw uploadError;
-        imageKey = path;
-      }
-      const user = await supabase!.auth.getUser();
-      const payload = {
-        business_id: businessId, name: form.name.trim(), sku: form.sku.trim() || null, barcode: form.barcode.trim() || null,
-        description: form.description.trim(), category: form.category.trim() || "General", price: Number(form.price),
-        cost_price: form.costPrice === "" ? null : Number(form.costPrice), currency: "KES", unit: form.unit.trim() || "piece",
-        stock_quantity: editing ? undefined : 0, low_stock_threshold: Number(form.lowStockThreshold) || 0,
-        image_key: imageKey, item_type: form.kind === "service" ? "service" : "product", track_stock: form.kind !== "service",
-        is_active: true, created_by: user.data.user?.id || null, updated_at: new Date().toISOString(),
-      };
-      if (editing) delete (payload as Record<string, unknown>).stock_quantity;
-      const queryResult = editing
-        ? await supabase!.from("twiga_products").update(payload).eq("business_id", businessId).eq("id", id).select("id").single()
-        : await supabase!.from("twiga_products").insert({ id, ...payload }).select("id").single();
-      if (queryResult.error) throw queryResult.error;
-      if (!editing && form.kind === "seller" && Number(form.stock) > 0) {
-        const { error: openingStockError } = await supabase!.rpc("twiga_pos_adjust_stock", {
-          p_business_id: businessId, p_product_id: id, p_quantity_change: Number(form.stock),
-          p_unit_cost: form.costPrice.trim() ? Number(form.costPrice) : null,
-          p_notes: "Opening stock at catalogue setup", p_movement_type: "stock_in",
+        const imageForm = new FormData(); imageForm.append("file", compressed, `${id}.webp`);
+        const imageResponse = await fetch(`https://twiga-business-files.twiga-ke.workers.dev/v1/product-image/${encodeURIComponent(businessId!)}/${encodeURIComponent(id)}`, {
+          method: "POST", headers: { Authorization: `Bearer ${token}` }, body: imageForm,
         });
-        if (openingStockError) throw openingStockError;
+        const imageResult = await imageResponse.json().catch(() => ({}));
+        if (!imageResponse.ok) throw new Error(imageResult.error || "Product saved, but its photo could not be uploaded.");
       }
       await load();
       const sync = await supabase!.functions.invoke("twiga-sautikit", { body: { action: "sync_catalog", businessId } });
@@ -151,8 +139,12 @@ export default function Products() {
     if (!supabase || !businessId) return;
     setBusy(true);
     try {
-      const { error } = await supabase.from("twiga_products").update({ is_active: false, updated_at: new Date().toISOString() }).eq("business_id", businessId).eq("id", id);
-      if (error) throw error;
+      const session = await supabase.auth.getSession();
+      const response = await fetch(`https://twiga-business-files.twiga-ke.workers.dev/v1/products/${encodeURIComponent(businessId)}/${encodeURIComponent(id)}`, {
+        method: "DELETE", headers: { Authorization: `Bearer ${session.data.session?.access_token || ""}` },
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Cloudflare could not archive this item.");
       await load();
       const sync = await supabase.functions.invoke("twiga-sautikit", { body: { action: "sync_catalog", businessId } });
       setMessage(sync.error || sync.data?.error
