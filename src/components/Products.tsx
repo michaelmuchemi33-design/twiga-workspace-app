@@ -131,7 +131,15 @@ export default function Products() {
       }
       await load();
       const sync = await supabase!.functions.invoke("twiga-sautikit", { body: { action: "sync_catalog", businessId } });
-      setMessage(sync.error || sync.data?.error ? "Saved to your catalogue. The receptionist catalogue will sync when its SautiKit agent is available." : "Saved. Your SautiKit receptionist catalogue has been updated without changing the working phone route.");
+      if (sync.error || sync.data?.error) {
+        setMessage("Saved to your catalogue. SautiKit has not confirmed a sync yet; check the shared provider connection and try again.");
+      } else if (sync.data?.synced === false) {
+        setMessage("Saved. Your catalogue will be included automatically when this business's SautiKit receptionist is created.");
+      } else if (sync.data?.synced === true) {
+        setMessage("Saved and synced to your SautiKit receptionist. The working inbound number and route were left unchanged.");
+      } else {
+        setMessage("Saved to your catalogue. The SautiKit sync response could not be confirmed.");
+      }
       reset();
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not save this catalogue item."); }
     finally { setBusy(false); }
@@ -147,7 +155,11 @@ export default function Products() {
       if (error) throw error;
       await load();
       const sync = await supabase.functions.invoke("twiga-sautikit", { body: { action: "sync_catalog", businessId } });
-      setMessage(sync.error ? "Item archived. Receptionist sync will retry when SautiKit is connected." : "Item archived. Old sales remain in the ledger.");
+      setMessage(sync.error || sync.data?.error
+        ? "Item archived. The receptionist catalogue was not confirmed as synced; try again after checking the shared provider connection."
+        : sync.data?.synced === false
+          ? "Item archived. The updated catalogue will be included when this business's receptionist is created. Old sales remain in the ledger."
+          : "Item archived and receptionist catalogue synced. Old sales remain in the ledger.");
       if (editing === id) reset();
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not archive item."); }
     finally { setBusy(false); }
