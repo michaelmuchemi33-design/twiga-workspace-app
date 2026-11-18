@@ -7,7 +7,7 @@ type Item = {
   price: number; cost_price?: number | null; stock_quantity: number; low_stock_threshold?: number;
   unit?: string; image_key?: string | null; imageUrl?: string | null; item_type: string; track_stock: boolean; currency?: string;
 };
-type SaleRow = { id: string; sale_number: string; customer_name: string; customer_phone: string | null; items: any[]; subtotal: number; discount_amount: number; tax_amount: number; total_amount: number; cost_total: number; gross_profit: number; payment_method: string; payment_status: string; notes: string | null; status: string; created_at: string };
+type SaleRow = { id: string; sale_number: string; customer_name: string; customer_phone: string | null; items: any[]; subtotal: number; discount_amount: number; tax_amount: number; total_amount: number; cost_total: number; gross_profit: number; payment_method: string; payment_status: string; notes: string | null; status: string; created_at: string; palpluss_transaction_id?: string | null; mpesa_receipt?: string | null };
 type ExpenseRow = { id: string; expense_date: string; category: string; description: string; amount: number; payment_method: string; receipt_reference: string | null; created_at: string };
 type Movement = { id: string; product_id: string; movement_type: string; quantity_change: number; quantity_before: number; quantity_after: number; notes: string | null; created_at: string };
 type CartLine = { product_id: string; name: string; price: number; quantity: number; stock: number; trackStock: boolean; imageUrl?: string | null };
@@ -131,6 +131,7 @@ export default function PointOfSale({ onManageProducts }: { onManageProducts?: (
     const paymentStatus = paymentMethod === "mpesa" ? "pending" : paymentMethod === "credit" ? "credit" : "paid";
     const confirmedPaid = paymentStatus === "paid";
     try {
+      if (paymentMethod === "mpesa" && !customerPhone.trim()) throw new Error("Enter the customer's M-Pesa phone number before sending an STK prompt.");
       const result = await twigaCloudflare(businessId, `/pos/${encodeURIComponent(businessId)}/checkout`, {
         method: "POST",
         body: JSON.stringify({
@@ -140,18 +141,32 @@ export default function PointOfSale({ onManageProducts }: { onManageProducts?: (
           discountAmount: Number(discount) || 0, taxAmount: Number(tax) || 0,
         }),
       });
+      let transactionId = "";
+      if (paymentMethod === "mpesa") {
+        const { data: stkData, error: stkError } = await supabase.functions.invoke("twiga-palpluss", {
+          body: { businessId, action: "stk", amount: Number(result.total), phone: customerPhone.trim(),
+            accountReference: result.orderId, transactionDesc: "TWIGA POS sale " + String(result.receipt || result.orderId) },
+        });
+        if (stkError) throw stkError;
+        const tx = stkData?.transaction || {};
+        transactionId = String(tx.transactionId || tx.transaction_id || "");
+        if (!transactionId) throw new Error(stkData?.message || "The M-Pesa request did not return a transaction reference. The sale remains pending.");
+        await twigaCloudflare(businessId, `/pos/${encodeURIComponent(businessId)}/link-payment`, {
+          method: "POST", body: JSON.stringify({ orderId: result.orderId, transactionId }),
+        });
+      }
       const receipt: SaleRow = {
         id: result.orderId, sale_number: result.receipt || result.orderId, customer_name: customer.trim() || "Walk-in",
         customer_phone: customerPhone || null,
         items: (result.items || []).map((x: any) => ({ name: x.name, quantity: Number(x.qty), unit_price: Number(x.unitPrice), line_total: Number(x.total) })),
         subtotal: Number(result.subtotal || cartTotal), discount_amount: Number(result.discount || 0), tax_amount: Number(result.tax || 0),
         total_amount: Number(result.total || total), cost_total: 0, gross_profit: 0, payment_method: paymentMethod,
-        payment_status: result.paymentStatus || paymentStatus, notes: null, status: result.status || "pending", created_at: result.createdAt || new Date().toISOString(),
+        payment_status: result.paymentStatus || paymentStatus, notes: null, status: result.status || "pending", created_at: result.createdAt || new Date().toISOString(), palpluss_transaction_id: transactionId || null,
       };
       await load(); setLastReceipt(receipt);
       setCart([]); setCustomer("Walk-in"); setCustomerPhone(""); setDiscount("0"); setTax("0");
       setMessage(paymentMethod === "mpesa"
-        ? "Sale saved as pending. Use the Payments screen to request M-Pesa; only settle it after the provider confirms payment."
+        ? "M-Pesa STK prompt sent. The sale stays pending and stock is not deducted until PalPluss confirms SUCCESS."
         : paymentMethod === "credit"
           ? "Sale recorded as customer credit. Stock was updated, but this is not counted as money collected."
           : "Sale completed in Cloudflare and stock was updated.");
@@ -194,13 +209,39 @@ export default function PointOfSale({ onManageProducts }: { onManageProducts?: (
     finally { setBusy(false); }
   };
 
+  const checkMpesa = async (sale: SaleRow) => {
+    if (!supabase || !businessId || !sale.palpluss_transaction_id) return;
+    setBusy(true); setMessage("");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-palpluss", {
+        body: { businessId, action: "transaction.get", transactionId: sale.palpluss_transaction_id },
+      });
+      if (error) throw error;
+      const tx = data?.transaction || {};
+      const status = String(tx.status || "").toUpperCase();
+      if (status !== "SUCCESS") { setMessage("PalPluss status: " + (status || "PENDING") + ". The sale remains unpaid and stock is unchanged."); return; }
+      const amount = Number(tx.amount || 0);
+      if (Math.abs(amount - Number(sale.total_amount || 0)) > 0.001) throw new Error("The provider amount does not match this sale. It has not been marked paid.");
+      const normalizePhone = (value: string) => String(value || "").replace(/[\\s().-]/g, "").replace(/^\\+/, "").replace(/^0([17])/, "254$1");
+      const paidPhone = normalizePhone(String(tx.phone_number || tx.phone || ""));
+      const salePhone = normalizePhone(String(sale.customer_phone || ""));
+      if (salePhone && paidPhone && salePhone !== paidPhone) throw new Error("The M-Pesa phone number does not match this sale. It has not been marked paid.");
+      await twigaCloudflare(businessId, `/pos/${encodeURIComponent(businessId)}/mark-paid`, {
+        method: "POST", body: JSON.stringify({ orderId: sale.id, transactionId: sale.palpluss_transaction_id,
+          providerStatus: status, receipt: String(tx.mpesa_receipt || tx.receipt_number || "") }),
+      });
+      await load(); setMessage("PalPluss verified SUCCESS. The sale is now paid and stock has been deducted.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not verify this M-Pesa payment."); }
+    finally { setBusy(false); }
+  };
+
   const printReceipt = () => window.print();
 
   return <div className="space-y-5">
     <style>{'@media print { body * { visibility:hidden !important; } .twiga-print-receipt, .twiga-print-receipt * { visibility:visible !important; } .twiga-print-receipt { position:absolute !important; inset:0 !important; width:100% !important; padding:24px !important; background:white !important; color:#111 !important; } }'}</style>
     <header className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-600">Money workspace</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Point of Sale</h1><p className="mt-1 text-sm text-neutral-500">Sell products and services, manage stock, record expenses and print receipts.</p></div>
-        <button onClick={() => void load()} disabled={busy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700">Refresh records</button></div>
+        <div className="flex flex-wrap gap-2"><button onClick={onManageProducts} className="rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800">Manage products & photos</button><button onClick={() => void load()} disabled={busy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700">Refresh records</button></div></div>
       <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {[["Collected today",fmt(todayRevenue)],["Sales today",String(todaySales.length)],["Gross profit",fmt(todayProfit)],["Expenses today",fmt(todayExpenses)],["Low stock",String(lowStock.length)]].map(([label,value]) => <div key={label} className="rounded-xl bg-neutral-50 p-4"><p className="text-xs text-neutral-500">{label}</p><p className="mt-1 text-xl font-bold text-neutral-950">{value}</p></div>)}
       </div>
@@ -247,7 +288,7 @@ export default function PointOfSale({ onManageProducts }: { onManageProducts?: (
       <div className="mt-4 space-y-2">{sales.length === 0 && <p className="rounded-xl border border-dashed p-10 text-center text-sm text-neutral-500">No live sales have been recorded yet.</p>}
         {sales.map((s) => <article key={s.id} className="rounded-xl border border-neutral-100 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><strong className="text-sm text-neutral-950">{s.sale_number || "Sale"}</strong><p className="mt-1 text-xs text-neutral-500">{s.customer_name} · {safeDate(s.created_at)}</p></div><div className="text-right"><strong className="text-base text-neutral-950">{fmt(Number(s.total_amount))}</strong><p className="mt-1 text-xs text-neutral-500">Profit {fmt(Number(s.gross_profit))}</p></div></div>
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">{(s.items || []).map((x: any, i: number) => <span key={i} className="rounded-lg bg-neutral-50 px-2 py-1 text-neutral-700">{x.quantity} × {x.name}</span>)}</div>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-neutral-500">{String(s.payment_method).toUpperCase()} · {String(s.payment_status).toUpperCase()}</span><button onClick={() => setLastReceipt(s)} className="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs font-semibold">View receipt</button></div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-neutral-500">{String(s.payment_method).toUpperCase()} · {String(s.payment_status).toUpperCase()}</span><div className="flex gap-2">{s.payment_status === "pending" && s.palpluss_transaction_id && <button onClick={() => void checkMpesa(s)} disabled={busy} className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-semibold text-orange-800">Check M-Pesa</button>}<button onClick={() => setLastReceipt(s)} className="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs font-semibold">View receipt</button></div></div>
         </article>)}
       </div>
     </section>}
