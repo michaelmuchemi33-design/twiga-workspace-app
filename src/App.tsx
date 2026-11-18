@@ -15,6 +15,7 @@ import Analytics from "@/components/Analytics";
 import Settings from "@/components/Settings";
 import Profile from "@/components/Profile";
 import PhoneDesk from "@/components/PhoneDesk";
+import Outreach from "@/components/Outreach";
 import CustomerSupport from "@/components/CustomerSupport";
 import Connections from "@/components/Connections";
 import Products from "@/components/Products";
@@ -50,6 +51,7 @@ const footerTabs = [
 const moreTabs = [
   { id: "setup", label: "Set up with AI", icon: IconSparkle },
   { id: "phone", label: "Phone & AI", icon: IconChat },
+  { id: "outreach", label: "Outreach", icon: IconPhone },
   { id: "connections", label: "Connections", icon: IconUsers },
   { id: "organizer", label: "Organize", icon: IconSwap },
   { id: "functions", label: "Functions", icon: IconSparkle },
@@ -242,7 +244,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
               {demo && <span className="rounded-full bg-orange-50 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-700">Demo</span>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {!isCompactPwaLayout && <select aria-label="Navigate workspace" value={tab} onChange={(e) => go(e.target.value)} className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 outline-none focus:border-orange-400 lg:hidden"><option value="dashboard">Home</option><option value="setup">AI setup</option><option value="phone">Phone & AI</option><option value="connections">Connections</option><option value="organizer">Organize</option><option value="functions">Functions</option><option value="pos">Sell</option><option value="payments">Payments</option><option value="customers">People</option><option value="whatsapp">Inbox</option><option value="analytics">Stats</option><option value="products">Products</option><option value="reports">Reports</option><option value="alerts">Alerts</option><option value="profile">Profile</option><option value="settings">Settings</option></select>}
+              {!isCompactPwaLayout && <select aria-label="Navigate workspace" value={tab} onChange={(e) => go(e.target.value)} className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 outline-none focus:border-orange-400 lg:hidden"><option value="dashboard">Home</option><option value="setup">AI setup</option><option value="phone">Phone & AI</option><option value="outreach">Outreach</option><option value="connections">Connections</option><option value="organizer">Organize</option><option value="functions">Functions</option><option value="pos">Sell</option><option value="payments">Payments</option><option value="customers">People</option><option value="whatsapp">Inbox</option><option value="analytics">Stats</option><option value="products">Products</option><option value="reports">Reports</option><option value="alerts">Alerts</option><option value="profile">Profile</option><option value="settings">Settings</option></select>}
               {!demo && googleAuth?.profile && <div className="mr-1 flex items-center gap-2 rounded-xl bg-neutral-50 py-1.5 pl-1.5 pr-2.5">
                 {googleAuth.profile.avatarUrl ? <img src={googleAuth.profile.avatarUrl} alt="" referrerPolicy="no-referrer" className="h-8 w-8 rounded-full border border-neutral-200 object-cover" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-orange-100 text-xs font-bold text-orange-800">{(googleAuth.profile.fullName || googleAuth.profile.email || "T").slice(0,1).toUpperCase()}</span>}
                 <span className="hidden max-w-[180px] sm:block"><span className="block truncate text-xs font-semibold text-neutral-800">{googleAuth.profile.fullName || "Your account"}</span><span className="block truncate text-[10px] text-neutral-500">{googleAuth.profile.email}</span></span>
@@ -265,6 +267,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           {tab === "dashboard" && <Dashboard onSetup={() => go("setup")} onPayments={() => go("payments")} />}
           {tab === "setup" && <SetupPage demo={demo} businessId={businessId} onDone={() => go("dashboard")} onBusinessCreated={businessCreated} />}
           {tab === "phone" && <PhoneDesk businessId={businessId} demo={demo} onOpenProfile={() => go("connections")} />}
+          {tab === "outreach" && <Outreach businessId={businessId} demo={demo} />}
           {tab === "connections" && <Connections businessId={businessId} demo={demo} googleAuth={googleAuth} />}
           {tab === "organizer" && <Organizer />}
           {tab === "functions" && <Functions />}
