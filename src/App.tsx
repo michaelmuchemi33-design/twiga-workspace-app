@@ -272,7 +272,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           {tab === "connections" && <Connections businessId={businessId} demo={demo} googleAuth={googleAuth} />}
           {tab === "organizer" && <Organizer />}
           {tab === "functions" && <Functions />}
-          {tab === "pos" && <PointOfSale />}
+          {tab === "pos" && <PointOfSale onManageProducts={() => go("products")} />}
           {tab === "payments" && <Payments />}
           {tab === "customers" && <Customers />}
           {tab === "whatsapp" && <WhatsAppOutbox />}
