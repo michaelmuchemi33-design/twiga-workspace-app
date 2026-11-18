@@ -101,7 +101,23 @@ async function currentD1Usage(env, businessId) {
   const row = await env.DB.prepare("SELECT bytes_used FROM usage WHERE business_id = ?").bind(businessId).first();
   return Number(row && row.bytes_used || 0);
 }
+async function ensureR2Usage(env, businessId) {
+  const existing = await env.DB.prepare("SELECT bytes_used FROM r2_usage WHERE business_id = ?").bind(businessId).first();
+  if (existing) return;
+  const files = await env.DB.prepare("SELECT COALESCE(SUM(size_bytes),0) AS bytes FROM files WHERE business_id = ?").bind(businessId).first();
+  const images = await env.DB.prepare("SELECT image_key FROM items WHERE business_id = ? AND image_key IS NOT NULL").bind(businessId).all();
+  let imageBytes = 0;
+  for (const row of (images.results || [])) {
+    const key = String(row.image_key || "");
+    if (!key) continue;
+    const object = await env.FILES.head(key);
+    if (object) imageBytes += Number(object.size || 0);
+  }
+  const initialBytes = Number(files && files.bytes || 0) + imageBytes;
+  await env.DB.prepare("INSERT OR IGNORE INTO r2_usage (business_id, bytes_used) VALUES (?, ?)").bind(businessId, initialBytes).run();
+}
 async function currentR2Usage(env, businessId) {
+  await ensureR2Usage(env, businessId);
   const row = await env.DB.prepare("SELECT bytes_used FROM r2_usage WHERE business_id = ?").bind(businessId).first();
   return Number(row && row.bytes_used || 0);
 }
@@ -113,6 +129,7 @@ async function releaseD1(env, businessId, bytes) {
   if (bytes > 0) await env.DB.prepare("UPDATE usage SET bytes_used = MAX(0, bytes_used - ?) WHERE business_id = ?").bind(bytes, businessId).run();
 }
 async function reserveR2(env, businessId, bytes) {
+  await ensureR2Usage(env, businessId);
   const row = await env.DB.prepare("INSERT INTO r2_usage (business_id, bytes_used) VALUES (?, ?) ON CONFLICT(business_id) DO UPDATE SET bytes_used = r2_usage.bytes_used + excluded.bytes_used WHERE r2_usage.bytes_used + excluded.bytes_used <= ? RETURNING bytes_used").bind(businessId, bytes, R2_QUOTA).first();
   if (!row) throw new Error("R2_STORAGE_QUOTA");
 }
