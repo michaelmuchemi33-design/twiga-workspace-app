@@ -26,6 +26,30 @@ async function ensureSchema(env) {
   }
   return schemaReady;
 }
+
+let aiActionSchemaReady;
+async function ensureAiActionSchema(env) {
+  if (!aiActionSchemaReady) {
+    aiActionSchemaReady = env.DB.batch([
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS ai_leads (lead_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, customer_name TEXT NOT NULL, phone TEXT, email TEXT, interest TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS ai_leads_business_created ON ai_leads (business_id, created_at DESC)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS ai_staff_tasks (task_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, category TEXT NOT NULL, priority TEXT NOT NULL, status TEXT NOT NULL, due_at TEXT, customer_name TEXT, phone TEXT, created_at TEXT NOT NULL)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS ai_staff_tasks_business_status ON ai_staff_tasks (business_id, status, created_at DESC)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS ai_followups (followup_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, customer_name TEXT NOT NULL, phone TEXT NOT NULL, reason TEXT NOT NULL, scheduled_at TEXT NOT NULL, consent_confirmed INTEGER NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS ai_followups_business_status ON ai_followups (business_id, status, scheduled_at)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS ai_notifications (notification_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, event_type TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS ai_notifications_business_status ON ai_notifications (business_id, status, created_at DESC)")
+    ]).catch((e) => { aiActionSchemaReady = null; throw e; });
+  }
+  return aiActionSchemaReady;
+}
+async function saveAiNotification(env, businessId, eventType, title, body, payload) {
+  const notificationId = crypto.randomUUID();
+  await env.DB.prepare("INSERT INTO ai_notifications (notification_id,business_id,event_type,title,body,payload_json,status,created_at) VALUES (?,?,?,?,?,?,?,?)")
+    .bind(notificationId, businessId, eventType, title, body, JSON.stringify(payload || {}), "unread", now()).run();
+  return notificationId;
+}
+
 async function authorize(req, env, businessId) {
   const auth = req.headers.get("Authorization") || "";
   if (!auth.startsWith("Bearer ")) throw new Error("SIGN_IN_REQUIRED");
@@ -93,6 +117,153 @@ export default {
         const hash = await aiSecretHash(secret);
         await env.DB.prepare("INSERT INTO ai_tool_auth (business_id, secret_hash, updated_at) VALUES (?, ?, ?) ON CONFLICT(business_id) DO UPDATE SET secret_hash = excluded.secret_hash, updated_at = excluded.updated_at").bind(businessId, hash, now()).run();
         return json(req, { registered: true, businessId });
+      }
+      if (kind === "ai-notifications" && (req.method === "GET" || req.method === "PATCH")) {
+        const member = await authorize(req, env, businessId);
+        await ensureAiActionSchema(env);
+        if (req.method === "GET" && !fileId) {
+          const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") || 40)));
+          const rows = await env.DB.prepare("SELECT notification_id,event_type,title,body,payload_json,status,created_at,read_at FROM ai_notifications WHERE business_id=? ORDER BY created_at DESC LIMIT ?")
+            .bind(businessId, limit).all();
+          const notifications = (rows.results || []).map((row) => {
+            let payload = {};
+            try { payload = JSON.parse(row.payload_json || "{}"); } catch {}
+            return { id: row.notification_id, type: row.event_type, title: row.title, body: row.body, payload, status: row.status, createdAt: row.created_at, readAt: row.read_at };
+          });
+          return json(req, { ok: true, storage: "cloudflare_d1", notifications, unreadCount: notifications.filter((item) => item.status === "unread").length });
+        }
+        if (req.method === "PATCH" && fileId) {
+          await env.DB.prepare("UPDATE ai_notifications SET status='read',read_at=? WHERE business_id=? AND notification_id=?")
+            .bind(now(), businessId, fileId).run();
+          return json(req, { ok: true, read: true });
+        }
+      }
+      if (kind === "ai-action" && req.method === "POST" && !fileId) {
+        const secret = req.headers.get("x-twiga-ai-tool-secret") || "";
+        if (secret.length < 32) return json(req, { error: "AI business action is not authorized." }, 401);
+        await env.DB.prepare("CREATE TABLE IF NOT EXISTS ai_tool_auth (business_id TEXT PRIMARY KEY,secret_hash TEXT NOT NULL,updated_at TEXT NOT NULL)").run();
+        const authRow = await env.DB.prepare("SELECT secret_hash FROM ai_tool_auth WHERE business_id=?").bind(businessId).first();
+        if (!authRow || !sameSecretHash(await aiSecretHash(secret), authRow.secret_hash)) return json(req, { error: "AI business action is not authorized for this business." }, 401);
+        await ensureAiActionSchema(env);
+        const body = await req.json().catch(() => ({}));
+        const action = String(body.action || "").trim();
+        const stamp = now();
+        const cleanPhone = String(body.phone || "").replace(/[^0-9+]/g, "").slice(0, 30);
+        const customerName = String(body.customer_name || "").trim().slice(0, 120);
+        const email = String(body.email || "").trim().slice(0, 160);
+        const contactStatement = cleanPhone.length >= 7
+          ? env.DB.prepare("INSERT INTO contacts (business_id,phone,name,email,source,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(business_id,phone) DO UPDATE SET name=COALESCE(NULLIF(excluded.name,''),contacts.name),email=COALESCE(NULLIF(excluded.email,''),contacts.email),source=excluded.source,updated_at=excluded.updated_at")
+              .bind(businessId, cleanPhone, customerName, email, "phone", stamp)
+          : null;
+
+        if (action === "capture_customer_lead") {
+          const interest = String(body.interest || "").trim().slice(0, 1000);
+          const source = String(body.source || "phone").trim().slice(0, 40) || "phone";
+          if (!customerName || !interest) return json(req, { error: "A customer name and enquiry are required to save this lead." }, 400);
+          const leadId = crypto.randomUUID();
+          const statements = [env.DB.prepare("INSERT INTO ai_leads (lead_id,business_id,customer_name,phone,email,interest,source,created_at) VALUES (?,?,?,?,?,?,?,?)")
+            .bind(leadId, businessId, customerName, cleanPhone || null, email || null, interest, source, stamp)];
+          if (contactStatement) statements.push(contactStatement);
+          const notificationId = crypto.randomUUID();
+          statements.push(env.DB.prepare("INSERT INTO ai_notifications (notification_id,business_id,event_type,title,body,payload_json,status,created_at) VALUES (?,?,?,?,?,?,?,?)")
+            .bind(notificationId, businessId, "new_lead", "New customer enquiry", customerName + " asked: " + interest.slice(0, 180), JSON.stringify({ leadId, customerName, phone: cleanPhone || null, email: email || null, interest, source }), "unread", stamp));
+          await env.DB.batch(statements);
+          return json(req, { ok: true, leadId, contactSaved: !!contactStatement, ownerNotificationQueued: true, marketingConsent: false, storage: "cloudflare_d1" });
+        }
+
+        if (action === "create_order_request") {
+          if (!customerName) return json(req, { error: "A customer name is required for an order request." }, 400);
+          const requestedItems = Array.isArray(body.items) ? body.items.slice(0, 30) : [];
+          if (!requestedItems.length) return json(req, { error: "At least one requested item or service is required." }, 400);
+          const lines = [];
+          let subtotal = 0;
+          let unresolved = false;
+          let stockNeedsReview = false;
+          for (const requested of requestedItems) {
+            const name = String(requested?.name || "").trim().slice(0, 120);
+            const sku = String(requested?.sku || "").trim().slice(0, 80);
+            const itemKey = (sku || name).toLowerCase();
+            const quantity = Math.max(1, Math.min(100, Math.ceil(Number(requested?.quantity || 1))));
+            if (!name) return json(req, { error: "Every order line must include an item or service name." }, 400);
+            const catalogueItem = itemKey ? await env.DB.prepare("SELECT item_id,name,kind,price,stock,track_stock,currency,sku FROM items WHERE business_id=? AND active=1 AND (lower(item_id)=? OR lower(sku)=? OR lower(name)=?) LIMIT 1")
+              .bind(businessId, itemKey, itemKey, itemKey).first() : null;
+            if (!catalogueItem) unresolved = true;
+            const unitPrice = catalogueItem ? Math.max(0, Number(catalogueItem.price || 0)) : 0;
+            const lineTotal = unitPrice * quantity;
+            subtotal += lineTotal;
+            const tracked = Number(catalogueItem?.track_stock || 0) === 1;
+            if (tracked && Number(catalogueItem?.stock || 0) < quantity) stockNeedsReview = true;
+            lines.push({
+              productId: catalogueItem?.item_id || null,
+              name: catalogueItem?.name || name,
+              sku: catalogueItem?.sku || sku || "",
+              kind: catalogueItem?.kind || "unknown",
+              qty: quantity,
+              unitPrice,
+              total: lineTotal,
+              catalogueMatched: !!catalogueItem,
+              stockAtRequest: catalogueItem ? Number(catalogueItem.stock || 0) : null,
+              stockNeedsStaffReview: tracked && Number(catalogueItem?.stock || 0) < quantity,
+              notes: String(requested?.notes || "").slice(0, 300)
+            });
+          }
+          const needsQuote = unresolved || stockNeedsReview;
+          const orderId = "AI-" + crypto.randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase();
+          const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Nairobi", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+          const orderStatus = needsQuote ? "Quote" : "New";
+          const orderType = needsQuote ? "Quote" : "Sale";
+          const orderNotes = String(body.order_notes || "").trim().slice(0, 800);
+          const staffNote = ["Created by TWIGA AI receptionist.", "Pending staff confirmation of final availability, price and fulfilment.", orderNotes].filter(Boolean).join(" ").slice(0, 1200);
+          const statements = [
+            env.DB.prepare("INSERT INTO orders (business_id,order_id,created_at,date,customer,phone,type,status,total,paid,method,notes,updated_at,items_json,source,subtotal,payment_status,stock_committed) VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,0)")
+              .bind(businessId, orderId, stamp, date, customerName, cleanPhone || null, orderType, orderStatus, subtotal, "Not paid", staffNote, stamp, JSON.stringify(lines), "ai_receptionist", subtotal, "unpaid"),
+            ...lines.map((line, index) => env.DB.prepare("INSERT INTO order_items (business_id,order_id,line,item_id,name,qty,unit_price,line_total) VALUES (?,?,?,?,?,?,?,?)")
+              .bind(businessId, orderId, index + 1, line.productId, line.name, line.qty, line.unitPrice, line.total))
+          ];
+          if (contactStatement) statements.push(contactStatement);
+          const notificationId = crypto.randomUUID();
+          statements.push(env.DB.prepare("INSERT INTO ai_notifications (notification_id,business_id,event_type,title,body,payload_json,status,created_at) VALUES (?,?,?,?,?,?,?,?)")
+            .bind(notificationId, businessId, "new_order", "New order request", customerName + " requested " + lines.length + " item(s). Staff confirmation is required.", JSON.stringify({ orderId, customerName, phone: cleanPhone || null, items: lines, total: subtotal, currency: lines.find((line) => line.catalogueMatched)?.currency || "KES", status: orderStatus, needsStaffConfirmation: true }), "unread", stamp));
+          await env.DB.batch(statements);
+          return json(req, { ok: true, orderId, status: orderStatus, type: orderType, total: subtotal, currency: lines.find((line) => line.catalogueMatched)?.currency || "KES", contactSaved: !!contactStatement, ownerNotificationQueued: true, stockCommitted: false, paymentTaken: false, needsStaffConfirmation: true, quoteReviewRequired: needsQuote, storage: "cloudflare_d1" });
+        }
+
+        if (action === "create_staff_task") {
+          const title = String(body.title || "").trim().slice(0, 180);
+          const description = String(body.description || "").trim().slice(0, 1600);
+          const category = String(body.category || "operations").trim().slice(0, 60);
+          const priority = ["low", "normal", "high", "urgent"].includes(String(body.priority || "").toLowerCase()) ? String(body.priority).toLowerCase() : "normal";
+          if (!title || !description) return json(req, { error: "A task title and description are required." }, 400);
+          const taskId = crypto.randomUUID();
+          const dueAt = String(body.due_at || "").trim();
+          const statements = [env.DB.prepare("INSERT INTO ai_staff_tasks (task_id,business_id,title,description,category,priority,status,due_at,customer_name,phone,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+            .bind(taskId, businessId, title, description, category, priority, "open", dueAt || null, customerName || null, cleanPhone || null, stamp)];
+          const notificationId = crypto.randomUUID();
+          statements.push(env.DB.prepare("INSERT INTO ai_notifications (notification_id,business_id,event_type,title,body,payload_json,status,created_at) VALUES (?,?,?,?,?,?,?,?)")
+            .bind(notificationId, businessId, "staff_task", "New staff task", title, JSON.stringify({ taskId, title, description, category, priority, dueAt: dueAt || null, customerName: customerName || null, phone: cleanPhone || null }), "unread", stamp));
+          await env.DB.batch(statements);
+          return json(req, { ok: true, taskId, status: "open", ownerNotificationQueued: true, storage: "cloudflare_d1" });
+        }
+
+        if (action === "request_customer_followup") {
+          const reason = String(body.reason || "").trim().slice(0, 500);
+          const scheduledAt = String(body.scheduled_at || "").trim();
+          const timestamp = Date.parse(scheduledAt);
+          if (!customerName || cleanPhone.length < 8 || !reason) return json(req, { error: "A customer name, valid callback number and reason are required." }, 400);
+          if (body.recipient_consent_confirmed !== true) return json(req, { error: "The customer must explicitly agree to this callback." }, 400);
+          if (!Number.isFinite(timestamp) || timestamp <= Date.now()) return json(req, { error: "Choose a specific future callback time." }, 400);
+          const followupId = crypto.randomUUID();
+          const statements = [env.DB.prepare("INSERT INTO ai_followups (followup_id,business_id,customer_name,phone,reason,scheduled_at,consent_confirmed,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+            .bind(followupId, businessId, customerName, cleanPhone, reason, new Date(timestamp).toISOString(), 1, "pending_approval", stamp)];
+          if (contactStatement) statements.push(contactStatement);
+          const notificationId = crypto.randomUUID();
+          statements.push(env.DB.prepare("INSERT INTO ai_notifications (notification_id,business_id,event_type,title,body,payload_json,status,created_at) VALUES (?,?,?,?,?,?,?,?)")
+            .bind(notificationId, businessId, "callback_request", "Customer callback approval requested", customerName + " requested a callback. Owner approval is required before any call is placed.", JSON.stringify({ followupId, customerName, phone: cleanPhone, reason, scheduledAt: new Date(timestamp).toISOString(), consentConfirmed: true, status: "pending_approval" }), "unread", stamp));
+          await env.DB.batch(statements);
+          return json(req, { ok: true, followupId, status: "pending_approval", ownerApprovalRequired: true, callPlaced: false, storage: "cloudflare_d1" });
+        }
+
+        return json(req, { error: "Unsupported AI business action." }, 400);
       }
       if (kind === "ai-catalog" && req.method === "POST" && !fileId) {
         const secret = req.headers.get("x-twiga-ai-tool-secret") || "";
