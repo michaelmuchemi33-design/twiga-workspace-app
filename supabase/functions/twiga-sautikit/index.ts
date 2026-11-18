@@ -143,17 +143,17 @@ async function attachKnowledgeTools(
 ) {
   const base = {
     agent_id: agentId,
-    url: "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-ai-actions",
+    url: "https://twiga-business-files.twiga-ke.workers.dev/v1/ai-catalog/" + encodeURIComponent(businessId),
     method: "POST",
-    headers: { "x-twiga-tool-secret": secret },
+    headers: { "x-twiga-ai-tool-secret": secret },
     timeout_ms: 12000,
   };
   await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/tools/" + encodeURIComponent(knowledgeToolId), "PUT", {
     ...base,
     tool_id: knowledgeToolId,
     name: "lookup_business_information",
-    purpose: "look up verified products, services, prices, availability and business policies from this business's live TWIGA records",
-    description: "Use this tool whenever a caller asks about a product, service, price, stock, opening hours, delivery, payment methods, returns or business FAQs. Search the live catalogue before answering product or price questions. It returns data for this business only. Do not expose customer records, staff personal information, payment-account credentials or another business's data. Do not invent prices or promise stock; stock is only the last saved count.",
+    purpose: "look up verified products, services, prices and last saved stock from this business's private Cloudflare catalogue",
+    description: "Use this tool whenever a caller asks about products, services, prices, categories, SKUs, descriptions or last saved stock. Search this business's live Cloudflare catalogue before answering. It returns data for this business only. Do not expose customer records, staff personal information, payment-account credentials or another business's data. Do not invent prices or promise stock; stock is only the last saved count.",
     body_params: {},
     parameters: {
       type: "object",
