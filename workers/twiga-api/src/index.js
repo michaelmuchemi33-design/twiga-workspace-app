@@ -10,6 +10,19 @@ const num = (v, label, min) => { const n = Number(v); if (!isFinite(n) || n < (m
 const rid = p => p + '-' + today().slice(2).replace(/-/g, '') + '-' + Math.random().toString(16).slice(2, 7).toUpperCase();
 const size = (...s) => 120 + s.reduce((a, x) => a + String(x == null ? '' : x).length, 0);
 
+let usageSchemaReady;
+async function ensureUsageSchema(env) {
+  if (!usageSchemaReady) {
+    usageSchemaReady = env.DB.batch([
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS usage (business_id TEXT PRIMARY KEY, bytes_used INTEGER NOT NULL DEFAULT 0)"),
+      env.DB.prepare("CREATE TRIGGER IF NOT EXISTS usage_quota_insert BEFORE INSERT ON usage WHEN NEW.bytes_used > 524288000 BEGIN SELECT RAISE(ABORT, 'D1_STORAGE_QUOTA'); END"),
+      env.DB.prepare("CREATE TRIGGER IF NOT EXISTS usage_quota_update BEFORE UPDATE ON usage WHEN NEW.bytes_used > 524288000 BEGIN SELECT RAISE(ABORT, 'D1_STORAGE_QUOTA'); END")
+    ]).catch((e) => { usageSchemaReady = null; throw e; });
+  }
+  return usageSchemaReady;
+}
+
+
 export default {
   async fetch(req, env) {
     if (req.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
@@ -18,6 +31,7 @@ export default {
     try {
       const b = await req.json();
       const ctx = await authorize(env, b.token, b.business_id);
+      await ensureUsageSchema(env);
       const fn = ACTIONS[b.action];
       if (!fn) throw new Error('Unknown action');
       return json(await fn(env, ctx, b.data || {}, txt(b.txn, 100)));
@@ -81,7 +95,7 @@ const ACTIONS = {
     if (prev) return prev;
     const items = (d.items || []).map(it => {
       const qty = num(it.qty || 1, 'quantity', 0.01), price = num(it.unitPrice, 'price', 0);
-      return {itemId: txt(it.itemId, 40), name: txt(it.name, 120), qty: qty, price: price, total: Math.round(qty * price * 100) / 100};
+      return {itemId: txt(it.itemId, 40), name: txt(it.name, 120), qty: qty, price: price, total: Math.round(qty * price * 100) / 100, kind: it.kind === 'service' ? 'service' : 'product'};
     }).filter(it => it.name);
     if (!items.length) throw new Error('Add at least one item.');
     for (const it of items) {
@@ -95,12 +109,16 @@ const ACTIONS = {
     const paid = d.paid === true && method !== 'M-Pesa STK' ? total : 0;
     const status = paid >= total ? 'Paid' : (type === 'Quote' ? 'Quote' : 'New');
     const customer = txt(d.customer, 120) || 'Walk-in', t = now();
+    const branch = txt(d.branch, 80) || 'Main branch';
+    const source = d.source === 'ai_receptionist' ? 'ai_receptionist' : 'pos';
+    const itemLines = items.map(it => ({productId: it.itemId, name: it.name, qty: it.qty, unitPrice: it.price, total: it.total, kind: it.kind || 'product'}));
+    const stockCommitted = source === 'pos' && paid >= total;
     await room(env, biz, size(customer, d.notes) + items.length * 160);
     const out = {ok: true, orderId: orderId, total: total, status: status};
-    const st = [env.DB.prepare('INSERT INTO orders (business_id, order_id, created_at, date, customer, phone, type, status, total, paid, method, notes, staff, branch, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(biz, orderId, t, txt(d.date, 20) || today(), customer, txt(d.phone, 30), type, status, total, paid, method, txt(d.notes, 300), txt(d.staff, 80), txt(d.branch, 80), t)];
+    const st = [env.DB.prepare('INSERT INTO orders (business_id, order_id, created_at, date, customer, phone, type, status, total, paid, method, notes, staff, branch, updated_at, items_json, source, subtotal, payment_status, stock_committed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(biz, orderId, t, txt(d.date, 20) || today(), customer, txt(d.phone, 30), type, status, total, paid, method, txt(d.notes, 300), txt(d.staff, 80), branch, t, JSON.stringify(itemLines), source, total, paid >= total ? 'paid' : 'unpaid', stockCommitted ? 1 : 0)];
     items.forEach((it, i) => {
       st.push(env.DB.prepare('INSERT INTO order_items (business_id, order_id, line, item_id, name, qty, unit_price, line_total) VALUES (?,?,?,?,?,?,?,?)').bind(biz, orderId, i + 1, it.itemId, it.name, it.qty, it.price, it.total));
-      if (it.itemId) st.push(env.DB.prepare('UPDATE items SET stock = stock - ?, updated_at = ? WHERE business_id = ? AND item_id = ? AND track_stock = 1 AND stock >= ?').bind(it.qty, t, biz, it.itemId, it.qty));
+      if (stockCommitted && it.itemId) st.push(env.DB.prepare('UPDATE items SET stock = stock - ?, updated_at = ? WHERE business_id = ? AND item_id = ? AND track_stock = 1 AND stock >= ?').bind(it.qty, t, biz, it.itemId, it.qty));
     });
     st.push(charge(env, biz, size(customer, d.notes) + items.length * 160));
     if (txn) st.push(remember(env, biz, txn, out));
@@ -269,12 +287,13 @@ async function aiCreateOrder(env, ctx, args, callId, toolId) {
   const items = Array.from(totals.entries()).map(([id, qty]) => {
     const item = byId.get(id);
     if (Number(item.TrackStock) === 1 && Number(item.Stock || 0) < qty) throw new Error('There is not enough stock for ' + item.Name + '.');
-    return {itemId: item.ItemId, name: item.Name, qty: qty, unitPrice: Number(item.Price || 0)};
+    return {itemId: item.ItemId, name: item.Name, qty: qty, unitPrice: Number(item.Price || 0), kind: String(item.Kind || '').toLowerCase() === 'service' ? 'service' : 'product'};
   });
   const txn = ('vapi-' + safeToolKey(callId) + '-' + safeToolKey(toolId)).slice(0, 100);
   const order = await ACTIONS.createOrder(env, ctx, {
     type: 'Sale', customer: customer, phone: phone, method: 'Pay later', paid: false,
     notes: txt(args.notes, 250) || 'Order taken by TWIGA AI receptionist.',
+    source: 'ai_receptionist',
     items: items
   }, txn);
   await aiSaveContact(env, ctx, customer, phone);
@@ -365,7 +384,8 @@ async function aiBookAppointment(env, ctx, args, callId, toolId) {
       type: 'Appointment', customer: customer, phone: phone, method: 'Booking', paid: false,
       date: availability.date,
       notes: 'Time: ' + availability.time + ' (' + availability.durationMinutes + ' minutes). ' + txt(args.notes, 180),
-      items: [{itemId: service.ItemId, name: service.Name, qty: 1, unitPrice: Number(service.Price || 0)}]
+      source: 'ai_receptionist',
+      items: [{itemId: service.ItemId, name: service.Name, qty: 1, unitPrice: Number(service.Price || 0), kind: 'service'}]
     }, txn);
   }
   const start = new Date(availability.date + 'T' + availability.time + ':00+03:00');
@@ -487,6 +507,7 @@ async function vapiHook(req, env) {
     }
   }
   if (m.type === 'tool-calls') {
+    await ensureUsageSchema(env);
     const calls = Array.isArray(m.toolCallList) ? m.toolCallList : [];
     let d;
     try { d = await getAiLineConfig(env, num); }

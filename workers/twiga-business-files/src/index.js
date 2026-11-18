@@ -1,4 +1,6 @@
 const QUOTA = 524288000;
+const D1_QUOTA = QUOTA;
+const R2_QUOTA = QUOTA;
 const ALLOWED = new Set(["https://live.twiga.co.ke", "https://app.twiga.co.ke", "https://demo.twiga.co.ke", "capacitor://localhost", "http://localhost", "http://localhost:5173"]);
 let schemaReady;
 const safeName = (s) => String(s || "file").normalize("NFKD").replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 120) || "file";
@@ -20,8 +22,14 @@ function json(req, body, status) {
 }
 async function ensureSchema(env) {
   if (!schemaReady) {
-    schemaReady = env.DB.prepare("CREATE TABLE IF NOT EXISTS files (file_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, object_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, uploaded_by TEXT NOT NULL, created_at TEXT NOT NULL)").run()
-      .then(() => env.DB.prepare("CREATE INDEX IF NOT EXISTS files_business_created ON files (business_id, created_at DESC)").run())
+    schemaReady = env.DB.batch([
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS files (file_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, object_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, uploaded_by TEXT NOT NULL, created_at TEXT NOT NULL)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS files_business_created ON files (business_id, created_at DESC)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS usage (business_id TEXT PRIMARY KEY, bytes_used INTEGER NOT NULL DEFAULT 0)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS r2_usage (business_id TEXT PRIMARY KEY, bytes_used INTEGER NOT NULL DEFAULT 0)"),
+      env.DB.prepare("CREATE TRIGGER IF NOT EXISTS usage_quota_insert BEFORE INSERT ON usage WHEN NEW.bytes_used > 524288000 BEGIN SELECT RAISE(ABORT, 'D1_STORAGE_QUOTA'); END"),
+      env.DB.prepare("CREATE TRIGGER IF NOT EXISTS usage_quota_update BEFORE UPDATE ON usage WHEN NEW.bytes_used > 524288000 BEGIN SELECT RAISE(ABORT, 'D1_STORAGE_QUOTA'); END")
+    ])
       .catch((e) => { schemaReady = null; throw e; });
   }
   return schemaReady;
@@ -80,30 +88,73 @@ function sameSecretHash(a, b) {
   for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return mismatch === 0;
 }
-async function currentUsage(env, businessId) {
+async function withD1Quota(env, businessId, bytes, write) {
+  const charge = Math.max(1, Math.ceil(Number(bytes) || 0));
+  await reserveD1(env, businessId, charge);
+  try { return await write(); }
+  catch (e) { await releaseD1(env, businessId, charge).catch(() => {}); throw e; }
+}
+function estimateD1Bytes(value) {
+  return Math.max(128, new TextEncoder().encode(JSON.stringify(value ?? {})).byteLength + 128);
+}
+async function currentD1Usage(env, businessId) {
   const row = await env.DB.prepare("SELECT bytes_used FROM usage WHERE business_id = ?").bind(businessId).first();
   return Number(row && row.bytes_used || 0);
 }
-async function reserve(env, businessId, bytes) {
-  const row = await env.DB.prepare("INSERT INTO usage (business_id, bytes_used) VALUES (?, ?) ON CONFLICT(business_id) DO UPDATE SET bytes_used = usage.bytes_used + excluded.bytes_used WHERE usage.bytes_used + excluded.bytes_used <= ? RETURNING bytes_used").bind(businessId, bytes, QUOTA).first();
-  if (!row) throw new Error("STORAGE_QUOTA");
+async function ensureR2Usage(env, businessId) {
+  const existing = await env.DB.prepare("SELECT bytes_used FROM r2_usage WHERE business_id = ?").bind(businessId).first();
+  if (existing) return;
+  const files = await env.DB.prepare("SELECT COALESCE(SUM(size_bytes),0) AS bytes FROM files WHERE business_id = ?").bind(businessId).first();
+  const images = await env.DB.prepare("SELECT image_key FROM items WHERE business_id = ? AND image_key IS NOT NULL").bind(businessId).all();
+  let imageBytes = 0;
+  for (const row of (images.results || [])) {
+    const key = String(row.image_key || "");
+    if (!key) continue;
+    const object = await env.FILES.head(key);
+    if (object) imageBytes += Number(object.size || 0);
+  }
+  const initialBytes = Number(files && files.bytes || 0) + imageBytes;
+  const inserted = await env.DB.prepare("INSERT OR IGNORE INTO r2_usage (business_id, bytes_used) VALUES (?, ?)").bind(businessId, initialBytes).run();
+  // The previous counter combined D1 and R2. On the one-time R2 backfill,
+  // move the measured legacy R2 bytes out of that counter so D1 starts clean.
+  if (inserted.meta && inserted.meta.changes > 0 && initialBytes > 0) {
+    await env.DB.prepare("UPDATE usage SET bytes_used = MAX(0, bytes_used - ?) WHERE business_id = ?").bind(initialBytes, businessId).run();
+  }
 }
-async function release(env, businessId, bytes) {
+async function currentR2Usage(env, businessId) {
+  await ensureR2Usage(env, businessId);
+  const row = await env.DB.prepare("SELECT bytes_used FROM r2_usage WHERE business_id = ?").bind(businessId).first();
+  return Number(row && row.bytes_used || 0);
+}
+async function reserveD1(env, businessId, bytes) {
+  const row = await env.DB.prepare("INSERT INTO usage (business_id, bytes_used) VALUES (?, ?) ON CONFLICT(business_id) DO UPDATE SET bytes_used = usage.bytes_used + excluded.bytes_used WHERE usage.bytes_used + excluded.bytes_used <= ? RETURNING bytes_used").bind(businessId, bytes, D1_QUOTA).first();
+  if (!row) throw new Error("D1_STORAGE_QUOTA");
+}
+async function releaseD1(env, businessId, bytes) {
   if (bytes > 0) await env.DB.prepare("UPDATE usage SET bytes_used = MAX(0, bytes_used - ?) WHERE business_id = ?").bind(bytes, businessId).run();
+}
+async function reserveR2(env, businessId, bytes) {
+  await ensureR2Usage(env, businessId);
+  const row = await env.DB.prepare("INSERT INTO r2_usage (business_id, bytes_used) VALUES (?, ?) ON CONFLICT(business_id) DO UPDATE SET bytes_used = r2_usage.bytes_used + excluded.bytes_used WHERE r2_usage.bytes_used + excluded.bytes_used <= ? RETURNING bytes_used").bind(businessId, bytes, R2_QUOTA).first();
+  if (!row) throw new Error("R2_STORAGE_QUOTA");
+}
+async function releaseR2(env, businessId, bytes) {
+  if (bytes > 0) await env.DB.prepare("UPDATE r2_usage SET bytes_used = MAX(0, bytes_used - ?) WHERE business_id = ?").bind(bytes, businessId).run();
 }
 function failure(req, e) {
   const m = String(e && e.message || e);
   if (m === "SIGN_IN_REQUIRED" || m === "SESSION_EXPIRED") return json(req, { error: "Please sign in again." }, 401);
   if (m === "NO_BUSINESS_ACCESS") return json(req, { error: "You do not have access to this business workspace." }, 403);
   if (m === "SUBSCRIPTION_INACTIVE") return json(req, { error: "This business workspace needs an active subscription to use file storage." }, 402);
-  if (m === "STORAGE_QUOTA") return json(req, { error: "This business has reached its 500 MB storage allowance. Delete an old file before uploading another." }, 413);
+  if (m === "STORAGE_QUOTA" || m === "R2_STORAGE_QUOTA") return json(req, { error: "This business has reached its 500 MB R2 file-storage allowance. Delete an old file before uploading another." }, 413);
+  if (m === "D1_STORAGE_QUOTA") return json(req, { error: "This business has reached its 500 MB D1 data allowance." }, 413);
   return json(req, { error: "The file storage request could not be completed." }, 500);
 }
 export default {
   async fetch(req, env) {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(req) });
     const url = new URL(req.url);
-    if (req.method === "GET" && url.pathname === "/health") return json(req, { ok: true, service: "twiga-business-files", quotaBytes: QUOTA });
+    if (req.method === "GET" && url.pathname === "/health") return json(req, { ok: true, service: "twiga-business-files", quotas: { d1BytesPerBusiness: D1_QUOTA, r2BytesPerBusiness: R2_QUOTA } });
     const parts = url.pathname.split("/").filter(Boolean);
     if (parts[0] !== "v1" || parts.length < 3) return json(req, { error: "Not found." }, 404);
     const kind = parts[1], businessId = parts[2], fileId = parts[3];
@@ -169,7 +220,7 @@ export default {
           const notificationId = crypto.randomUUID();
           statements.push(env.DB.prepare("INSERT INTO ai_notifications (notification_id,business_id,event_type,title,body,payload_json,status,created_at) VALUES (?,?,?,?,?,?,?,?)")
             .bind(notificationId, businessId, "new_lead", "New customer enquiry", customerName + " asked: " + interest.slice(0, 180), JSON.stringify({ leadId, customerName, phone: cleanPhone || null, email: email || null, interest, source }), "unread", stamp));
-          await env.DB.batch(statements);
+          await withD1Quota(env, businessId, estimateD1Bytes(body), () => env.DB.batch(statements));
           return json(req, { ok: true, leadId, contactSaved: !!contactStatement, ownerNotificationQueued: true, marketingConsent: false, storage: "cloudflare_d1" });
         }
 
@@ -218,8 +269,8 @@ export default {
           const orderNotes = String(body.order_notes || "").trim().slice(0, 800);
           const staffNote = ["Created by TWIGA AI receptionist.", "Pending staff confirmation of final availability, price and fulfilment.", orderNotes].filter(Boolean).join(" ").slice(0, 1200);
           const statements = [
-            env.DB.prepare("INSERT INTO orders (business_id,order_id,created_at,date,customer,phone,type,status,total,paid,method,notes,updated_at,items_json,source,subtotal,payment_status,stock_committed) VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,0)")
-              .bind(businessId, orderId, stamp, date, customerName, cleanPhone || null, orderType, orderStatus, subtotal, "Not paid", staffNote, stamp, JSON.stringify(lines), "ai_receptionist", subtotal, "unpaid"),
+            env.DB.prepare("INSERT INTO orders (business_id,order_id,created_at,date,customer,phone,type,status,total,paid,method,notes,branch,updated_at,items_json,source,subtotal,payment_status,stock_committed) VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,0)")
+              .bind(businessId, orderId, stamp, date, customerName, cleanPhone || null, orderType, orderStatus, subtotal, "Not paid", staffNote, "Main branch", stamp, JSON.stringify(lines), "ai_receptionist", subtotal, "unpaid"),
             ...lines.map((line, index) => env.DB.prepare("INSERT INTO order_items (business_id,order_id,line,item_id,name,qty,unit_price,line_total) VALUES (?,?,?,?,?,?,?,?)")
               .bind(businessId, orderId, index + 1, line.productId, line.name, line.qty, line.unitPrice, line.total))
           ];
@@ -227,7 +278,7 @@ export default {
           const notificationId = crypto.randomUUID();
           statements.push(env.DB.prepare("INSERT INTO ai_notifications (notification_id,business_id,event_type,title,body,payload_json,status,created_at) VALUES (?,?,?,?,?,?,?,?)")
             .bind(notificationId, businessId, "new_order", "New order request", customerName + " requested " + lines.length + " item(s). Staff confirmation is required.", JSON.stringify({ orderId, customerName, phone: cleanPhone || null, items: lines, total: subtotal, currency: lines.find((line) => line.catalogueMatched)?.currency || "KES", status: orderStatus, needsStaffConfirmation: true }), "unread", stamp));
-          await env.DB.batch(statements);
+          await withD1Quota(env, businessId, estimateD1Bytes(body), () => env.DB.batch(statements));
           return json(req, { ok: true, orderId, status: orderStatus, type: orderType, total: subtotal, currency: lines.find((line) => line.catalogueMatched)?.currency || "KES", contactSaved: !!contactStatement, ownerNotificationQueued: true, stockCommitted: false, paymentTaken: false, needsStaffConfirmation: true, quoteReviewRequired: needsQuote, storage: "cloudflare_d1" });
         }
 
@@ -247,7 +298,7 @@ export default {
           const notificationId = crypto.randomUUID();
           statements.push(env.DB.prepare("INSERT INTO ai_notifications (notification_id,business_id,event_type,title,body,payload_json,status,created_at) VALUES (?,?,?,?,?,?,?,?)")
             .bind(notificationId, businessId, "new_appointment", "Appointment request", customerName + " requested " + service + ". Staff must confirm the slot.", JSON.stringify({ appointmentId, customerName, phone: cleanPhone, service, scheduledAt: new Date(timestamp).toISOString(), durationMinutes: duration, status: "pending_confirmation" }), "unread", stamp));
-          await env.DB.batch(statements);
+          await withD1Quota(env, businessId, estimateD1Bytes(body), () => env.DB.batch(statements));
           return json(req, { ok: true, appointmentId, status: "pending_confirmation", ownerNotificationQueued: true, calendarEventCreated: false, storage: "cloudflare_d1" });
         }
 
@@ -264,7 +315,7 @@ export default {
           const notificationId = crypto.randomUUID();
           statements.push(env.DB.prepare("INSERT INTO ai_notifications (notification_id,business_id,event_type,title,body,payload_json,status,created_at) VALUES (?,?,?,?,?,?,?,?)")
             .bind(notificationId, businessId, "staff_task", "New staff task", title, JSON.stringify({ taskId, title, description, category, priority, dueAt: dueAt || null, customerName: customerName || null, phone: cleanPhone || null }), "unread", stamp));
-          await env.DB.batch(statements);
+          await withD1Quota(env, businessId, estimateD1Bytes(body), () => env.DB.batch(statements));
           return json(req, { ok: true, taskId, status: "open", ownerNotificationQueued: true, storage: "cloudflare_d1" });
         }
 
@@ -282,7 +333,7 @@ export default {
           const notificationId = crypto.randomUUID();
           statements.push(env.DB.prepare("INSERT INTO ai_notifications (notification_id,business_id,event_type,title,body,payload_json,status,created_at) VALUES (?,?,?,?,?,?,?,?)")
             .bind(notificationId, businessId, "callback_request", "Customer callback approval requested", customerName + " requested a callback. Owner approval is required before any call is placed.", JSON.stringify({ followupId, customerName, phone: cleanPhone, reason, scheduledAt: new Date(timestamp).toISOString(), consentConfirmed: true, status: "pending_approval" }), "unread", stamp));
-          await env.DB.batch(statements);
+          await withD1Quota(env, businessId, estimateD1Bytes(body), () => env.DB.batch(statements));
           return json(req, { ok: true, followupId, status: "pending_approval", ownerApprovalRequired: true, callPlaced: false, storage: "cloudflare_d1" });
         }
 
@@ -350,7 +401,7 @@ export default {
           const list=(Array.isArray(body.contacts)?body.contacts:[]).slice(0,500).map(c=>({name:String(c.name||"").trim().slice(0,120),phone:String(c.phone||"").replace(/[^0-9+]/g,"").slice(0,30),email:String(c.email||"").trim().slice(0,120)})).filter(c=>c.name&&c.phone.length>=7);
           if(!list.length)return json(req,{ok:true,saved:0,storage:"cloudflare_d1"});
           const created=now(),statements=list.map(c=>env.DB.prepare("INSERT INTO contacts (business_id,phone,name,email,source,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(business_id,phone) DO UPDATE SET name=excluded.name,email=excluded.email,source=excluded.source,updated_at=excluded.updated_at").bind(businessId,c.phone,c.name,c.email,source,created));
-          await env.DB.batch(statements);
+          await withD1Quota(env, businessId, estimateD1Bytes(body), () => env.DB.batch(statements));
           return json(req,{ok:true,saved:list.length,source,storage:"cloudflare_d1"});
         }
         return json(req,{error:"Method not allowed."},405);
@@ -367,11 +418,11 @@ export default {
           const packed = JSON.stringify(workspace); const bytes = new TextEncoder().encode(packed).byteLength;
           if (bytes > 4 * 1024 * 1024) return json(req,{error:"Workspace save is larger than 4 MB."},413);
           const previous = await env.DB.prepare("SELECT size_bytes FROM workspace_data WHERE business_id = ?").bind(businessId).first(); const oldBytes = Number(previous?.size_bytes || 0), delta = bytes-oldBytes;
-          if (delta > 0) await reserve(env,businessId,delta);
+          if (delta > 0) await reserveD1(env,businessId,delta);
           try { await env.DB.prepare("INSERT INTO workspace_data (business_id,workspace_json,size_bytes,updated_by,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(business_id) DO UPDATE SET workspace_json=excluded.workspace_json,size_bytes=excluded.size_bytes,updated_by=excluded.updated_by,updated_at=excluded.updated_at").bind(businessId,packed,bytes,member.userId,now()).run(); }
-          catch(e){ if(delta>0) await release(env,businessId,delta).catch(()=>{}); throw e; }
-          if(delta<0) await release(env,businessId,Math.abs(delta));
-          return json(req,{saved:true,updated_at:now(),bytes,storage:"cloudflare_d1",usedBytes:await currentUsage(env,businessId),quotaBytes:QUOTA});
+          catch(e){ if(delta>0) await releaseD1(env,businessId,delta).catch(()=>{}); throw e; }
+          if(delta<0) await releaseD1(env,businessId,Math.abs(delta));
+          return json(req,{saved:true,updated_at:now(),bytes,storage:"cloudflare_d1",d1UsedBytes:await currentD1Usage(env,businessId),d1QuotaBytes:D1_QUOTA});
         }
         return json(req,{error:"Method not allowed."},405);
       }
@@ -392,7 +443,7 @@ export default {
           const id=String(p.id||p.item_id||"").trim().slice(0,80)||crypto.randomUUID(); const name=String(p.name||"").trim().slice(0,160); const price=Number(p.price);
           if(!name||!Number.isFinite(price)||price<0)return json(req,{error:"Enter a product name and valid price."},400);
           const kind=p.kind==="service"||p.itemType==="service"?"service":"seller"; const stock=kind==="service"?0:Math.max(0,Number(p.stock??0)||0); const track=kind==="service"||p.trackStock===false?0:1; const updated=now();
-          await env.DB.prepare("INSERT INTO items (business_id,item_id,name,kind,category,price,cost,stock,track_stock,active,updated_at,description,sku,barcode,unit,low_stock_threshold,currency,image_key) VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?) ON CONFLICT(business_id,item_id) DO UPDATE SET name=excluded.name,kind=excluded.kind,category=excluded.category,price=excluded.price,cost=excluded.cost,stock=excluded.stock,track_stock=excluded.track_stock,active=1,updated_at=excluded.updated_at,description=excluded.description,sku=excluded.sku,barcode=excluded.barcode,unit=excluded.unit,low_stock_threshold=excluded.low_stock_threshold,currency=excluded.currency").bind(businessId,id,name,kind,String(p.category||"General").slice(0,120),price,Math.max(0,Number(p.costPrice??p.cost??0)||0),stock,track,updated,String(p.description||"").slice(0,4000),String(p.sku||"").slice(0,100),String(p.barcode||"").slice(0,100),String(p.unit||"piece").slice(0,40),Math.max(0,Number(p.lowStockThreshold??5)||0),String(p.currency||"KES").slice(0,8),String(p.imageKey||"")||null).run();
+          await withD1Quota(env,businessId,estimateD1Bytes(p),()=>env.DB.prepare("INSERT INTO items (business_id,item_id,name,kind,category,price,cost,stock,track_stock,active,updated_at,description,sku,barcode,unit,low_stock_threshold,currency,image_key) VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?) ON CONFLICT(business_id,item_id) DO UPDATE SET name=excluded.name,kind=excluded.kind,category=excluded.category,price=excluded.price,cost=excluded.cost,stock=excluded.stock,track_stock=excluded.track_stock,active=1,updated_at=excluded.updated_at,description=excluded.description,sku=excluded.sku,barcode=excluded.barcode,unit=excluded.unit,low_stock_threshold=excluded.low_stock_threshold,currency=excluded.currency").bind(businessId,id,name,kind,String(p.category||"General").slice(0,120),price,Math.max(0,Number(p.costPrice??p.cost??0)||0),stock,track,updated,String(p.description||"").slice(0,4000),String(p.sku||"").slice(0,100),String(p.barcode||"").slice(0,100),String(p.unit||"piece").slice(0,40),Math.max(0,Number(p.lowStockThreshold??5)||0),String(p.currency||"KES").slice(0,8),String(p.imageKey||"")||null).run());
           const row=await env.DB.prepare("SELECT item_id,name,kind,category,price,cost,stock,track_stock,updated_at,description,sku,barcode,unit,low_stock_threshold,currency,image_key FROM items WHERE business_id = ? AND item_id = ?").bind(businessId,id).first();
           return json(req,{saved:true,product:{id:String(row.item_id),name:row.name,kind:row.kind==="service"?"service":"seller",category:row.category,price:Number(row.price),costPrice:Number(row.cost),stock:Number(row.stock),trackStock:Number(row.track_stock)===1,description:row.description||"",sku:row.sku||"",barcode:row.barcode||"",unit:row.unit||"piece",lowStockThreshold:Number(row.low_stock_threshold||5),currency:row.currency||"KES",imageKey:row.image_key||null},storage:"cloudflare_d1"});
         }
@@ -404,9 +455,9 @@ export default {
         const form=await req.formData(); const file=form.get("file"); if(!(file instanceof File))return json(req,{error:"Choose a product photo."},400);
         if(!file.size||file.size>5*1024*1024)return json(req,{error:"Product photos must be under 5 MB."},413); const type=String(file.type||"").toLowerCase(); if(!["image/webp","image/jpeg","image/png"].includes(type))return json(req,{error:"Use a WebP, JPEG or PNG photo."},415);
         const item=await env.DB.prepare("SELECT item_id FROM items WHERE business_id=? AND item_id=? AND active=1").bind(businessId,fileId).first(); if(!item)return json(req,{error:"Save the product before uploading its photo."},404);
-        const key="businesses/"+businessId+"/product-images/"+fileId+"/"+crypto.randomUUID()+".webp"; const bytes=await file.arrayBuffer(); await reserve(env,businessId,bytes.byteLength);
-        try{await env.FILES.put(key,bytes,{httpMetadata:{contentType:type,cacheControl:"private, no-store"},customMetadata:{business_id:businessId,item_id:fileId}});await env.DB.prepare("UPDATE items SET image_key=?,updated_at=? WHERE business_id=? AND item_id=?").bind(key,now(),businessId,fileId).run();}catch(e){await env.FILES.delete(key).catch(()=>{});await release(env,businessId,bytes.byteLength).catch(()=>{});throw e;}
-        return json(req,{uploaded:true,imageKey:key,usedBytes:await currentUsage(env,businessId),quotaBytes:QUOTA});
+        const key="businesses/"+businessId+"/product-images/"+fileId+"/"+crypto.randomUUID()+".webp"; const bytes=await file.arrayBuffer(); await reserveR2(env,businessId,bytes.byteLength);
+        try{await env.FILES.put(key,bytes,{httpMetadata:{contentType:type,cacheControl:"private, no-store"},customMetadata:{business_id:businessId,item_id:fileId}});await env.DB.prepare("UPDATE items SET image_key=?,updated_at=? WHERE business_id=? AND item_id=?").bind(key,now(),businessId,fileId).run();}catch(e){await env.FILES.delete(key).catch(()=>{});await releaseR2(env,businessId,bytes.byteLength).catch(()=>{});throw e;}
+        return json(req,{uploaded:true,imageKey:key,r2UsedBytes:await currentR2Usage(env,businessId),r2QuotaBytes:R2_QUOTA});
       }
       if (kind === "pos") {
         const branch=String(url.searchParams.get("branch")||"Main branch").trim().slice(0,80)||"Main branch";
@@ -415,12 +466,12 @@ export default {
         if(!from){const d=new Date(today+"T12:00:00Z");d.setUTCDate(d.getUTCDate()-(range==="day"?0:range==="month"?d.getUTCDate()-1:6));from=d.toISOString().slice(0,10);}
         if(req.method==="GET"&&!fileId){
           const [orders,expenses,movements]=await Promise.all([
-            env.DB.prepare("SELECT order_id,created_at,date,customer,phone,status,total,paid,method,notes,staff,branch,items_json,receipt,subtotal,discount_amount,tax_amount,cost_total,gross_profit,payment_status,stock_committed,palpluss_transaction_id,mpesa_receipt FROM orders WHERE business_id=? AND branch=? AND date BETWEEN ? AND ? ORDER BY created_at DESC LIMIT 150").bind(businessId,branch,from,to).all(),
+            env.DB.prepare("SELECT order_id,created_at,date,customer,phone,status,total,paid,method,notes,staff,branch,items_json,receipt,subtotal,discount_amount,tax_amount,cost_total,gross_profit,payment_status,stock_committed,palpluss_transaction_id,mpesa_receipt,source FROM orders WHERE business_id=? AND branch=? AND date BETWEEN ? AND ? ORDER BY created_at DESC LIMIT 150").bind(businessId,branch,from,to).all(),
             env.DB.prepare("SELECT ref,date,category,description,amount,method,notes,created_at,branch FROM expenses WHERE business_id=? AND branch=? AND date BETWEEN ? AND ? ORDER BY created_at DESC LIMIT 150").bind(businessId,branch,from,to).all(),
             env.DB.prepare("SELECT movement_id,item_id,direction,movement_type,quantity,unit_cost,unit_sale,party,method,notes,branch,order_id,created_at FROM stock_movements WHERE business_id=? AND branch=? ORDER BY created_at DESC LIMIT 150").bind(businessId,branch).all()
           ]);
           const orderRows=orders.results||[],expenseRows=expenses.results||[],movementRows=movements.results||[];
-          const mappedOrders=orderRows.map(o=>{let items=[];try{items=JSON.parse(o.items_json||"[]")}catch{};return{id:o.order_id,sale_number:o.receipt||o.order_id,customer_name:o.customer||"Walk-in",customer_phone:o.phone||null,items:items.map(x=>({product_id:x.productId,name:x.name,quantity:Number(x.qty||x.quantity||0),unit_price:Number(x.unitPrice||x.unit_price||0),line_total:Number(x.total||x.line_total||0)})),subtotal:Number(o.subtotal||o.total||0),discount_amount:Number(o.discount_amount||0),tax_amount:Number(o.tax_amount||0),total_amount:Number(o.total||0),cost_total:Number(o.cost_total||0),gross_profit:Number(o.gross_profit||0),payment_method:o.method||"",payment_status:o.payment_status||o.status||"pending",notes:o.notes||null,status:o.status,created_at:o.created_at,stock_committed:Number(o.stock_committed)===1,palpluss_transaction_id:o.palpluss_transaction_id||null,mpesa_receipt:o.mpesa_receipt||null};});
+          const mappedOrders=orderRows.map(o=>{let items=[];try{items=JSON.parse(o.items_json||"[]")}catch{};return{id:o.order_id,sale_number:o.receipt||o.order_id,customer_name:o.customer||"Walk-in",customer_phone:o.phone||null,items:items.map(x=>({product_id:x.productId,name:x.name,quantity:Number(x.qty||x.quantity||0),unit_price:Number(x.unitPrice||x.unit_price||0),line_total:Number(x.total||x.line_total||0)})),subtotal:Number(o.subtotal||o.total||0),discount_amount:Number(o.discount_amount||0),tax_amount:Number(o.tax_amount||0),total_amount:Number(o.total||0),cost_total:Number(o.cost_total||0),gross_profit:Number(o.gross_profit||0),payment_method:o.method||"",payment_status:o.payment_status||o.status||"pending",notes:o.notes||null,status:o.status,created_at:o.created_at,stock_committed:Number(o.stock_committed)===1,palpluss_transaction_id:o.palpluss_transaction_id||null,mpesa_receipt:o.mpesa_receipt||null,source:o.source||"pos"};});
           const mappedExpenses=expenseRows.map(e=>({id:e.ref,expense_date:e.date,category:e.category||"Other",description:e.description||e.notes||"",amount:Number(e.amount||0),payment_method:e.method||"",receipt_reference:"",notes:e.notes||"",created_at:e.created_at}));
           const mappedMovements=movementRows.map(m=>({id:m.movement_id,product_id:m.item_id,movement_type:m.movement_type||m.direction,quantity_change:m.direction==="OUT"?-Number(m.quantity||0):Number(m.quantity||0),quantity_before:0,quantity_after:0,notes:m.notes||null,created_at:m.created_at}));
           const revenue=mappedOrders.filter(o=>o.payment_status==="paid").reduce((n,o)=>n+o.total_amount,0),expenseTotal=mappedExpenses.reduce((n,e)=>n+e.amount,0);
@@ -440,7 +491,7 @@ export default {
           const statements=[env.DB.prepare("INSERT INTO orders (business_id,order_id,created_at,date,customer,phone,type,status,total,paid,method,notes,staff,branch,updated_at,items_json,receipt,source,subtotal,discount_amount,tax_amount,cost_total,gross_profit,payment_status,stock_committed) VALUES (?,?,?,?,?,?,'sale',?,?,?,?,?,?,?,?,?,?, 'pos',?,?,?,?,?,?,?)").bind(businessId,orderId,created,String(body.date||created.slice(0,10)),customer,phone,status,total,paid,method,notes,String(member.userId||""),branch,created,JSON.stringify(clean),receipt,subtotal,discount,tax,costTotal,subtotal-discount-costTotal,paymentStatus,deductStock?1:0)];
           if(deductStock){for(const [id,qty] of Object.entries(stockNeed)){const line=clean.find(x=>x.productId===id);statements.push(env.DB.prepare("UPDATE items SET stock=stock-?,updated_at=? WHERE business_id=? AND item_id=? AND stock>=?").bind(qty,created,businessId,id,qty));statements.push(env.DB.prepare("INSERT INTO stock_movements (business_id,movement_id,item_id,direction,movement_type,quantity,unit_cost,unit_sale,party,method,notes,branch,order_id,created_at) VALUES (?,?,?,'OUT','sale',?,?,?,?,?,?,?,?,?)").bind(businessId,crypto.randomUUID(),id,qty,line?.costUnit||0,line?.unitPrice||0,customer,method,notes,branch,orderId,created));}}
           if(phone&&customer)statements.push(env.DB.prepare("INSERT INTO contacts (business_id,phone,name,email,source,updated_at) VALUES (?,?,?,NULL,'pos',?) ON CONFLICT(business_id,phone) DO UPDATE SET name=excluded.name,source='pos',updated_at=excluded.updated_at").bind(businessId,phone,customer,created));
-          await env.DB.batch(statements);return json(req,{ok:true,orderId,receipt,status,total,subtotal,discount,tax,paid,method,paymentStatus,items:clean,branch,createdAt:created,storage:"cloudflare_d1"});
+          await withD1Quota(env, businessId, estimateD1Bytes(body), () => env.DB.batch(statements));return json(req,{ok:true,orderId,receipt,status,total,subtotal,discount,tax,paid,method,paymentStatus,items:clean,branch,createdAt:created,storage:"cloudflare_d1"});
         }
         if(req.method==="POST"&&fileId==="link-payment"){
           const body=await req.json().catch(()=>({})),orderId=String(body.orderId||""),transactionId=String(body.transactionId||"");
@@ -461,11 +512,11 @@ export default {
           for(const [id,qty] of Object.entries(needs)){const p=await env.DB.prepare("SELECT name,stock,track_stock FROM items WHERE business_id=? AND item_id=?").bind(businessId,id).first();if(Number(p?.track_stock)===1&&Number(p?.stock||0)<qty)return json(req,{error:"Not enough stock to settle this sale."},409);}
           const created=now(),statements=[env.DB.prepare("UPDATE orders SET status='completed',paid=total,payment_status='paid',stock_committed=1,mpesa_receipt=?,updated_at=? WHERE business_id=? AND order_id=?").bind(String(body.receipt||""),created,businessId,orderId)];
           if(Number(order.stock_committed)!==1){for(const [id,qty] of Object.entries(needs)){const p=await env.DB.prepare("SELECT cost FROM items WHERE business_id=? AND item_id=?").bind(businessId,id).first();const line=lines.find(x=>x.productId===id);statements.push(env.DB.prepare("UPDATE items SET stock=stock-?,updated_at=? WHERE business_id=? AND item_id=? AND stock>=?").bind(qty,created,businessId,id,qty));statements.push(env.DB.prepare("INSERT INTO stock_movements (business_id,movement_id,item_id,direction,movement_type,quantity,unit_cost,unit_sale,party,method,notes,branch,order_id,created_at) VALUES (?,?,?,'OUT','sale',?,?,?,?,?,?,?,?,?)").bind(businessId,crypto.randomUUID(),id,qty,Number(p?.cost||0),Number(line?.unitPrice||0),"","mpesa","",branch,orderId,created));}}
-          await env.DB.batch(statements);return json(req,{ok:true,orderId,status:"completed",paid:Number(order.total),receipt:String(body.receipt||""),storage:"cloudflare_d1"});
+          await withD1Quota(env, businessId, estimateD1Bytes(body), () => env.DB.batch(statements));return json(req,{ok:true,orderId,status:"completed",paid:Number(order.total),receipt:String(body.receipt||""),storage:"cloudflare_d1"});
         }
         if(req.method==="POST"&&fileId==="expense"){
           const body=await req.json().catch(()=>({})),category=String(body.category||"Other").trim().slice(0,100),description=String(body.description||"").trim().slice(0,200),amount=Number(body.amount);if(!category||!description||!Number.isFinite(amount)||amount<=0)return json(req,{error:"Enter an expense category, description and a valid amount."},400);
-          const id=crypto.randomUUID(),created=now();await env.DB.prepare("INSERT INTO expenses (business_id,ref,date,category,description,amount,method,notes,created_at,branch) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(businessId,id,String(body.date||created.slice(0,10)),category,description,amount,String(body.method||"cash").slice(0,40),String(body.notes||"").slice(0,400),created,branch).run();
+          const id=crypto.randomUUID(),created=now();await withD1Quota(env,businessId,estimateD1Bytes(body),()=>env.DB.prepare("INSERT INTO expenses (business_id,ref,date,category,description,amount,method,notes,created_at,branch) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(businessId,id,String(body.date||created.slice(0,10)),category,description,amount,String(body.method||"cash").slice(0,40),String(body.notes||"").slice(0,400),created,branch).run());
           return json(req,{ok:true,reference:id,category,description,amount,branch,createdAt:created,storage:"cloudflare_d1"});
         }
         if(req.method==="POST"&&fileId==="stock-movement"){
@@ -474,20 +525,21 @@ export default {
           const item=await env.DB.prepare("SELECT item_id,name,stock,cost FROM items WHERE business_id=? AND item_id=? AND active=1").bind(businessId,itemId).first();if(!item)return json(req,{error:"Product not found."},404);const next=Number(item.stock||0)+delta;if(next<0)return json(req,{error:"Stock cannot go below zero. Current stock: "+Number(item.stock||0)+"."},409);
           const created=now(),direction=delta>0?"IN":"OUT",qty=Math.abs(delta),id=crypto.randomUUID();
           const update=delta>0?env.DB.prepare("UPDATE items SET stock=stock+?,cost=CASE WHEN stock+?>0 THEN ((stock*cost)+( ? * ?))/(stock+?) ELSE cost END,updated_at=? WHERE business_id=? AND item_id=?").bind(delta,delta,qty,unitCost,delta,created,businessId,itemId):env.DB.prepare("UPDATE items SET stock=stock-?,updated_at=? WHERE business_id=? AND item_id=? AND stock>=?").bind(qty,created,businessId,itemId,qty);
-          await env.DB.batch([update,env.DB.prepare("INSERT INTO stock_movements (business_id,movement_id,item_id,direction,movement_type,quantity,unit_cost,unit_sale,party,method,notes,branch,order_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?)").bind(businessId,id,itemId,direction,movementType,qty,unitCost,Number(body.unitSale||0),String(body.party||"").slice(0,120),String(body.method||"cash").slice(0,40),String(body.notes||"").slice(0,400),branch,created)]);
+          await withD1Quota(env,businessId,estimateD1Bytes(body),()=>env.DB.batch([update,env.DB.prepare("INSERT INTO stock_movements (business_id,movement_id,item_id,direction,movement_type,quantity,unit_cost,unit_sale,party,method,notes,branch,order_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?)").bind(businessId,id,itemId,direction,movementType,qty,unitCost,Number(body.unitSale||0),String(body.party||"").slice(0,120),String(body.method||"cash").slice(0,40),String(body.notes||"").slice(0,400),branch,created)]));
           return json(req,{ok:true,reference:id,itemId,itemName:item.name,quantityChange:delta,stock:next,branch,createdAt:created,storage:"cloudflare_d1"});
         }
         return json(req,{error:"Unknown POS action."},404);
       }
-      if (kind !== "files") return json(req, { error: "Not found." }, 404);
+      if (kind !== "files" && kind !== "usage") return json(req, { error: "Not found." }, 404);
       if (kind === "usage" && req.method === "GET" && !fileId) {
-        const used = await currentUsage(env, businessId);
-        return json(req, { usedBytes: used, quotaBytes: QUOTA, remainingBytes: Math.max(0, QUOTA - used), percentUsed: Math.min(100, Math.round(used / QUOTA * 10000) / 100) });
+        const r2Used = await currentR2Usage(env, businessId);
+        const d1Used = await currentD1Usage(env, businessId);
+        return json(req, { usedBytes: r2Used, quotaBytes: R2_QUOTA, remainingBytes: Math.max(0, R2_QUOTA - r2Used), percentUsed: Math.min(100, Math.round(r2Used / R2_QUOTA * 10000) / 100), r2UsedBytes: r2Used, r2QuotaBytes: R2_QUOTA, d1UsedBytes: d1Used, d1QuotaBytes: D1_QUOTA });
       }
       if (kind !== "files") return json(req, { error: "Not found." }, 404);
       if (req.method === "GET" && !fileId) {
         const result = await env.DB.prepare("SELECT file_id, name, content_type, size_bytes, created_at FROM files WHERE business_id = ? ORDER BY created_at DESC LIMIT 200").bind(businessId).all();
-        return json(req, { files: result.results || [], usedBytes: await currentUsage(env, businessId), quotaBytes: QUOTA });
+        return json(req, { files: result.results || [], usedBytes: await currentR2Usage(env, businessId), quotaBytes: R2_QUOTA });
       }
       if (req.method === "POST" && !fileId) {
         const form = await req.formData();
@@ -501,16 +553,18 @@ export default {
         const name = safeName(file.name);
         const objectKey = "businesses/" + businessId + "/files/" + id + "/" + name;
         const bytes = await file.arrayBuffer();
-        await reserve(env, businessId, bytes.byteLength);
+        await reserveR2(env, businessId, bytes.byteLength);
+        try { await reserveD1(env, businessId, 256); } catch (e) { await releaseR2(env, businessId, bytes.byteLength).catch(() => {}); throw e; }
         try {
           await env.FILES.put(objectKey, bytes, { httpMetadata: { contentType, cacheControl: "private, no-store" }, customMetadata: { business_id: businessId, file_id: id, uploaded_by: member.userId, original_name: name } });
           await env.DB.prepare("INSERT INTO files (file_id, business_id, object_key, name, content_type, size_bytes, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(id, businessId, objectKey, name, contentType, bytes.byteLength, member.userId, now()).run();
         } catch (e) {
           await env.FILES.delete(objectKey).catch(() => {});
-          await release(env, businessId, bytes.byteLength).catch(() => {});
+          await releaseR2(env, businessId, bytes.byteLength).catch(() => {});
+          await releaseD1(env, businessId, 256).catch(() => {});
           throw e;
         }
-        return json(req, { uploaded: true, file: { file_id: id, name, content_type: contentType, size_bytes: bytes.byteLength, created_at: now() }, usedBytes: await currentUsage(env, businessId), quotaBytes: QUOTA });
+        return json(req, { uploaded: true, file: { file_id: id, name, content_type: contentType, size_bytes: bytes.byteLength, created_at: now() }, usedBytes: await currentR2Usage(env, businessId), quotaBytes: R2_QUOTA });
       }
       if (req.method === "GET" && fileId) {
         const row = await env.DB.prepare("SELECT object_key, name, content_type, size_bytes FROM files WHERE business_id = ? AND file_id = ?").bind(businessId, fileId).first();
@@ -529,8 +583,9 @@ export default {
         if (!row) return json(req, { error: "File not found." }, 404);
         await env.FILES.delete(row.object_key);
         await env.DB.prepare("DELETE FROM files WHERE business_id = ? AND file_id = ?").bind(businessId, fileId).run();
-        await release(env, businessId, Number(row.size_bytes || 0));
-        return json(req, { deleted: true, usedBytes: await currentUsage(env, businessId), quotaBytes: QUOTA });
+        await releaseR2(env, businessId, Number(row.size_bytes || 0));
+        await releaseD1(env, businessId, 256);
+        return json(req, { deleted: true, usedBytes: await currentR2Usage(env, businessId), quotaBytes: R2_QUOTA });
       }
       return json(req, { error: "Method not allowed." }, 405);
     } catch (e) {

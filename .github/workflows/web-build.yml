@@ -3,6 +3,8 @@ name: TWIGA workspace web build
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -13,5 +15,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Check Cloudflare Worker JavaScript syntax
+        run: |
+          node --check workers/twiga-api/src/index.js
+          node --check workers/twiga-business-files/src/index.js
       - run: npm install
       - run: npm run build

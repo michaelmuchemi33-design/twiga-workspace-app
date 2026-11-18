@@ -27,9 +27,9 @@ const groups: { title: string; items: TabDef[] }[] = [
   {
     title: "Front Desk",
     items: [
+      { id: "setup", label: "AI Desk", icon: IconSparkle },
+      { id: "phone", label: "Calls", icon: IconChat },
       { id: "dashboard", label: "Home", icon: IconHome },
-      { id: "setup", label: "Set up with AI", icon: IconSparkle },
-      { id: "phone", label: "Phone & AI", icon: IconChat },
       { id: "outreach", label: "Outreach", icon: IconPhone },
       { id: "connections", label: "Connections", icon: IconUsers },
       { id: "organizer", label: "Organize", icon: IconSwap },
@@ -39,7 +39,7 @@ const groups: { title: string; items: TabDef[] }[] = [
   {
     title: "Money",
     items: [
-      { id: "pos", label: "Money", icon: IconCart },
+      { id: "pos", label: "POS", icon: IconCart },
       { id: "payments", label: "Payments", icon: IconCard },
       { id: "products", label: "Products & services", icon: IconBox },
       { id: "reports", label: "Reports", icon: IconFile },
