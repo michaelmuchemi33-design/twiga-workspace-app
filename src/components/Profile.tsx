@@ -77,6 +77,15 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [provisionSearch, setProvisionSearch] = useState("");
   const [provisionMessage, setProvisionMessage] = useState("");
   const [provisionBusy, setProvisionBusy] = useState(false);
+  const [aisensyConfig, setAisensyConfig] = useState<any>({ campaignKeyConfigured: false, projectKeyConfigured: false, projectIdConfigured: false });
+  const [aisensyCampaignKey, setAisensyCampaignKey] = useState("");
+  const [aisensyProjectKey, setAisensyProjectKey] = useState("");
+  const [aisensyProjectId, setAisensyProjectId] = useState("");
+  const [aisensyMessage, setAisensyMessage] = useState("");
+  const [adminBusinessPrompt, setAdminBusinessPrompt] = useState("");
+  const [adminPromptBusy, setAdminPromptBusy] = useState(false);
+  const [adminPromptMessage, setAdminPromptMessage] = useState("");
+  const [adminPromptSummary, setAdminPromptSummary] = useState("");
   const [inboundPrompt, setInboundPrompt] = useState("Greet callers warmly, understand what they need, and use only verified business information. Capture appointment and order requests for staff confirmation.");
   const [outboundPrompt, setOutboundPrompt] = useState("Only call people when the business has authorised the follow-up. Identify the business, explain the reason, ask if it is a convenient time, and respect requests not to be contacted.");
   const callSession = useRef<any>(null);
@@ -118,31 +127,33 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "get_config" } });
     if (!error && data?.isAdmin) {
       setXaiConfig(data);
-      const { data: googleData, error: googleError } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "google.oauth.status" } });
-      if (!googleError && googleData?.isAdmin) {
-        setGoogleOAuthConfig(googleData);
-        setGoogleClientId(String(googleData.clientId || ""));
+      const [googleResult, retellResult, palResult, sautiResult, aisensyResult, overviewResult] = await Promise.all([
+        supabase.functions.invoke("twiga-platform-secrets", { body: { action: "google.oauth.status" } }),
+        supabase.functions.invoke("twiga-platform-secrets", { body: { action: "retell.platform.status" } }),
+        supabase.functions.invoke("twiga-platform-secrets", { body: { action: "palpluss.platform.status" } }),
+        supabase.functions.invoke("twiga-platform-secrets", { body: { action: "sautikit.platform.status" } }),
+        supabase.functions.invoke("twiga-platform-secrets", { body: { action: "aisensy.platform.status" } }),
+        supabase.functions.invoke("twiga-platform-admin", { body: { action: "overview" } }),
+      ]);
+      if (!googleResult.error && googleResult.data?.isAdmin) {
+        setGoogleOAuthConfig(googleResult.data);
+        setGoogleClientId(String(googleResult.data.clientId || ""));
       }
-      const { data: retellPlatformData, error: retellPlatformError } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "retell.platform.status" } });
-      if (!retellPlatformError && retellPlatformData?.isAdmin) setRetellPlatformConfig(retellPlatformData);
-      const { data: palPlatformData, error: palPlatformError } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "palpluss.platform.status" } });
-      if (!palPlatformError && palPlatformData?.isAdmin) setPalPlatformConfig(palPlatformData);
-      const { data: sautikitPlatformData, error: sautikitPlatformError } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "sautikit.platform.status" } });
-      if (!sautikitPlatformError && sautikitPlatformData?.isAdmin) {
-        setSautikitPlatformConfig(sautikitPlatformData);
-        const [adminOverview, numberPool] = await Promise.all([
-          supabase.functions.invoke("twiga-platform-admin", { body: { action: "overview" } }),
-          supabase.functions.invoke("twiga-sautikit", { body: { action: "admin_list_numbers" } }),
-        ]);
-        if (!adminOverview.error && Array.isArray(adminOverview.data?.clients)) {
-          setPlatformClients(adminOverview.data.clients);
-          setProvisionBusinessId((current: string) => current || adminOverview.data.clients[0]?.id || "");
-        }
+      if (!retellResult.error && retellResult.data?.isAdmin) setRetellPlatformConfig(retellResult.data);
+      if (!palResult.error && palResult.data?.isAdmin) setPalPlatformConfig(palResult.data);
+      if (!sautiResult.error && sautiResult.data?.isAdmin) setSautikitPlatformConfig(sautiResult.data);
+      if (!aisensyResult.error && aisensyResult.data?.isAdmin) setAisensyConfig(aisensyResult.data);
+      if (!overviewResult.error && Array.isArray(overviewResult.data?.clients)) {
+        setPlatformClients(overviewResult.data.clients);
+        setProvisionBusinessId((current: string) => current || overviewResult.data.clients[0]?.id || "");
+      }
+      if (!sautiResult.error && sautiResult.data?.isAdmin && sautiResult.data?.keyConfigured) {
+        const numberPool = await supabase.functions.invoke("twiga-sautikit", { body: { action: "admin_list_numbers" } });
         if (!numberPool.error && Array.isArray(numberPool.data?.numbers)) {
           setPlatformNumbers(numberPool.data.numbers);
           setProvisionNumberId((current: string) => current || numberPool.data.numbers.find((number: any) => !number.assignedBusinessId && String(number.status).toLowerCase() === "active")?.id || "");
         }
-      }
+      } else setPlatformNumbers([]);
     }
   }, []);
 
@@ -201,6 +212,47 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     } catch (e) {
       setSautikitPlatformMessage(e instanceof Error ? e.message : "The shared SautiKit API key could not be saved.");
     } finally { setBusy(false); }
+  };
+
+  const saveAisensyPlatformCredentials = async () => {
+    if (!supabase || (!aisensyCampaignKey.trim() && !(aisensyProjectKey.trim() && aisensyProjectId.trim()))) return;
+    if (!!aisensyProjectKey.trim() !== !!aisensyProjectId.trim()) { setAisensyMessage("Enter both the AiSensy Project API Key and Project ID together."); return; }
+    setBusy(true); setAisensyMessage("Saving AiSensy credentials securely…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", {
+        body: {
+          action: "aisensy.platform.save",
+          ...(aisensyCampaignKey.trim() ? { campaignApiKey: aisensyCampaignKey.trim() } : {}),
+          ...(aisensyProjectKey.trim() ? { projectApiKey: aisensyProjectKey.trim(), projectId: aisensyProjectId.trim() } : {}),
+        },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setAisensyCampaignKey(""); setAisensyProjectKey(""); setAisensyProjectId("");
+      const { data: status, error: statusError } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "aisensy.platform.status" } });
+      if (!statusError && status?.isAdmin) setAisensyConfig(status);
+      setAisensyMessage(data.message || "AiSensy credentials saved. They have not been tested by sending a message.");
+    } catch (e) { setAisensyMessage(e instanceof Error ? e.message : "Could not save AiSensy credentials."); }
+    finally { setBusy(false); }
+  };
+
+  const promptBusinessWithAi = async () => {
+    if (!supabase || !provisionBusinessId || adminBusinessPrompt.trim().length < 12) {
+      setAdminPromptMessage("Choose a business and enter a clear instruction (at least 12 characters)."); return;
+    }
+    const target = platformClients.find((client: any) => client.id === provisionBusinessId);
+    if (!target) { setAdminPromptMessage("The selected business is not in the current platform directory."); return; }
+    setAdminPromptBusy(true); setAdminPromptMessage("TWIGA is preparing the requested business profile changes…"); setAdminPromptSummary("");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-platform-admin", {
+        body: { action: "ai_prompt_setup", businessId: provisionBusinessId, prompt: adminBusinessPrompt.trim() },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setAdminPromptSummary(String(data?.summary || data?.message || "Business profile updated."));
+      setAdminPromptMessage("Saved for " + (data?.businessName || target.name) + ". The owner should review Phone & AI receptionist and publish the changes. No call or WhatsApp message was sent.");
+    } catch (e) { setAdminPromptMessage(e instanceof Error ? e.message : "TWIGA could not update this business."); }
+    finally { setAdminPromptBusy(false); }
   };
 
   const refreshProvisioning = async () => {
@@ -543,6 +595,42 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       {sautikitPlatformConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Stored in encrypted Vault · •••• {sautikitPlatformConfig.keyLast4}. Last key validation: {sautikitPlatformConfig.updatedAt ? new Date(sautikitPlatformConfig.updatedAt).toLocaleString() : "saved"}.</p>}
       {sautikitPlatformMessage && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{sautikitPlatformMessage}</p>}
     </section>}
+    {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">AiSensy · shared WhatsApp provider</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-500">Store TWIGA's shared Campaign API Key and Project API Key here. Business owners only configure their campaign name and WhatsApp number; they never see provider credentials.</p></div>
+        <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{aisensyConfig.campaignKeyConfigured ? "Campaign key saved" : "Campaign key needed"}</span>
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-600">Campaign API key
+          <input type="password" autoComplete="new-password" value={aisensyCampaignKey} onChange={(e) => setAisensyCampaignKey(e.target.value)} placeholder={aisensyConfig.campaignKeyConfigured ? "Enter rotated Campaign API key to replace it" : "New AiSensy Campaign API key"} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" />
+          <span className="mt-1 block text-[11px] font-normal text-neutral-400">{aisensyConfig.campaignKeyConfigured ? "Encrypted Vault · •••• " + (aisensyConfig.campaignKeyLast4 || "saved") : "Used only by the server to send approved campaign templates."}</span>
+        </label>
+        <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-600">Project API key
+          <input type="password" autoComplete="new-password" value={aisensyProjectKey} onChange={(e) => setAisensyProjectKey(e.target.value)} placeholder={aisensyConfig.projectKeyConfigured ? "Enter rotated Project API key" : "New AiSensy Project API key"} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" />
+          <span className="mt-1 block text-[11px] font-normal text-neutral-400">{aisensyConfig.projectKeyConfigured ? "Project credential saved in encrypted Vault." : "Distinct from the Campaign API key."}</span>
+        </label>
+      </div>
+      <label className="mt-3 block text-xs font-semibold uppercase tracking-wide text-neutral-600">Project ID
+        <input value={aisensyProjectId} onChange={(e) => setAisensyProjectId(e.target.value)} placeholder={aisensyConfig.projectIdConfigured ? "Enter Project ID to pair with a replacement key" : "AiSensy Project ID"} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" />
+      </label>
+      <div className="mt-3 flex flex-wrap items-center gap-3"><button onClick={() => void saveAisensyPlatformCredentials()} disabled={busy || (!aisensyCampaignKey.trim() && !aisensyProjectKey.trim()) || (!!aisensyProjectKey.trim() !== !!aisensyProjectId.trim())} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Save AiSensy credentials</button><a href="https://app.aisensy.com/" target="_blank" rel="noreferrer" className="text-sm font-semibold text-orange-700 underline">Open AiSensy ↗</a><span className="text-xs text-neutral-500">The exposed key in chat must be rotated before saving.</span></div>
+      <div className="mt-3 rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">Campaign templates can be sent after the Campaign API key and business campaign name are configured. Two-way AI replies remain off until the Project API and inbound message flow are verified.</div>
+      {aisensyMessage && <p role="status" className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{aisensyMessage}</p>}
+    </section>}
+
+    {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Prompt a business</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-500">Choose a client and describe what needs changing. TWIGA updates only that client's business profile and AI instructions, preserving unrelated saved details and logging the admin action. It does not send calls, messages or change billing.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{platformClients.length} businesses loaded</span></div>
+      <label className="mt-4 block text-xs font-semibold uppercase tracking-wide text-neutral-600">Business to configure
+        <select value={provisionBusinessId} onChange={(e) => setProvisionBusinessId(e.target.value)} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-normal normal-case"><option value="">Choose a business</option>{platformClients.map((client: any) => <option key={client.id} value={client.id}>{client.name} · {client.ownerEmail || "No owner email"}</option>)}</select>
+      </label>
+      <label className="mt-3 block text-xs font-semibold uppercase tracking-wide text-neutral-600">Your instructions
+        <textarea value={adminBusinessPrompt} onChange={(e) => setAdminBusinessPrompt(e.target.value)} rows={5} placeholder="Example: Add this business's delivery policy, describe its products, and instruct the receptionist to confirm stock with staff before accepting an order." className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3 py-3 text-sm font-normal normal-case" />
+      </label>
+      <div className="mt-3 flex flex-wrap items-center gap-3"><button onClick={() => void promptBusinessWithAi()} disabled={adminPromptBusy || !provisionBusinessId || adminBusinessPrompt.trim().length < 12} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{adminPromptBusy ? "Updating business…" : "Prompt & update business"}</button><button onClick={() => void refreshProvisioning()} disabled={provisionBusy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700">Refresh client list</button></div>
+      {adminPromptMessage && <p role="status" className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{adminPromptMessage}</p>}
+      {adminPromptSummary && <p className="mt-3 rounded-xl border border-orange-100 bg-orange-50 p-3 text-sm text-orange-950">{adminPromptSummary}</p>}
+    </section>}
+
     {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform provisioning</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Business accounts & number allocation</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-500">Review customer workspaces and allocate active numbers from the shared SautiKit pool. Every number can belong to only one business. Assigning a number does not publish an agent or enable calls automatically.</p></div>
