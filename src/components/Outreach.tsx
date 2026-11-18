@@ -156,7 +156,7 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
         <div><p className="text-xs font-bold uppercase tracking-wide text-orange-600">01 · Your offer</p><h2 className="mt-1 text-xl font-bold text-neutral-950">What should the agent promote?</h2><p className="mt-1 text-sm text-neutral-600">Be clear about the product, price, dates and conditions. The AI must not invent details.</p></div>
         <label className="block text-sm font-semibold text-neutral-800">Offer details<textarea value={offer} onChange={e => setOffer(e.target.value)} rows={4} placeholder="e.g. This week: 20% off all haircuts. Book before Friday. Terms apply." className="mt-2 w-full rounded-xl border border-neutral-200 bg-white p-3 text-sm text-neutral-900 outline-none focus:border-orange-400" /></label>
         <label className="block text-sm font-semibold text-neutral-800">What the AI should say<textarea value={script} onChange={e => setScript(e.target.value)} rows={5} className="mt-2 w-full rounded-xl border border-neutral-200 bg-white p-3 text-sm text-neutral-900 outline-none focus:border-orange-400" /></label>
-        <p className="text-xs text-neutral-500">Use {{business_name}} for your business name and {{offer}} for the offer details.</p>
+        <p className="text-xs text-neutral-500">Use {"{{business_name}}"} for your business name and {"{{offer}}"} for the offer details.</p>
         <button onClick={() => void publish()} disabled={publishing} className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">{publishing ? "Publishing…" : "Publish offer to AI"}</button>
       </div>
       <div className="space-y-4 rounded-2xl border border-neutral-200 bg-white p-5">
