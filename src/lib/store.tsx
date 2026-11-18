@@ -48,6 +48,16 @@ export interface Product {
   kind: SellMode;
   description?: string;
   duration?: string;
+  sku?: string;
+  barcode?: string;
+  costPrice?: number;
+  unit?: string;
+  lowStockThreshold?: number;
+  imageKey?: string | null;
+  imageUrl?: string | null;
+  trackStock?: boolean;
+  itemType?: "product" | "service";
+  currency?: string;
 }
 
 export interface Payment {
@@ -181,6 +191,7 @@ interface StoreValue {
   updateSettings: (patch: Partial<Settings>) => void;
   addProduct: (p: Product) => void;
   removeProduct: (id: string) => void;
+  replaceProducts: (items: Product[]) => void;
   importCatalog: (items: Product[], source: string) => void;
 }
 
@@ -367,6 +378,33 @@ export function StoreProvider({
       }> | undefined;
       setTasks(saved?.tasks ?? []);
       setProducts(saved?.products ?? []);
+      const { data: catalogueRows, error: catalogueError } = await supabase
+        .from("twiga_products")
+        .select("id,name,sku,description,category,price,cost_price,currency,unit,stock_quantity,low_stock_threshold,image_key,barcode,item_type,track_stock")
+        .eq("business_id", businessId)
+        .eq("is_active", true)
+        .order("name", { ascending: true });
+      if (!cancelled && !catalogueError && catalogueRows) {
+        const mapped = await Promise.all(catalogueRows.map(async (row: any) => {
+          let imageUrl: string | null = null;
+          if (row.image_key) {
+            const { data: signed } = await supabase.storage.from("twiga-product-images").createSignedUrl(row.image_key, 3600);
+            imageUrl = signed?.signedUrl || null;
+          }
+          return {
+            id: row.id, name: row.name, price: Number(row.price || 0), category: row.category || "General",
+            stock: Number(row.stock_quantity || 0), source: "manual" as const,
+            kind: row.item_type === "service" ? "service" as const : "seller" as const,
+            description: row.description || "", sku: row.sku || "", barcode: row.barcode || "",
+            costPrice: row.cost_price == null ? undefined : Number(row.cost_price),
+            unit: row.unit || "piece", lowStockThreshold: Number(row.low_stock_threshold || 0),
+            imageKey: row.image_key || null, imageUrl, trackStock: row.track_stock !== false,
+            itemType: row.item_type === "service" ? "service" as const : "product" as const,
+            currency: row.currency || "KES",
+          } satisfies Product;
+        }));
+        setProducts(mapped);
+      }
       setSales(saved?.sales ?? []);
       setPayments(saved?.payments ?? []);
       setMessages(saved?.messages ?? []);
@@ -391,14 +429,14 @@ export function StoreProvider({
   useEffect(() => {
     if (demo || !userId || !businessId || !supabase || !hydrated.current) return;
     const timeout = window.setTimeout(async () => {
-      const workspace_data = { tasks, products, sales, payments, messages, customers, settings, catalogSource, sellMode };
+      const workspace_data = { tasks, sales, payments, messages, customers, settings, catalogSource, sellMode };
       const { error } = await supabase
         .from("twiga_business_workspace_data")
         .upsert({ business_id: businessId, updated_by: userId, workspace_data }, { onConflict: "business_id" });
       if (error) console.error("Unable to save business workspace", error.message);
     }, 900);
     return () => window.clearTimeout(timeout);
-  }, [demo, userId, businessId, tasks, products, sales, payments, messages, customers, settings, catalogSource, sellMode]);
+  }, [demo, userId, businessId, tasks, sales, payments, messages, customers, settings, catalogSource, sellMode]);
 
   const value = useMemo<StoreValue>(
     () => ({
@@ -427,6 +465,7 @@ export function StoreProvider({
       updateSettings: (patch) => setSettings((s) => ({ ...s, ...patch })),
       addProduct: (p) => setProducts((s) => [p, ...s]),
       removeProduct: (id) => setProducts((s) => s.filter((p) => p.id !== id)),
+      replaceProducts: (items) => setProducts(items),
       importCatalog: (items, source) => {
         setProducts((s) => {
           const existing = new Set(s.map((p) => p.name.toLowerCase()));
