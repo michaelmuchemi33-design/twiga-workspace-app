@@ -10,7 +10,7 @@ const first = (...values: unknown[]) => values.find((value) => value !== undefin
 const isPhone = (value: string) => /^\+[1-9]\d{7,14}$/.test(value);
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "GET") return json({ ok: true, service: "TWIGA SautiKit callback", version: 3 });
+  if (req.method === "GET") return json({ ok: true, service: "TWIGA SautiKit events and handover callback", version: 5 });
   if (req.method !== "POST") return json({ error: "POST only" }, 405);
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
@@ -65,8 +65,10 @@ Deno.serve(async (req: Request) => {
         return json({ actions: [{ say: { text: "I’m sorry, the team cannot take your call live right now. Please try again shortly." } }, { hangup: {} }] });
       }
       if (callState) {
-        if (["streamstopped", "streamerror", "completed"].includes(callState.toLowerCase())) return json({ actions: [] });
-        return json({ actions: [{ say: { text: "Karibu TWIGA. Our AI receptionist is not available on this call right now. Please try again shortly." } }, { hangup: {} }] });
+        // This endpoint is the lifecycle-events webhook. It must acknowledge provider
+        // events without taking control of the voice session. SautiKit's published
+        // inbound_agent and /agents/:id/send flow handle the conversation.
+        return json({ ok: true, ignored: true, reason: "no_registered_number", received: eventKind || callState });
       }
       // A provider event without a TWIGA-owned number is acknowledged but never attached to another tenant.
       return json({ ok: true, ignored: true, reason: "no_registered_number" });
@@ -143,8 +145,10 @@ Deno.serve(async (req: Request) => {
       return json({ actions: [{ say: { text: "I’m sorry, the team cannot take your call live right now. Please leave a message after the tone or try again shortly." } }, { hangup: {} }] });
     }
     if (callState) {
-      if (["streamstopped", "streamerror", "completed"].includes(callState.toLowerCase())) return json({ actions: [] });
-      return json({ actions: [{ say: { text: "Karibu TWIGA. Our AI receptionist is not available on this call right now. Please try again shortly." } }, { hangup: {} }] });
+      // events_url receives call lifecycle events, not voice-action requests.
+      // Never send fallback say/hangup actions here: they interrupt the active
+      // SautiKit-managed agent on outbound tests and inbound calls.
+      return json({ ok: true, received: eventKind || callState, callId: providerCallId || null });
     }
     return json({ ok: true, received: eventKind || status || "call_event", callId: providerCallId || null });
   } catch (error) {
