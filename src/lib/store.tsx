@@ -360,51 +360,38 @@ export function StoreProvider({
     setCatalogSource("Manual entry");
     setSellMode("seller");
     const load = async () => {
-      const { data, error } = await supabase
-        .from("twiga_business_workspace_data")
-        .select("workspace_data")
-        .eq("business_id", businessId)
-        .maybeSingle();
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token || "";
+      if (!token) { setWorkspaceReady(true); return; }
+      const api = "https://twiga-business-files.twiga-ke.workers.dev/v1";
+      const headers = { Authorization: `Bearer ${token}` };
+      const cloudResponse = await fetch(`${api}/workspace/${encodeURIComponent(businessId)}`, { headers });
+      const cloudResult = await cloudResponse.json().catch(() => ({}));
       if (cancelled) return;
-      if (error) {
-        console.error("Unable to load this business workspace", error.message);
+      if (!cloudResponse.ok) {
+        console.error("Unable to load Cloudflare business workspace", cloudResult.error);
         setWorkspaceReady(true);
         return;
       }
-      const saved = data?.workspace_data as Partial<{
-        tasks: Task[]; products: Product[]; sales: Sale[]; payments: Payment[];
-        messages: Message[]; customers: Customer[]; settings: Settings;
-        catalogSource: string; sellMode: SellMode;
-      }> | undefined;
-      setTasks(saved?.tasks ?? []);
-      setProducts(saved?.products ?? []);
-      const { data: catalogueRows, error: catalogueError } = await supabase
-        .from("twiga_products")
-        .select("id,name,sku,description,category,price,cost_price,currency,unit,stock_quantity,low_stock_threshold,image_key,barcode,item_type,track_stock")
-        .eq("business_id", businessId)
-        .eq("is_active", true)
-        .order("name", { ascending: true });
-      if (!cancelled && !catalogueError && catalogueRows) {
-        const mapped = await Promise.all(catalogueRows.map(async (row: any) => {
-          let imageUrl: string | null = null;
-          if (row.image_key) {
-            const { data: signed } = await supabase.storage.from("twiga-product-images").createSignedUrl(row.image_key, 3600);
-            imageUrl = signed?.signedUrl || null;
-          }
-          return {
-            id: row.id, name: row.name, price: Number(row.price || 0), category: row.category || "General",
-            stock: Number(row.stock_quantity || 0), source: "manual" as const,
-            kind: row.item_type === "service" ? "service" as const : "seller" as const,
-            description: row.description || "", sku: row.sku || "", barcode: row.barcode || "",
-            costPrice: row.cost_price == null ? undefined : Number(row.cost_price),
-            unit: row.unit || "piece", lowStockThreshold: Number(row.low_stock_threshold || 0),
-            imageKey: row.image_key || null, imageUrl, trackStock: row.track_stock !== false,
-            itemType: row.item_type === "service" ? "service" as const : "product" as const,
-            currency: row.currency || "KES",
-          } satisfies Product;
-        }));
-        setProducts(mapped);
+      let saved = cloudResult.workspace_data as Partial<{
+        tasks: Task[]; sales: Sale[]; payments: Payment[]; messages: Message[];
+        customers: Customer[]; settings: Settings; catalogSource: string; sellMode: SellMode;
+      }> | null;
+      if (!saved) {
+        const legacy = await supabase.from("twiga_business_workspace_data").select("workspace_data").eq("business_id", businessId).maybeSingle();
+        if (legacy.error) console.warn("Legacy workspace snapshot could not be read", legacy.error.message);
+        saved = (legacy.data?.workspace_data || null) as typeof saved;
+        if (saved) {
+          const migrated = await fetch(`${api}/workspace/${encodeURIComponent(businessId)}`, {
+            method: "POST", headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ workspace_data: { tasks: saved.tasks ?? [], sales: saved.sales ?? [], payments: saved.payments ?? [],
+              messages: saved.messages ?? [], customers: saved.customers ?? [], settings: saved.settings ?? emptySettings,
+              catalogSource: saved.catalogSource ?? "Manual entry", sellMode: saved.sellMode ?? "seller" } }),
+          });
+          if (!migrated.ok) console.warn("Legacy workspace data was loaded but could not yet be copied to Cloudflare.");
+        }
       }
+      setTasks(saved?.tasks ?? []);
       setSales(saved?.sales ?? []);
       setPayments(saved?.payments ?? []);
       setMessages(saved?.messages ?? []);
@@ -412,7 +399,58 @@ export function StoreProvider({
       setSettings(saved?.settings ? { ...emptySettings, ...saved.settings } : emptySettings);
       setCatalogSource(saved?.catalogSource ?? "Manual entry");
       setSellMode(saved?.sellMode ?? "seller");
-      const { data: calls, error: callsError } = await supabase.from("twiga_call_records").select("id,provider,provider_call_id,channel,direction,from_number,to_number,status,started_at,ended_at,duration_seconds,summary,structured_data,cost_usd,created_at").eq("business_id", businessId).order("created_at", { ascending: false }).limit(30);
+
+      const productsResponse = await fetch(`${api}/products/${encodeURIComponent(businessId)}`, { headers });
+      const productsResult = await productsResponse.json().catch(() => ({}));
+      if (productsResponse.ok) {
+        let cloudProducts = Array.isArray(productsResult.products) ? productsResult.products : [];
+        if (cloudProducts.length === 0) {
+          const legacyProducts = await supabase.from("twiga_products")
+            .select("id,name,sku,description,category,price,cost_price,currency,unit,stock_quantity,low_stock_threshold,image_key,barcode,item_type,track_stock")
+            .eq("business_id", businessId).eq("is_active", true).order("name");
+          if (!legacyProducts.error && legacyProducts.data?.length) {
+            for (const row of legacyProducts.data as any[]) {
+              const payload = { id: row.id, name: row.name, sku: row.sku || "", barcode: row.barcode || "",
+                description: row.description || "", category: row.category || "General", price: Number(row.price || 0),
+                costPrice: Number(row.cost_price || 0), currency: row.currency || "KES", unit: row.unit || "piece",
+                stock: Number(row.stock_quantity || 0), lowStockThreshold: Number(row.low_stock_threshold || 5),
+                kind: row.item_type === "service" ? "service" : "seller", trackStock: row.track_stock !== false };
+              const created = await fetch(`${api}/products/${encodeURIComponent(businessId)}`, {
+                method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ product: payload }),
+              });
+              if (created.ok && row.image_key) {
+                try {
+                  const signed = await supabase.storage.from("twiga-product-images").createSignedUrl(row.image_key, 300);
+                  if (signed.data?.signedUrl) {
+                    const image = await fetch(signed.data.signedUrl);
+                    if (image.ok) {
+                      const blob = await image.blob(); const form = new FormData(); form.append("file", blob, `${row.id}.webp`);
+                      await fetch(`${api}/product-image/${encodeURIComponent(businessId)}/${encodeURIComponent(row.id)}`, { method: "POST", headers, body: form });
+                    }
+                  }
+                } catch (error) { console.warn("A legacy product photo could not be migrated", error); }
+              }
+            }
+            const refreshed = await fetch(`${api}/products/${encodeURIComponent(businessId)}`, { headers });
+            const refreshedResult = await refreshed.json().catch(() => ({}));
+            if (refreshed.ok) cloudProducts = Array.isArray(refreshedResult.products) ? refreshedResult.products : [];
+          }
+        }
+        setProducts(cloudProducts.map((row: any) => ({
+          id: String(row.id), name: String(row.name || ""), price: Number(row.price || 0), category: row.category || "General",
+          stock: Number(row.stock || 0), source: "manual" as const, kind: row.kind === "service" ? "service" as const : "seller" as const,
+          description: row.description || "", sku: row.sku || "", barcode: row.barcode || "",
+          costPrice: row.costPrice == null ? undefined : Number(row.costPrice), unit: row.unit || "piece",
+          lowStockThreshold: Number(row.lowStockThreshold ?? 5), imageKey: row.imageKey || null, imageUrl: row.imageUrl || null,
+          trackStock: row.trackStock !== false, itemType: row.itemType === "service" ? "service" as const : "product" as const,
+          currency: row.currency || "KES",
+        })));
+      } else {
+        console.warn("Cloudflare catalogue could not be loaded", productsResult.error);
+      }
+      const { data: calls, error: callsError } = await supabase.from("twiga_call_records")
+        .select("id,provider,provider_call_id,channel,direction,from_number,to_number,status,started_at,ended_at,duration_seconds,summary,structured_data,cost_usd,created_at")
+        .eq("business_id", businessId).order("created_at", { ascending: false }).limit(30);
       if (!callsError) setCallRecords((current) => {
         const merged = new Map<string, CallRecord>();
         for (const call of (calls || []) as CallRecord[]) merged.set(call.id, call);
@@ -429,11 +467,19 @@ export function StoreProvider({
   useEffect(() => {
     if (demo || !userId || !businessId || !supabase || !hydrated.current) return;
     const timeout = window.setTimeout(async () => {
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token || "";
+      if (!token) return;
       const workspace_data = { tasks, sales, payments, messages, customers, settings, catalogSource, sellMode };
-      const { error } = await supabase
-        .from("twiga_business_workspace_data")
-        .upsert({ business_id: businessId, updated_by: userId, workspace_data }, { onConflict: "business_id" });
-      if (error) console.error("Unable to save business workspace", error.message);
+      const response = await fetch(`https://twiga-business-files.twiga-ke.workers.dev/v1/workspace/${encodeURIComponent(businessId)}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace_data }),
+      });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        console.error("Unable to save Cloudflare business workspace", result.error || response.status);
+      }
     }, 900);
     return () => window.clearTimeout(timeout);
   }, [demo, userId, businessId, tasks, sales, payments, messages, customers, settings, catalogSource, sellMode]);
