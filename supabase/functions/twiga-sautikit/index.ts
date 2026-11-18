@@ -231,6 +231,69 @@ async function attachDriveSearchTool(
   });
 }
 
+async function attachCalendarTools(
+  key: string, businessId: string, agentId: string, secret: string,
+  listToolId: string, createToolId: string,
+) {
+  const base = {
+    agent_id: agentId,
+    url: "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/google-workspace",
+    method: "POST",
+    headers: { "x-twiga-tool-secret": secret },
+    timeout_ms: 15000,
+  };
+  await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/tools/" + encodeURIComponent(listToolId), "PUT", {
+    ...base,
+    tool_id: listToolId,
+    name: "check_calendar_availability",
+    purpose: "check this business's real Google Calendar before proposing an appointment",
+    description: "Use this before offering or accepting a time. Supply the customer's requested time window in ISO 8601. It returns only busy/free event times and safe summary labels from this business's connected Google Calendar. If the calendar is disconnected or an error occurs, do not guess availability; tell the caller staff will confirm.",
+    body_params: { business_id: businessId, agent_id: agentId, action: "calendar.ai.list" },
+    parameters: {
+      type: "object",
+      properties: {
+        timeMin: { type: "string", description: "Start of the requested time window as an ISO 8601 date-time with timezone." },
+        timeMax: { type: "string", description: "End of the requested time window as an ISO 8601 date-time with timezone." },
+      },
+      required: ["timeMin", "timeMax"],
+      additionalProperties: false,
+    },
+  });
+  await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/tools/" + encodeURIComponent(createToolId), "PUT", {
+    ...base,
+    tool_id: createToolId,
+    name: "create_calendar_appointment_hold",
+    purpose: "create a private tentative Google Calendar hold for an appointment request already saved in TWIGA",
+    description: "Call only after book_appointment has successfully saved the customer's request to TWIGA D1 and the customer consented. This creates a private tentative calendar hold with no attendees and no invitation or message sent. It is not a confirmed booking. Tell the caller that the business team will confirm the final slot.",
+    body_params: { business_id: businessId, agent_id: agentId, action: "calendar.ai.create" },
+    parameters: {
+      type: "object",
+      properties: {
+        event: {
+          type: "object",
+          properties: {
+            summary: { type: "string", description: "Short title containing the service and customer name." },
+            description: { type: "string", description: "Appointment request details. Do not include sensitive credentials." },
+            start: { type: "object", properties: {
+              dateTime: { type: "string", description: "Start time ISO 8601." },
+              timeZone: { type: "string", description: "Use Africa/Nairobi for Kenyan businesses." },
+            }, required: ["dateTime"], additionalProperties: false },
+            end: { type: "object", properties: {
+              dateTime: { type: "string", description: "End time ISO 8601." },
+              timeZone: { type: "string" },
+            }, required: ["dateTime"], additionalProperties: false },
+            location: { type: "string" },
+          },
+          required: ["summary", "start", "end"],
+          additionalProperties: false,
+        },
+      },
+      required: ["event"],
+      additionalProperties: false,
+    },
+  });
+}
+
 function resolveProviderVoice(voices: unknown[], requested: string): string {
   const values = voices.map((value) => String(value || "")).filter(Boolean);
   const exact = values.find((value) => value.toLowerCase() === requested.toLowerCase());
