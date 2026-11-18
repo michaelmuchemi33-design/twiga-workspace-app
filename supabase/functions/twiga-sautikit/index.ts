@@ -1020,11 +1020,14 @@ Deno.serve(async (req: Request) => {
         sautikit_drive_tool_ready: false,
         sautikit_cloudflare_files_tool_id: crypto.randomUUID(),
         sautikit_cloudflare_files_tool_ready: false,
+        sautikit_calendar_list_tool_id: crypto.randomUUID(),
+        sautikit_calendar_create_tool_id: crypto.randomUUID(),
+        sautikit_calendar_tools_ready: false,
         sautikit_operational_tools_ready: false,
         sautikit_scripts: scripts,
       };
       const { error: saveAgentError } = await admin.from("twiga_phone_lines")
-        .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", outbound_enabled: true, outbound_status: "active", updated_at: new Date().toISOString() })
+        .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", updated_at: new Date().toISOString() })
         .eq("id", line.id);
       if (saveAgentError) throw saveAgentError;
 
@@ -1067,6 +1070,9 @@ Deno.serve(async (req: Request) => {
         await attachDriveSearchTool(key, businessId, createdAgentId, bookingSecret, String(nextSettings.sautikit_drive_tool_id));
         const fileToolId = String(nextSettings.sautikit_cloudflare_files_tool_id || crypto.randomUUID());
         await attachCloudflareFilesTool(key, businessId, createdAgentId, bookingSecret, fileToolId);
+        const calendarListToolId = String(nextSettings.sautikit_calendar_list_tool_id || crypto.randomUUID());
+        const calendarCreateToolId = String(nextSettings.sautikit_calendar_create_tool_id || crypto.randomUUID());
+        await attachCalendarTools(key, businessId, createdAgentId, bookingSecret, calendarListToolId, calendarCreateToolId);
         const publishedEnvelope = await skRequest(key, "/v1/agents/" + encodeURIComponent(createdAgentId) + "/publish", "POST", {});
         const published = publishedEnvelope?.revision || publishedEnvelope?.data?.revision || publishedEnvelope?.data || publishedEnvelope;
         revision = Number(published?.revision || published?.current_revision || published?.version || createdAgent?.current_revision || 1);
@@ -1086,13 +1092,13 @@ Deno.serve(async (req: Request) => {
             },
           },
         });
-        const boundSettings = { ...nextSettings, ai_agent_bound: true, sautikit_booking_tool_ready: true, sautikit_operational_tools_ready: true, sautikit_knowledge_tool_ready: true, sautikit_drive_tool_ready: true, sautikit_cloudflare_files_tool_id: fileToolId, sautikit_cloudflare_files_tool_ready: true, inbound_agent_revision: revision };
+        const boundSettings = { ...nextSettings, ai_agent_bound: true, sautikit_booking_tool_ready: true, sautikit_operational_tools_ready: true, sautikit_knowledge_tool_ready: true, sautikit_drive_tool_ready: true, sautikit_cloudflare_files_tool_id: fileToolId, sautikit_cloudflare_files_tool_ready: true, sautikit_calendar_list_tool_id: calendarListToolId, sautikit_calendar_create_tool_id: calendarCreateToolId, sautikit_calendar_tools_ready: true, inbound_agent_revision: revision };
         const { error: saveBoundError } = await admin.from("twiga_phone_lines")
-          .update({ settings: boundSettings, inbound_enabled: true, inbound_status: "testing", outbound_enabled: true, outbound_status: "active", updated_at: new Date().toISOString() })
+          .update({ settings: boundSettings, inbound_enabled: true, inbound_status: "testing", updated_at: new Date().toISOString() })
           .eq("id", line.id);
         if (saveBoundError) throw saveBoundError;
         return json({
-          created: true, bound: true, bookingToolReady: true, agentId: createdAgentId, revision, voice, model: modelId,
+          created: true, bound: true, bookingToolReady: true, calendarToolsReady: true, agentId: createdAgentId, revision, voice, model: modelId,
           message: "Created a dedicated " + businessName + " receptionist, published revision " + revision + " and bound it to this business's existing SautiKit number. Inbound remains in testing until a real call is answered.",
         });
       } catch (routeError) {
@@ -1456,6 +1462,9 @@ Deno.serve(async (req: Request) => {
       await registerCloudflareFilesSecret(auth, businessId, bookingSecret);
       const fileToolId = String(settings.sautikit_cloudflare_files_tool_id || crypto.randomUUID());
       await attachCloudflareFilesTool(key, businessId, agentId, bookingSecret, fileToolId);
+      const calendarListToolId = String(settings.sautikit_calendar_list_tool_id || crypto.randomUUID());
+      const calendarCreateToolId = String(settings.sautikit_calendar_create_tool_id || crypto.randomUUID());
+      await attachCalendarTools(key, businessId, agentId, bookingSecret, calendarListToolId, calendarCreateToolId);
       const updated = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId), "PUT", updateBody);
       const published = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/publish", "POST");
       const nextSettings = {
@@ -1483,6 +1492,9 @@ Deno.serve(async (req: Request) => {
         sautikit_drive_tool_ready: true,
         sautikit_cloudflare_files_tool_id: fileToolId,
         sautikit_cloudflare_files_tool_ready: true,
+        sautikit_calendar_list_tool_id: calendarListToolId,
+        sautikit_calendar_create_tool_id: calendarCreateToolId,
+        sautikit_calendar_tools_ready: true,
         sautikit_operational_tools_ready: true,
         last_published_at: new Date().toISOString(),
       };
@@ -1500,6 +1512,7 @@ Deno.serve(async (req: Request) => {
         agent: updated,
         inboundRoutePreserved: true,
         bookingToolReady: true,
+        calendarToolsReady: true,
         operationalToolsReady: true,
         message: "Voice and instructions published to the existing agent. TWIGA verified the number binding and reattached booking, customer-lead, order-request, staff-task and consent-based callback tools. Inbound remains in testing until an actual incoming call has been answered."
       });
