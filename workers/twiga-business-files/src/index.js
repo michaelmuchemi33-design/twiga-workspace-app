@@ -532,12 +532,14 @@ export default {
         const objectKey = "businesses/" + businessId + "/files/" + id + "/" + name;
         const bytes = await file.arrayBuffer();
         await reserveR2(env, businessId, bytes.byteLength);
+        try { await reserveD1(env, businessId, 256); } catch (e) { await releaseR2(env, businessId, bytes.byteLength).catch(() => {}); throw e; }
         try {
           await env.FILES.put(objectKey, bytes, { httpMetadata: { contentType, cacheControl: "private, no-store" }, customMetadata: { business_id: businessId, file_id: id, uploaded_by: member.userId, original_name: name } });
           await env.DB.prepare("INSERT INTO files (file_id, business_id, object_key, name, content_type, size_bytes, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(id, businessId, objectKey, name, contentType, bytes.byteLength, member.userId, now()).run();
         } catch (e) {
           await env.FILES.delete(objectKey).catch(() => {});
           await releaseR2(env, businessId, bytes.byteLength).catch(() => {});
+          await releaseD1(env, businessId, 256).catch(() => {});
           throw e;
         }
         return json(req, { uploaded: true, file: { file_id: id, name, content_type: contentType, size_bytes: bytes.byteLength, created_at: now() }, usedBytes: await currentR2Usage(env, businessId), quotaBytes: R2_QUOTA });
@@ -560,6 +562,7 @@ export default {
         await env.FILES.delete(row.object_key);
         await env.DB.prepare("DELETE FROM files WHERE business_id = ? AND file_id = ?").bind(businessId, fileId).run();
         await releaseR2(env, businessId, Number(row.size_bytes || 0));
+        await releaseD1(env, businessId, 256);
         return json(req, { deleted: true, usedBytes: await currentR2Usage(env, businessId), quotaBytes: R2_QUOTA });
       }
       return json(req, { error: "Method not allowed." }, 405);
