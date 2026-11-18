@@ -3,9 +3,9 @@ import { supabase } from "@/lib/supabase";
 import { useStore } from "@/lib/store";
 
 type Item = {
-  id: string; name: string; sku?: string | null; category?: string; description?: string;
+  id: string; name: string; sku?: string | null; barcode?: string | null; category?: string; description?: string;
   price: number; cost_price?: number | null; stock_quantity: number; low_stock_threshold?: number;
-  unit?: string; image_key?: string | null; item_type: string; track_stock: boolean; currency?: string;
+  unit?: string; image_key?: string | null; imageUrl?: string | null; item_type: string; track_stock: boolean; currency?: string;
 };
 type SaleRow = { id: string; sale_number: string; customer_name: string; customer_phone: string | null; items: any[]; subtotal: number; discount_amount: number; tax_amount: number; total_amount: number; cost_total: number; gross_profit: number; payment_method: string; payment_status: string; notes: string | null; status: string; created_at: string };
 type ExpenseRow = { id: string; expense_date: string; category: string; description: string; amount: number; payment_method: string; receipt_reference: string | null; created_at: string };
