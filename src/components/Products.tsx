@@ -29,7 +29,7 @@ async function shrinkPhoto(file: File): Promise<Blob> {
 }
 
 export default function Products() {
-  const { businessId, demoMode, products, replaceProducts, addProduct, removeProduct, settings } = useStore();
+  const { businessId, demoMode, products, addProduct, removeProduct, settings } = useStore();
   const [rows, setRows] = useState<Product[]>(products);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | SellMode>("all");
@@ -62,8 +62,8 @@ export default function Products() {
         currency: row.currency || "KES",
       } satisfies Product;
     }));
-    setRows(mapped); replaceProducts(mapped);
-  }, [businessId, demoMode, products, replaceProducts]);
+    setRows(mapped);
+  }, [businessId, demoMode, products]);
 
   useEffect(() => { void load().catch((error) => setMessage(error instanceof Error ? error.message : "Could not load your catalogue.")); }, [load]);
   const filtered = useMemo(() => rows.filter((p) => {
@@ -94,7 +94,7 @@ export default function Products() {
           sku: form.sku.trim(), barcode: form.barcode.trim(), description: form.description.trim(),
           costPrice: form.costPrice === "" ? undefined : Number(form.costPrice), unit: form.unit,
           lowStockThreshold: Number(form.lowStockThreshold) || 0, trackStock: form.kind === "seller", itemType: form.kind === "service" ? "service" : "product" };
-        if (editing) replaceProducts(rows.map((x) => x.id === editing ? item : x)); else addProduct(item);
+        if (editing) { removeProduct(editing); addProduct(item); } else addProduct(item);
         setRows((current) => editing ? current.map((x) => x.id === editing ? item : x) : [item, ...current]);
         reset(); setMessage("Sample catalogue item saved. Demo changes are not sent to customers."); return;
       }
