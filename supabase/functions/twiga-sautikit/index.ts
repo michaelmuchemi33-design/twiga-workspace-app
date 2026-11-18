@@ -440,7 +440,10 @@ Deno.serve(async (req: Request) => {
         inboundMode: liveInboundRoute?.mode || (savedProviderVerification ? "always" : null),
         bookingToolReady: settings.sautikit_booking_tool_ready === true,
         bookingToolCount: Number(verifiedAgent?.tool_count || 0),
-      });) {
+      });
+    }
+
+    if (action === "save_voice_preference") {
       if (!canManage) return json({ error: "Only the business owner, admin or TWIGA platform administrator can save the receptionist voice." }, 403);
       const selectedVoice = String(body.voice || "").trim();
       const selectedModel = String(body.model || "sautikit-flash").trim();
