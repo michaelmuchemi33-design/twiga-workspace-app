@@ -33,7 +33,7 @@ async function functionErrorMessage(error: unknown, fallback: string) {
 }
 
 export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: { businessId: string; onOpenProfile?: () => void; demo?: boolean }) {
-  const [config, setConfig] = useState<TWIGA phone serviceConfig>({});
+  const [config, setConfig] = useState<SautiKitConfig>({});
   const [scheduledCalls, setScheduledCalls] = useState<ScheduledCall[]>([]);
   const [callRecords, setCallRecords] = useState<CallRecord[]>([]);
   const [notifications, setNotifications] = useState<OwnerNotification[]>([]);
@@ -71,9 +71,9 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     setLoading(true); setError("");
     try {
       const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } });
-      if (invokeError) throw new Error(await functionErrorMessage(invokeError, "The TWIGA phone service returned an error."));
+      if (invokeError) throw new Error(await functionErrorMessage(invokeError, "The phone service returned an error."));
       if (data?.error) throw new Error(String(data.error));
-      const next = (data || {}) as TWIGA phone serviceConfig;
+      const next = (data || {}) as SautiKitConfig;
       setConfig(next);
       const settings = next.phoneLine?.settings || {};
       setVoiceModel(settings.inbound_model_id || next.voicePreference?.model || next.agent?.model || "sautikit-flash");
@@ -162,11 +162,11 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const canPlaceLiveTest = serverDirectReady && config.numberVerified === true && !!config.agent?.id;
   const canPublishVoice = serverDirectReady && config.numberVerified === true;
   const voiceReadinessIssues = [
-    !config.keyConfigured ? "The shared TWIGA TWIGA phone service connection is not configured yet. The platform administrator must add it in Profile → Platform settings." : "",
-    config.numberVerified !== true ? "The assigned TWIGA phone service phone number is not yet verified against that account." : "",
+    !config.keyConfigured ? "The shared TWIGA phone connection is not configured yet. The platform administrator must add it in Profile → Platform settings." : "",
+    config.numberVerified !== true ? "The assigned TWIGA phone number is not yet verified against that account." : "",
     !config.agent?.id ? "The receptionist agent has not been created for this business yet." : "",
     config.agent?.id && !config.inboundBound ? "The receptionist agent is not yet bound to this business phone number for inbound calls." : "",
-    !serverDirectReady ? "The shared TWIGA TWIGA phone service provider connection is not available, so live calls remain paused." : "",
+    !serverDirectReady ? "The shared phone connection is not available, so live calls remain paused." : "",
   ].filter(Boolean);
   const voiceReadinessMessage = voiceReadinessIssues.join(" ");
   const inboundStatus = config.inboundVerified ? "provider route verified" : config.inboundBound ? "agent bound · pickup test pending" : line?.inbound_status || "not configured";
@@ -190,7 +190,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
       const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", {
         body: { action: "save_voice_preference", businessId, model: voiceModel, voice: voiceId },
       });
-      if (invokeError) throw new Error(await functionErrorMessage(invokeError, "The TWIGA phone service returned an error."));
+      if (invokeError) throw new Error(await functionErrorMessage(invokeError, "The phone service returned an error."));
       if (data?.error) throw new Error(String(data.error));
       setVoiceStep(2);
       setMessage(data?.message || "Voice choice saved. Continue setting up your receptionist.");
@@ -203,12 +203,12 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
 
   const publishVoice = async () => {
     if (!supabase || !businessId) { setError("Sign in and select a business before publishing."); return; }
-    if (!canPublishVoice) { setMessage(""); setError(voiceReadinessMessage || "Connect the business TWIGA phone service workspace and assign an active number first."); return; }
+    if (!canPublishVoice) { setMessage(""); setError(voiceReadinessMessage || "Connect the TWIGA phone service and assign an active number first."); return; }
     setSavingVoice(true); setError(""); setMessage(config.agent?.id ? "Publishing the receptionist voice and instructions…" : "Creating and publishing this business’s AI receptionist…");
     try {
       const invoke = async (action: string) => {
         const result = await supabase!.functions.invoke("twiga-sautikit", { body: { action, businessId, model: voiceModel, voice: voiceId, corePrompt, greeting, inboundPrompt, outboundPrompt } });
-        if (result.error) throw new Error(await functionErrorMessage(result.error, "The TWIGA phone service returned an error."));
+        if (result.error) throw new Error(await functionErrorMessage(result.error, "The phone service returned an error."));
         if (result.data?.error) throw new Error(String(result.data.error));
         return result.data || {};
       };
@@ -231,11 +231,11 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const testVoice = async () => {
     const to = toE164(testPhone);
     if (!to) { setError("Enter a valid phone number, e.g. +2547XXXXXXXX."); return; }
-    if (!canPlaceLiveTest) { setError(voiceReadinessMessage || "Live calling is paused until TWIGA completes its business TWIGA phone service workspace connection."); return; }
+    if (!canPlaceLiveTest) { setError(voiceReadinessMessage || "Live calling is paused until TWIGA completes its TWIGA phone service connection."); return; }
     setTestingCall(true); setError(""); setMessage("Submitting your voice test call…");
     try {
       const { data, error: invokeError } = await supabase!.functions.invoke("twiga-sautikit", { body: { action: "send_call", businessId, to, voice: voiceId, model: voiceModel, reason: "TWIGA AI receptionist voice test requested by the business owner", authorised: true, consent: true } });
-      if (invokeError) throw new Error(await functionErrorMessage(invokeError, "The TWIGA phone service returned an error."));
+      if (invokeError) throw new Error(await functionErrorMessage(invokeError, "The phone service returned an error."));
       if (data?.error) throw new Error(String(data.error));
       setMessage(data?.message || `Your ${voiceId === "Man" ? "male" : "female"} voice test call has been submitted to ${to}.`);
       await load();
@@ -318,7 +318,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     </header>
 
     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5 md:col-span-2"><p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Assigned TWIGA AI phone number</p><div className="mt-2 flex flex-wrap items-center gap-3"><p className="text-3xl font-bold tracking-tight text-neutral-950">{displayedPhoneNumber || "No AI line assigned"}</p>{displayedPhoneNumber && <button onClick={() => void navigator.clipboard?.writeText(displayedPhoneNumber)} className="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700">Copy number</button>}{displayedPhoneNumber && <a href={`tel:${displayedPhoneNumber}`} className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-700">Call AI receptionist</a>}<span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${config.numberVerified ? "border-emerald-200 bg-emerald-50 text-emerald-800" : providerFailed ? "border-red-200 bg-red-50 text-red-800" : line ? "border-amber-200 bg-amber-50 text-amber-800" : "border-neutral-200 bg-neutral-50 text-neutral-600"}`}>{config.numberVerified ? "Phone service verified" : providerFailed ? "Phone service unavailable" : line ? "Saved · phone verification pending" : "Not assigned"}</span></div><p className="mt-2 text-xs leading-5 text-neutral-500">{config.numberVerified ? (serverDirectReady ? "The assigned number is verified against TWIGA’s shared TWIGA phone service provider workspace." : "The assigned number was verified directly against TWIGA phone service on " + fmtDate(config.providerVerificationAt || undefined) + ". The shared TWIGA TWIGA phone service connection must be available before this dashboard can place outbound test calls or publish voice changes.") : providerFailed ? "The provider number could not be verified against TWIGA’s shared TWIGA phone service workspace. Live calls remain safely paused until the connection is corrected." : line ? "This number is saved against your TWIGA business, but provider verification is still pending." : "TWIGA has not assigned an AI phone number to this business yet. The platform administrator allocates numbers from the shared TWIGA phone service pool."} Your personal callback number is entered separately when scheduling an authorised call.</p></div>
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5 md:col-span-2"><p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Assigned TWIGA AI phone number</p><div className="mt-2 flex flex-wrap items-center gap-3"><p className="text-3xl font-bold tracking-tight text-neutral-950">{displayedPhoneNumber || "No AI line assigned"}</p>{displayedPhoneNumber && <button onClick={() => void navigator.clipboard?.writeText(displayedPhoneNumber)} className="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700">Copy number</button>}{displayedPhoneNumber && <a href={`tel:${displayedPhoneNumber}`} className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-700">Call AI receptionist</a>}<span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${config.numberVerified ? "border-emerald-200 bg-emerald-50 text-emerald-800" : providerFailed ? "border-red-200 bg-red-50 text-red-800" : line ? "border-amber-200 bg-amber-50 text-amber-800" : "border-neutral-200 bg-neutral-50 text-neutral-600"}`}>{config.numberVerified ? "Phone service verified" : providerFailed ? "Phone service unavailable" : line ? "Saved · phone verification pending" : "Not assigned"}</span></div><p className="mt-2 text-xs leading-5 text-neutral-500">{config.numberVerified ? (serverDirectReady ? "The assigned number is verified against TWIGA’s shared TWIGA phone service provider workspace." : "The assigned number was verified directly against TWIGA phone service on " + fmtDate(config.providerVerificationAt || undefined) + ". The shared TWIGA phone connection must be available before this dashboard can place outbound test calls or publish voice changes.") : providerFailed ? "The provider number could not be verified against TWIGA’s shared TWIGA phone service workspace. Live calls remain safely paused until the connection is corrected." : line ? "This number is saved against your TWIGA business, but provider verification is still pending." : "TWIGA has not assigned an AI phone number to this business yet. The platform administrator allocates numbers from the shared TWIGA phone service pool."} Your personal callback number is entered separately when scheduling an authorised call.</p></div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Inbound calls</p><span className={`mt-2 inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold ${statusClass(config.inboundVerified ? "active" : "pending")}`}>{inboundStatus}</span><p className="mt-2 text-xs text-neutral-500">{line?.inbound_enabled ? "Inbound enabled" : "Inbound disabled"}. A real incoming call is still required to verify pickup end-to-end.</p></div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Outbound calls</p><span className={`mt-2 inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold ${statusClass(outboundStatus)}`}>{outboundStatus}</span><p className="mt-2 text-xs text-neutral-500">Current voice: {settings.inbound_voice || config.agent?.voice || "Not published"} · {settings.inbound_model_id || config.agent?.model || "No model"}</p></div>
     </section>
