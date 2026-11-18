@@ -87,6 +87,13 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const displayedPhoneNumber = String(config.providerNumber || config.number?.phone_number || config.number?.number_e164 || config.number?.phoneNumber || config.number?.number || line?.line_number || "");
   const providerFailed = config.keyConfigured === false || line?.inbound_status === "failed" || line?.outbound_status === "failed";
   const canPlaceLiveTest = config.keyConfigured === true && config.numberVerified === true && !!config.agent?.id;
+  const canPublishVoice = canPlaceLiveTest;
+  const voiceReadinessIssues = [
+    config.keyConfigured !== true ? "TWIGA's shared SautiKit account is not connected or verified." : "",
+    config.numberVerified !== true ? "The assigned SautiKit phone number is not yet verified against that account." : "",
+    !config.agent?.id ? "No SautiKit receptionist agent is linked to this business line." : "",
+  ].filter(Boolean);
+  const voiceReadinessMessage = voiceReadinessIssues.join(" ");
   const inboundStatus = config.inboundVerified ? "verified" : config.inboundBound ? "agent bound · live test pending" : line?.inbound_status || "not configured";
   const outboundStatus = line?.outbound_status || (line?.outbound_enabled ? "enabled" : "disabled");
 
@@ -109,7 +116,8 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   };
 
   const publishVoice = async () => {
-    if (!supabase || !businessId) return;
+    if (!supabase || !businessId) { setError("Sign in and select a business before publishing."); return; }
+    if (!canPublishVoice) { setMessage(""); setError(voiceReadinessMessage || "Refresh the phone status and try again."); return; }
     setSavingVoice(true); setError(""); setMessage("Publishing the selected SautiKit voice and call instructions…");
     try {
       const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "publish_agent", businessId, model: voiceModel, voice: voiceId, corePrompt, greeting, inboundPrompt, outboundPrompt } });
@@ -213,8 +221,9 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
           <label className="block text-sm font-medium text-neutral-800">What the receptionist says first<textarea value={greeting} onChange={e => setGreeting(e.target.value)} rows={2} maxLength={4000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
           <label className="block text-sm font-medium text-neutral-800">Inbound call instructions<textarea value={inboundPrompt} onChange={e => setInboundPrompt(e.target.value)} rows={4} maxLength={5000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
           <label className="block text-sm font-medium text-neutral-800">Outbound call instructions<textarea value={outboundPrompt} onChange={e => setOutboundPrompt(e.target.value)} rows={4} maxLength={5000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
-          <p className="rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-800">{config.keyConfigured && line && config.agent ? "The selected voice can be published to your SautiKit receptionist." : "Your preference is saved. Publishing is available when the SautiKit account, number and receptionist agent are connected."}</p>
-          <button onClick={() => void publishVoice()} disabled={savingVoice || !voiceModel || !voiceId || !config.keyConfigured || !config.numberVerified || !config.agent?.id} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-wait disabled:opacity-60">{savingVoice ? "Publishing…" : "Save receptionist voice & instructions"}</button>
+          <p className="rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-800">{canPublishVoice ? "The selected voice can be published to your SautiKit receptionist." : "You can save your voice choice now. Publishing will activate once the shared provider account, assigned number and receptionist agent are verified."}</p>
+          <button type="button" onClick={() => void publishVoice()} disabled={savingVoice || !voiceModel || !voiceId} title={canPublishVoice ? "Publish this voice and its instructions" : voiceReadinessMessage} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-wait disabled:opacity-60">{savingVoice ? "Publishing…" : "Save receptionist voice & instructions"}</button>
+          {!canPublishVoice && <p className="text-xs leading-5 text-amber-800">{voiceReadinessMessage} Use Refresh above after the platform connection is completed.</p>}
         </div>
       </div>}
     </section>
@@ -229,8 +238,8 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
         </div>
         <label className="mt-4 block text-sm font-medium text-neutral-800">Phone number to call<input value={testPhone} onChange={e => setTestPhone(e.target.value)} placeholder="0793832286" inputMode="tel" className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-3 text-base text-neutral-950 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100" /></label>
         <p className="mt-2 text-xs text-neutral-500">By pressing the test button, you confirm you can receive a call at this number. Test calls may incur provider charges.</p>
-        <button onClick={() => void testVoice()} disabled={testingCall || !canPlaceLiveTest} className="mt-4 w-full rounded-xl bg-orange-500 px-5 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 active:scale-[.99] disabled:cursor-not-allowed disabled:opacity-50">{testingCall ? "Calling you…" : canPlaceLiveTest ? "Call me and test AI" : "Live call setup pending"}</button>
-        {!canPlaceLiveTest && <p className="mt-2 text-xs leading-5 text-neutral-500">Your existing number is saved. TWIGA must finish its one-time central SautiKit server connection before this button can place a real call. No API key or setup is required from business customers.</p>}
+        <button type="button" onClick={() => void testVoice()} disabled={testingCall} title={canPlaceLiveTest ? "Place a live test call" : voiceReadinessMessage} className="mt-4 w-full rounded-xl bg-orange-500 px-5 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 active:scale-[.99] disabled:cursor-wait disabled:opacity-60">{testingCall ? "Calling you…" : canPlaceLiveTest ? "Call me and test AI" : "Check live-call setup"}</button>
+        {!canPlaceLiveTest && <p className="mt-2 text-xs leading-5 text-neutral-500">{voiceReadinessMessage} Live calling remains safely blocked until these checks pass. No API key or setup is required from business customers.</p>}
       </div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5"><h2 className="text-lg font-semibold text-neutral-950">Inbound routing check</h2><p className="mt-2 text-sm leading-6 text-neutral-600">{config.inboundVerified ? "The inbound provider route is verified." : config.inboundBound ? "The SautiKit agent is bound to this line, but a real incoming call still needs to be tested." : "No verified inbound agent route is reported for this line yet."}</p><div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Inbound route</p><p className="mt-1 text-sm font-semibold text-neutral-900">{config.inboundBound ? "Agent bound" : "Not bound"}</p></div><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Live verification</p><p className="mt-1 text-sm font-semibold text-neutral-900">{config.inboundVerified ? "Verified" : "Pending"}</p></div></div></div>
     </section>
