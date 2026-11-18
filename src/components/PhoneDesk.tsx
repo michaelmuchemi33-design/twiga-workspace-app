@@ -165,7 +165,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
       }
       setMessage(result?.message || `The ${voiceId === "Man" ? "male" : "female"} receptionist voice and instructions were saved.`);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "Could not create or publish the receptionist."); }
+    } catch (e) { await load(); setError(e instanceof Error ? e.message : "Could not create or publish the receptionist."); }
     finally { setSavingVoice(false); }
   };
 
@@ -279,7 +279,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
           <label className="block text-sm font-medium text-neutral-800">Inbound call instructions<textarea value={inboundPrompt} onChange={e => setInboundPrompt(e.target.value)} rows={4} maxLength={5000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
           <label className="block text-sm font-medium text-neutral-800">Outbound call instructions<textarea value={outboundPrompt} onChange={e => setOutboundPrompt(e.target.value)} rows={4} maxLength={5000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
           <p className="rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-800">{canPublishVoice ? "The selected voice can be published to your SautiKit receptionist." : voiceReadinessMessage || "You can save your voice choice now. Publishing is paused until the server connection is ready."}</p>
-          <button type="button" onClick={() => void publishVoice()} disabled={savingVoice || !voiceModel || !voiceId} title={canPublishVoice ? "Publish this voice and its instructions" : voiceReadinessMessage} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-wait disabled:opacity-60">{savingVoice ? "Publishing…" : "Save receptionist voice & instructions"}</button>
+          <button type="button" onClick={() => void publishVoice()} disabled={savingVoice || !voiceModel || !voiceId || !canPublishVoice} title={canPublishVoice ? "Publish this voice and its instructions" : voiceReadinessMessage} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-wait disabled:opacity-60">{savingVoice ? "Publishing…" : "Save receptionist voice & instructions"}</button>
           {!canPublishVoice && <p className="text-xs leading-5 text-amber-800">{voiceReadinessMessage}</p>}
         </div>
       </div>}
