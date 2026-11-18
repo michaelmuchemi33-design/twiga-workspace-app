@@ -179,10 +179,10 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
 
   const googleOAuthReady = !!oauthConfig.serverConfigured;
   const sautikitProviderConnected = sautikitConfig.providerConnected === true;
-  const sautikitProxyReady = sautikitConfig.serverProxyReady === true || sautikitConfig.keyConfigured === true;
+  const sautikitDirectReady = sautikitConfig.serverDirectReady === true || sautikitConfig.serverProxyReady === true || sautikitConfig.keyConfigured === true;
   const sautikitBadge = sautikitProviderConnected
-    ? (sautikitProxyReady ? "Direct · ready" : "Linked · key needed")
-    : (sautikitProxyReady ? "Checking workspace" : "Connect workspace");
+    ? (sautikitDirectReady ? "Direct · ready" : "Linked · key needed")
+    : (sautikitDirectReady ? "Checking workspace" : "Connect workspace");
   return <div className="mx-auto max-w-5xl space-y-5">
     <header className="rounded-2xl border border-neutral-200 bg-white p-6">
       <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Workspace integrations</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Connections & permissions</h1>
