@@ -257,7 +257,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
                 aria-pressed={theme === "dark"}
                 className="inline-flex h-10 items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
               >
-                <span aria-hidden="true">{theme === "light" ? "☾" : "☀"}</span>
+                {theme === "light" ? <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M20.5 15.5A8.5 8.5 0 0 1 8.5 3.5 8.5 8.5 0 1 0 20.5 15.5Z"/></svg> : <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>}
                 <span>{theme === "light" ? "Dark mode" : "Light mode"}</span>
               </button>
               <InstallApp />{demo && <DemoInterest />}{!demo && onSignOut && <button onClick={onSignOut} className="h-10 rounded-xl border border-neutral-200 px-4 text-sm font-semibold text-neutral-600 hover:bg-neutral-50">Sign out</button>}
@@ -339,7 +339,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
                 </div>
                 <div className="mt-3 border-t border-neutral-200 pt-3 dark:border-neutral-700">
                   <button type="button" onClick={() => setTheme((current) => current === "light" ? "dark" : "light")} aria-pressed={theme === "dark"} className="flex w-full items-center justify-between rounded-xl bg-neutral-100 px-4 py-3 text-sm font-semibold text-neutral-800 dark:bg-neutral-800 dark:text-neutral-100">
-                    <span>{theme === "light" ? "☾  Dark mode" : "☀  Light mode"}</span>
+                    <span className="flex items-center gap-2">{theme === "light" ? <><svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M20.5 15.5A8.5 8.5 0 0 1 8.5 3.5 8.5 8.5 0 1 0 20.5 15.5Z"/></svg>Dark mode</> : <><svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>Light mode</>}</span>
                     <span className={"rounded-full px-3 py-1 " + (theme === "dark" ? "bg-orange-500 text-white" : "bg-neutral-300 text-neutral-800")}>{theme === "dark" ? "ON" : "OFF"}</span>
                   </button>
                 </div>
