@@ -59,6 +59,12 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   const [palplussDefaultChannel, setPalplussDefaultChannel] = useState(true);
   const [palplussStkPhone, setPalplussStkPhone] = useState("");
   const [palplussStkAmount, setPalplussStkAmount] = useState("");
+  const [aisensyConfig, setAisensyConfig] = useState<any>({ connected: false, status: "not_connected", aiEnabled: false });
+  const [aisensyCampaignName, setAisensyCampaignName] = useState("");
+  const [aisensyPhoneNumber, setAisensyPhoneNumber] = useState("");
+  const [aisensySystemPrompt, setAisensySystemPrompt] = useState("");
+  const [aisensyBusy, setAisensyBusy] = useState(false);
+  const [aisensyMessage, setAisensyMessage] = useState("");
 
   const action = useCallback(async (name: string, extra: Record<string, unknown> = {}) => {
     if (!supabase || !businessId) throw new Error("Choose a business workspace first.");
@@ -78,6 +84,14 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     return data;
   }, [businessId]);
 
+  const aisensyAction = useCallback(async (name: string, extra: Record<string, unknown> = {}) => {
+    if (!supabase || !businessId) throw new Error("Choose a business workspace first.");
+    const { data, error } = await supabase.functions.invoke("twiga-aisensy", { body: { action: name, businessId, ...extra } });
+    if (error) throw new Error(await edgeFunctionError(error, "AiSensy request failed."));
+    if (data?.error) throw new Error(String(data.error));
+    return data;
+  }, [businessId]);
+
   const refresh = useCallback(async () => {
     if (!businessId || !supabase) return;
     try {
@@ -88,10 +102,11 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
 
   const refreshProviders = useCallback(async () => {
     if (!businessId || !supabase) return;
-    const [sautikit, xai, palpluss] = await Promise.allSettled([
+    const [sautikit, xai, palpluss, aisensy] = await Promise.allSettled([
       supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } }),
       supabase.functions.invoke("twiga-platform-secrets", { body: { action: "get_config" } }),
       supabase.functions.invoke("twiga-palpluss", { body: { action: "get_config", businessId } }),
+      supabase.functions.invoke("twiga-aisensy", { body: { action: "get_config", businessId } }),
     ]);
     if (sautikit.status === "fulfilled" && !sautikit.value.error && !sautikit.value.data?.error) {
       const cfg = sautikit.value.data || {};
@@ -110,6 +125,16 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     }
     if (xai.status === "fulfilled" && !xai.value.error && !xai.value.data?.error) setXaiConfig(xai.value.data || {});
     else setXaiConfig({ isAdmin: false });
+
+    if (aisensy.status === "fulfilled" && !aisensy.value.error && !aisensy.value.data?.error) {
+      const cfg = aisensy.value.data || {};
+      setAisensyConfig(cfg);
+      setAisensyCampaignName(String(cfg.campaignName || ""));
+      setAisensyPhoneNumber(String(cfg.phoneNumber || ""));
+      setAisensySystemPrompt(String(cfg.systemPrompt || ""));
+    } else {
+      setAisensyConfig({ connected: false, status: "not_connected", aiEnabled: false, error: aisensy.status === "rejected" ? String(aisensy.reason) : await edgeFunctionError(aisensy.value.error, "AiSensy status unavailable.") });
+    }
 
     if (palpluss.status === "fulfilled" && !palpluss.value.error && !palpluss.value.data?.error) {
       const cfg = palpluss.value.data || {};
@@ -215,6 +240,30 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       setGrokTestMessage(data?.reply || "Grok responded successfully.");
     } catch (e) { setGrokTestMessage(e instanceof Error ? e.message : "Grok test failed."); }
     finally { setProviderBusy(false); }
+  };
+
+  const saveAisensyBusiness = async () => {
+    if (!aisensyCampaignName.trim()) { setAisensyMessage("Enter the exact live API campaign name from AiSensy."); return; }
+    setAisensyBusy(true); setAisensyMessage("Saving this business's AiSensy campaign settings…");
+    try {
+      const result = await aisensyAction("save_business", {
+        campaignName: aisensyCampaignName.trim(), phoneNumber: aisensyPhoneNumber.trim(), systemPrompt: aisensySystemPrompt.trim(),
+      });
+      setAisensyConfig((current: any) => ({ ...current, ...result }));
+      setAisensyMessage(result.message || "AiSensy campaign settings saved.");
+    } catch (e) { setAisensyMessage(e instanceof Error ? e.message : "Could not save AiSensy settings."); }
+    finally { setAisensyBusy(false); }
+  };
+
+  const disconnectAisensy = async () => {
+    if (!window.confirm("Disconnect AiSensy campaign settings for this business? No messages will be sent.")) return;
+    setAisensyBusy(true);
+    try {
+      const result = await aisensyAction("disconnect");
+      setAisensyConfig((current: any) => ({ ...current, ...result }));
+      setAisensyMessage("AiSensy was disconnected for this business.");
+    } catch (e) { setAisensyMessage(e instanceof Error ? e.message : "Could not disconnect AiSensy."); }
+    finally { setAisensyBusy(false); }
   };
 
   const savePalplussPaylink = async () => {
@@ -334,6 +383,35 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
         {sautikitConfig.providerError && <p role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{sautikitConfig.providerError}</p>}
       </div>
     </section>
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">WhatsApp · business workspace</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">AiSensy campaigns</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-600">Connect this business to its own live AiSensy API campaign. TWIGA's shared provider credentials are managed centrally; this workspace stores only its campaign name, public number and receptionist instructions.</p></div>
+        <span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${aisensyConfig.connected ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{aisensyConfig.connected ? "Campaign configured" : "Not configured"}</span>
+      </div>
+      <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-xs leading-5 text-neutral-700">
+        <strong>Provider status:</strong> Campaign API key {aisensyConfig.platform?.campaignKeyConfigured ? "saved by TWIGA" : "not configured"} · Project API {aisensyConfig.platform?.projectKeyConfigured ? "saved by TWIGA" : "not configured"}. Credentials are not visible to business users.
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="block text-xs font-semibold text-neutral-700">Exact AiSensy API campaign name
+          <input value={aisensyCampaignName} onChange={(e) => setAisensyCampaignName(e.target.value)} placeholder="Must match the live API campaign in AiSensy" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal" />
+        </label>
+        <label className="block text-xs font-semibold text-neutral-700">WhatsApp business number
+          <input value={aisensyPhoneNumber} onChange={(e) => setAisensyPhoneNumber(e.target.value)} placeholder="+2547XXXXXXXX" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal" />
+        </label>
+      </div>
+      <label className="mt-3 block text-xs font-semibold text-neutral-700">AI receptionist WhatsApp instructions
+        <textarea value={aisensySystemPrompt} onChange={(e) => setAisensySystemPrompt(e.target.value)} rows={3} placeholder="How this business should answer WhatsApp enquiries once two-way AI replies are verified…" className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3 py-3 text-sm font-normal" />
+      </label>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button onClick={() => void saveAisensyBusiness()} disabled={aisensyBusy || !aisensyCampaignName.trim()} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{aisensyBusy ? "Saving…" : "Save AiSensy settings"}</button>
+        {aisensyConfig.connected && <button onClick={() => void disconnectAisensy()} disabled={aisensyBusy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700">Disconnect</button>}
+        <a href="https://app.aisensy.com/" target="_blank" rel="noreferrer" className="px-2 py-2.5 text-sm font-semibold text-orange-700 underline">Open AiSensy ↗</a>
+      </div>
+      <div className="mt-3 rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">WhatsApp AI replies are <strong>off</strong> until AiSensy's Project API and inbound webhook flow are verified. Approved template campaigns can be sent only to contacts who have agreed to receive them. API acceptance is not proof of delivery.</div>
+      {aisensyConfig.error && <p className="mt-3 text-xs text-amber-800">{aisensyConfig.error}</p>}
+      {aisensyMessage && <p role="status" className="mt-3 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700">{aisensyMessage}</p>}
+    </section>
+
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Payments · business workspace</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">PalPluss · M-Pesa & payment tools</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Connect this business's PalPluss account, manage its Paylink and collection channels, check transactions and send a customer payment prompt when authorised.</p></div>
