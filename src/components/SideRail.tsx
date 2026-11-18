@@ -14,6 +14,7 @@ import {
   IconFile,
   IconLogout,
   IconSparkle,
+  IconPhone,
 } from "@/components/Icons";
 
 interface TabDef {
@@ -29,6 +30,7 @@ const groups: { title: string; items: TabDef[] }[] = [
       { id: "dashboard", label: "Home", icon: IconHome },
       { id: "setup", label: "Set up with AI", icon: IconSparkle },
       { id: "phone", label: "Phone & AI", icon: IconChat },
+      { id: "outreach", label: "Outreach", icon: IconPhone },
       { id: "connections", label: "Connections", icon: IconUsers },
       { id: "organizer", label: "Organize", icon: IconSwap },
       { id: "functions", label: "Functions", icon: IconSparkle },
