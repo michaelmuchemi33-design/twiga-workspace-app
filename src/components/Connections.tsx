@@ -42,6 +42,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   const [sautikitConfig, setSautikitConfig] = useState<any>({});
   const [xaiConfig, setXaiConfig] = useState<any>({});
   const [sautikitKey, setSautikitKey] = useState("");
+  const [selectedSautikitNumber, setSelectedSautikitNumber] = useState("");
   const [xaiKey, setXaiKey] = useState("");
   const [providerBusy, setProviderBusy] = useState(false);
   const [providerMessage, setProviderMessage] = useState("");
@@ -69,7 +70,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } }),
       supabase.functions.invoke("twiga-platform-secrets", { body: { action: "get_config" } }),
     ]);
-    if (sautikit.status === "fulfilled" && !sautikit.value.error && !sautikit.value.data?.error) setSautikitConfig(sautikit.value.data || {});
+    if (sautikit.status === "fulfilled" && !sautikit.value.error && !sautikit.value.data?.error) { const cfg = sautikit.value.data || {}; setSautikitConfig(cfg); setSelectedSautikitNumber(cfg.phoneLine?.provider_reference || cfg.availableNumbers?.[0]?.id || ""); }
     else setSautikitConfig({ isPlatformAdmin: false, providerError: sautikit.status === "rejected" ? String(sautikit.reason) : await edgeFunctionError(sautikit.value.error, "SautiKit status could not be loaded.") });
     if (xai.status === "fulfilled" && !xai.value.error && !xai.value.data?.error) setXaiConfig(xai.value.data || {});
     else setXaiConfig({ isAdmin: false });
@@ -146,6 +147,21 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     finally { setProviderBusy(false); }
   };
 
+  const assignSautikitNumber = async () => {
+    if (!supabase || !businessId || !selectedSautikitNumber) { setProviderMessage("Choose a SautiKit number first."); return; }
+    setProviderBusy(true); setProviderMessage("Assigning the selected number to this business…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "assign_business_number", businessId, numberId: selectedSautikitNumber } });
+      if (error) throw error;
+      if (data?.error) throw new Error(String(data.error));
+      setProviderMessage(data?.message || "SautiKit number assigned to this business.");
+      await refreshProviders();
+    } catch (e: any) {
+      const status = Number(e?.context?.status || e?.status || 0);
+      setProviderMessage((status ? "Number assignment failed (HTTP " + status + "). " : "") + await edgeFunctionError(e, "Could not assign the SautiKit number."));
+    } finally { setProviderBusy(false); }
+  };
+
   const testGrok = async () => {
     if (!supabase) return;
     setProviderBusy(true); setGrokTestMessage("Testing the live Grok setup assistant…");
@@ -218,6 +234,14 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
         <p className="mt-2 text-xs leading-5 text-neutral-500">Create the key inside the SautiKit workspace that owns this business’s phone number: Settings → API keys. Use a workspace key, not a personal/KYC key or Composio key. If the saved phone number belongs to a different SautiKit workspace, TWIGA will report that mismatch and keep calling disabled until the correct number is assigned.</p>
         <a href="https://app.sautikit.com/developers/api-keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Open SautiKit API keys ↗</a>
         <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => void saveProviderKey("sautikit")} disabled={providerBusy || !businessId || !sautikitKey.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{providerBusy ? "Checking…" : "Validate & connect this business"}</button><button onClick={() => void refreshProviders()} disabled={providerBusy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">Refresh status</button></div>
+        {Array.isArray(sautikitConfig.availableNumbers) && sautikitConfig.availableNumbers.length > 0 && <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3">
+          <label className="block text-sm font-medium text-neutral-800">Phone number in this SautiKit workspace
+            <select value={selectedSautikitNumber} onChange={e => setSelectedSautikitNumber(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm">
+              {sautikitConfig.availableNumbers.map((number: any) => <option key={number.id} value={number.id}>{number.e164 || number.id} · {number.status}</option>)}
+            </select>
+          </label>
+          <button onClick={() => void assignSautikitNumber()} disabled={providerBusy || !selectedSautikitNumber} className="mt-3 rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">Assign selected number to this business</button>
+        </div>}
         {sautikitConfig.providerError && <p role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{sautikitConfig.providerError}</p>}
       </div>
     </section>
