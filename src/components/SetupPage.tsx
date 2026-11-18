@@ -178,14 +178,14 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
         onBusinessCreated(targetBusinessId);
       }
 
-      let phoneSummary = "The business profile and operating instructions are saved. TWIGA manages the shared SautiKit provider connection; each business still needs its own assigned phone number and dedicated receptionist agent.";
+      let phoneSummary = "The business profile and operating instructions are saved. TWIGA manages the shared phone connection; each business still needs its own assigned phone number and dedicated receptionist agent.";
       try {
         const { data: config, error: configError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId: targetBusinessId } });
         if (configError) throw new Error(await edgeFunctionError(configError));
         if (config?.phoneLine?.line_number) {
           phoneSummary = "TWIGA line on this workspace: " + config.phoneLine.line_number + ".";
           if (!config.keyConfigured) {
-            phoneSummary += " The line is recorded, but TWIGA's shared SautiKit connection is not available yet. The platform administrator must connect it; business customers do not enter provider API keys.";
+            phoneSummary += " The line is recorded, but TWIGA's shared phone connection is not available yet. The platform administrator must connect it; business customers do not enter provider API keys.";
           } else if (config.models?.length) {
             const model = config.models.find((m: any) => m.id === (profile.sautikit_model_id || "sautikit-flash")) || config.models[0];
             const voice = (model.voices || []).includes(profile.sautikit_voice_id || "Woman") ? (profile.sautikit_voice_id || "Woman") : (model.voices || [])[0];
@@ -198,18 +198,18 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
               if (provisionError) throw new Error(await edgeFunctionError(provisionError));
               if (provision?.error) throw new Error(String(provision.error));
               if (action === "create_agent" && provision?.bound !== true) {
-                throw new Error(String(provision?.message || "SautiKit created the agent but did not confirm the phone-number binding. Do not create another agent; use Retry inbound binding."));
+                throw new Error(String(provision?.message || "The phone service created the receptionist but did not confirm the phone-number binding. Do not create another agent; use Retry inbound binding."));
               }
               if (action === "publish_agent" && provision?.published !== true) {
-                throw new Error(String(provision?.message || "SautiKit did not confirm that the existing receptionist was published."));
+                throw new Error(String(provision?.message || "The phone service did not confirm that the existing receptionist was published."));
               }
-              phoneSummary += " SautiKit confirmed the dedicated receptionist agent and its existing number binding. The current inbound route was preserved; continue using your working incoming-call test and check the receptionist's catalogue lookup before going live.";
+              phoneSummary += " TWIGA confirmed the dedicated receptionist agent and its existing number binding. Your current inbound route was preserved; test a real incoming call and confirm catalogue lookup before going live.";
             }
           }
         } else if (config?.keyConfigured) {
           phoneSummary = Array.isArray(config.availableNumbers) && config.availableNumbers.length > 0
-            ? "TWIGA's shared SautiKit provider is connected and this workspace has " + config.availableNumbers.length + " available number(s). A TWIGA platform administrator must assign a dedicated number to this business before creating its receptionist."
-            : "TWIGA's shared SautiKit provider is connected, but this business has no assigned phone number. A TWIGA platform administrator must allocate a number before the AI receptionist can be created.";
+            ? "TWIGA's phone connection is ready and this workspace has " + config.availableNumbers.length + " available number(s). A TWIGA platform administrator must assign a dedicated number to this business before creating its receptionist."
+            : "TWIGA's phone connection is ready, but this business has no assigned phone number. A TWIGA platform administrator must allocate a number before the AI receptionist can be created.";
         }
       } catch (phoneError) {
         phoneSummary += " Phone activation needs TWIGA attention: " + (phoneError instanceof Error ? phoneError.message : "provider check failed") + ".";
@@ -231,9 +231,9 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
 
   return <div className="mx-auto max-w-6xl space-y-5">
     <header className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
-      <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-500">TWIGA · AI business setup</p>
-      <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-950">{isEditing ? "Configure your business with AI" : "Build your business workspace"}</h1>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-500">One assistant for your business profile, products, services, operating rules, staff tasks, follow-up playbooks and AI receptionist. Connect each business to its own services. This assistant cannot change billing, subscriptions, top-ups or purchases.</p>
+      <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-500">TWIGA · AI Desk</p>
+      <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-950">{isEditing ? "Manage your business with AI" : "Start with your AI business assistant"}</h1>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-500">Your AI assistant builds your business profile and operating knowledge. Phone conversations can use the approved catalogue and booking rules, while customer orders appear in POS for staff to review. Connect each business to its own services. This assistant cannot change billing, subscriptions, top-ups or purchases.</p>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <label className="block text-sm font-medium text-neutral-700">Business owner name<input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} autoComplete="name" placeholder="Your full name" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
         <label className="block text-sm font-medium text-neutral-700">Business contact email<input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} autoComplete="email" placeholder="you@business.co.ke" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
@@ -242,7 +242,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
 
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
       <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4"><div><h2 className="font-semibold text-neutral-950">AI setup assistant</h2><p className="text-xs text-neutral-500">Ask for changes in plain language · English and Kiswahili</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{loadingProfile ? "Loading profile…" : thinking ? "Thinking…" : ready ? "Ready to save" : "Gathering details"}</span></div>
+        <div className="flex items-center justify-between border-b border-neutral-100 px-5 py-4"><div><h2 className="font-semibold text-neutral-950">Your AI business assistant</h2><p className="text-xs text-neutral-500">Ask for changes in plain language · English and Kiswahili</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{loadingProfile ? "Loading profile…" : thinking ? "Thinking…" : ready ? "Ready to save" : "Gathering details"}</span></div>
         <div ref={scrollRef} className="max-h-[58vh] min-h-[360px] space-y-4 overflow-y-auto p-5">
           {messages.map((m) => <div key={m.id} className={m.role === "user" ? "ml-auto max-w-[88%] rounded-2xl rounded-br-md bg-neutral-950 px-4 py-3 text-sm leading-6 text-white" : "mr-auto max-w-[92%] rounded-2xl rounded-bl-md bg-neutral-100 px-4 py-3 text-sm leading-6 text-neutral-800"}>{m.text}</div>)}
           {thinking && <div className="mr-auto rounded-2xl bg-neutral-100 px-4 py-3 text-sm text-neutral-500">Checking your business details and preparing the next step…</div>}
