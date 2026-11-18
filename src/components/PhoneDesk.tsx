@@ -16,6 +16,21 @@ function defaultDateTime() { const d = new Date(Date.now() + 10 * 60_000); retur
 function fmtDate(value?: string) { if (!value) return "—"; const d = new Date(value); return Number.isNaN(d.getTime()) ? value : d.toLocaleString(); }
 function statusClass(status?: string) { return status === "active" || status === "completed" || status === "submitted" ? "border-orange-200 bg-orange-50 text-orange-800" : "border-neutral-200 bg-neutral-50 text-neutral-700"; }
 
+async function functionErrorMessage(error: unknown, fallback: string) {
+  const issue = error as { message?: string; context?: Response } | null;
+  const response = issue?.context;
+  if (response && typeof response.clone === "function") {
+    try {
+      const payload = await response.clone().json();
+      if (typeof payload?.error === "string" && payload.error.trim()) return payload.error;
+      if (typeof payload?.message === "string" && payload.message.trim()) return payload.message;
+    } catch {
+      // Use Supabase's status message when the function response is not JSON.
+    }
+  }
+  return issue?.message || fallback;
+}
+
 export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: { businessId: string; onOpenProfile?: () => void; demo?: boolean }) {
   const [config, setConfig] = useState<SautiKitConfig>({});
   const [scheduledCalls, setScheduledCalls] = useState<ScheduledCall[]>([]);
@@ -53,7 +68,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     setLoading(true); setError("");
     try {
       const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } });
-      if (invokeError) throw new Error(invokeError.message);
+      if (invokeError) throw new Error(await functionErrorMessage(invokeError, "The TWIGA phone service returned an error."));
       if (data?.error) throw new Error(String(data.error));
       const next = (data || {}) as SautiKitConfig;
       setConfig(next);
@@ -119,7 +134,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
       const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", {
         body: { action: "save_voice_preference", businessId, model: voiceModel, voice: voiceId },
       });
-      if (invokeError) throw new Error(invokeError.message);
+      if (invokeError) throw new Error(await functionErrorMessage(invokeError, "The TWIGA phone service returned an error."));
       if (data?.error) throw new Error(String(data.error));
       setVoiceStep(2);
       setMessage(data?.message || "Voice choice saved. Continue setting up your receptionist.");
@@ -136,7 +151,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     setSavingVoice(true); setError(""); setMessage("Publishing the selected SautiKit voice and call instructions…");
     try {
       const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "publish_agent", businessId, model: voiceModel, voice: voiceId, corePrompt, greeting, inboundPrompt, outboundPrompt } });
-      if (invokeError) throw new Error(invokeError.message);
+      if (invokeError) throw new Error(await functionErrorMessage(invokeError, "The TWIGA phone service returned an error."));
       if (data?.error) throw new Error(String(data.error));
       setMessage(data?.message || `Published ${voiceId} on revision ${data?.revision || "latest"}.`);
       await load();
@@ -151,7 +166,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     setTestingCall(true); setError(""); setMessage("Submitting your voice test call…");
     try {
       const { data, error: invokeError } = await supabase!.functions.invoke("twiga-sautikit", { body: { action: "send_call", businessId, to, voice: voiceId, model: voiceModel, reason: "TWIGA AI receptionist voice test requested by the business owner", authorised: true, consent: true } });
-      if (invokeError) throw new Error(invokeError.message);
+      if (invokeError) throw new Error(await functionErrorMessage(invokeError, "The TWIGA phone service returned an error."));
       if (data?.error) throw new Error(String(data.error));
       setMessage(data?.message || `Your ${voiceId === "Man" ? "male" : "female"} voice test call has been submitted to ${to}.`);
       await load();
@@ -162,23 +177,40 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const scheduleCall = async () => {
     if (!supabase || !businessId) return;
     const phone = toE164(customerPhone);
-    if (!phone) { setError("Enter a valid customer phone number, e.g. +2547XXXXXXXX."); return; }
+    if (!phone) { setError("Enter a valid phone number, e.g. +2547XXXXXXXX."); return; }
     if (!callReason.trim()) { setError("Enter the reason for this call."); return; }
     if (!scheduledAt || Number.isNaN(new Date(scheduledAt).getTime())) { setError("Choose a valid date and time."); return; }
-    if (!callConsent) { setError("Confirm the customer requested or explicitly consented to this call."); return; }
+    if (!callConsent) { setError("Confirm that the person requested this callback or explicitly consented to it."); return; }
     if (windowStart >= windowEnd) { setError("The allowed calling window end must be later than its start."); return; }
     if ((triggerType === "missed_call" || onlyIfMissed) && !sourceCallId.trim()) { setError("Enter the source call record ID for the missed-call condition."); return; }
     if (onlyIfUnpaid && !orderId.trim()) { setError("Enter the order ID for the unpaid-order condition."); return; }
     setSavingSchedule(true); setError(""); setMessage("Saving the scheduled call…");
     try {
-      const { error: insertError } = await supabase.from("twiga_scheduled_calls").insert({
-        business_id: businessId, customer_name: customerName.trim(), phone_number: phone, reason: callReason.trim(),
-        scheduled_at: new Date(scheduledAt).toISOString(), timezone: "Africa/Nairobi", consent_status: "opted_in", trigger_type: triggerType,
-        trigger_conditions: { only_if_missed_call: onlyIfMissed, only_if_unpaid: onlyIfUnpaid, order_id: orderId.trim() || null },
-        source_call_id: sourceCallId.trim() || null, calling_window_start: windowStart, calling_window_end: windowEnd, max_attempts: 1, retry_interval_minutes: 30, status: "scheduled",
+      const { data, error: scheduleError } = await supabase.functions.invoke("twiga-scheduled-calls", {
+        body: {
+          action: "schedule",
+          businessId,
+          contacts: [{ name: customerName.trim(), phone }],
+          reason: callReason.trim(),
+          scheduledAt: new Date(scheduledAt).toISOString(),
+          authorised: true,
+          timezone: "Africa/Nairobi",
+          triggerType,
+          sourceCallId: sourceCallId.trim() || undefined,
+          orderId: orderId.trim() || undefined,
+          onlyIfMissed,
+          onlyIfUnpaid,
+          callingWindowStart: windowStart,
+          callingWindowEnd: windowEnd,
+          repeat: "none",
+          repeatCount: 1,
+          retryOnNoAnswer: true,
+        },
       });
-      if (insertError) throw new Error(insertError.message);
-      setMessage("Call scheduled. The Supabase worker checks due calls every minute and dispatches only when the SautiKit key and business line are ready.");
+      if (scheduleError) throw new Error(await functionErrorMessage(scheduleError, "The schedule service returned an error."));
+      if (data?.error) throw new Error(String(data.error));
+      if (!data?.success) throw new Error(data?.message || "The call was not added to the schedule queue.");
+      setMessage(data?.message || "Call saved to TWIGA schedule. It will dispatch at the selected time and retry once if there is no answer.");
       setCustomerName(""); setCustomerPhone(""); setCallReason(""); setCallConsent(false); setSourceCallId(""); setOrderId(""); setOnlyIfMissed(false); setOnlyIfUnpaid(false);
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Could not schedule the call."); }
