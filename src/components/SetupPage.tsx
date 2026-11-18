@@ -83,12 +83,16 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
     if (demo || !businessId || !supabase) { setBusinessFiles([]); setStorageUsedBytes(0); return; }
     const { data, error } = await supabase.auth.getSession();
     if (error || !data.session?.access_token) throw new Error("Sign in again to access business files.");
-    const response = await fetch(`${BUSINESS_FILES_API}/${encodeURIComponent(businessId)}`, { headers: { Authorization: `Bearer ${data.session.access_token}` } });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error || "Could not load business files.");
+    const response = await fetch(`${BUSINESS_FILES_API}/usage/${encodeURIComponent(businessId)}`, { headers: { Authorization: `Bearer ${data.session.access_token}` } });
+    if (!response.ok) { const result = await response.json().catch(() => ({})); throw new Error(result.error || "Could not load business storage usage."); }
+    const usage = await response.json();
+    const listResponse = await fetch(`${BUSINESS_FILES_API}/files/${encodeURIComponent(businessId)}`, { headers: { Authorization: `Bearer ${data.session.access_token}` } });
+    const result = await listResponse.json().catch(() => ({}));
+    if (!listResponse.ok) throw new Error(result.error || "Could not load business files.");
     setBusinessFiles(Array.isArray(result.files) ? result.files : []);
-    setStorageUsedBytes(Number(result.usedBytes || 0));
-    setStorageQuotaBytes(Number(result.quotaBytes || 500 * 1024 * 1024));
+    setStorageUsedBytes(Number(result.usedBytes ?? usage.usedBytes ?? 0));
+    setStorageQuotaBytes(Number(result.quotaBytes ?? usage.quotaBytes ?? 500 * 1024 * 1024));
+    return;
   }, [businessId, demo]);
 
   useEffect(() => {
@@ -180,7 +184,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
           const uploadFile = new File([file], file.name, { type: contentType });
           const form = new FormData();
           form.append("file", uploadFile, file.name);
-          const response = await fetch(`${BUSINESS_FILES_API}/${encodeURIComponent(businessId)}`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form });
+          const response = await fetch(`${BUSINESS_FILES_API}/files/${encodeURIComponent(businessId)}`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form });
           const result = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(result.error || ("Could not upload " + file.name + "."));
           const readable = ["txt", "csv", "md", "json"].includes(extension) || ["text/plain", "text/csv"].includes(contentType);
@@ -238,7 +242,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
       if (!token) throw new Error("Sign in again to download this file.");
-      const response = await fetch(`${BUSINESS_FILES_API}/${encodeURIComponent(businessId)}/${encodeURIComponent(file.file_id)}`, { headers: { Authorization: `Bearer ${token}` } });
+      const response = await fetch(`${BUSINESS_FILES_API}/files/${encodeURIComponent(businessId)}/${encodeURIComponent(file.file_id)}`, { headers: { Authorization: `Bearer ${token}` } });
       if (!response.ok) throw new Error("Could not download this file.");
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement("a");
@@ -253,7 +257,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
       if (!token) throw new Error("Sign in again to manage business files.");
-      const response = await fetch(`${BUSINESS_FILES_API}/${encodeURIComponent(businessId)}/${encodeURIComponent(file.file_id)}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      const response = await fetch(`${BUSINESS_FILES_API}/files/${encodeURIComponent(businessId)}/${encodeURIComponent(file.file_id)}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || "Could not delete this file.");
       await refreshBusinessFiles();
