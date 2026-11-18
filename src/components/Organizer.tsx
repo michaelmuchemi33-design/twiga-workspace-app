@@ -43,7 +43,7 @@ const categories = ["operations", "sales", "customer_support", "bookings", "deli
 const label = (value: string) => value.replace(/_/g, " ").replace(/\b\w/g, (x) => x.toUpperCase());
 
 export default function Organizer() {
-  const { businessId } = useStore();
+  const { businessId, demoMode, tasks: sampleTasks } = useStore();
   const [items, setItems] = useState<Task[]>([]);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -57,6 +57,29 @@ export default function Organizer() {
   const [message, setMessage] = useState("");
 
   const load = useCallback(async () => {
+    if (demoMode) {
+      const createdAt = new Date().toISOString();
+      const taskItems: Task[] = sampleTasks.map((task, index) => ({
+        id: task.id, title: task.label, description: task.detail,
+        status: task.status === "done" ? "done" : "open", kind: "task",
+        category: index === 2 ? "stock" : index === 1 ? "customer_follow_up" : "operations",
+        priority: index === 1 ? "high" : "normal", due_at: null,
+        approval_required: false, approval_status: "not_required",
+        action_type: null, action_payload: null, source: "demo", created_at: createdAt,
+      }));
+      const approval: Task = {
+        id: "demo-callback-approval", title: "Review Brian's requested callback",
+        description: "Brian explicitly asked for a call after 2:00 PM about the service quote. Review the number and timing before approving.",
+        status: "open", kind: "followup", category: "customer_follow_up", priority: "high",
+        due_at: new Date(Date.now() + 45 * 60_000).toISOString(), approval_required: true,
+        approval_status: "pending", action_type: "schedule_followup",
+        action_payload: { customer_name: "Brian Otieno", phone: "+254712345602", reason: "Customer requested a quote follow-up", scheduled_at: new Date(Date.now() + 45 * 60_000).toISOString(), recipient_consent_confirmed: true },
+        source: "demo", created_at: createdAt,
+      };
+      setItems([approval, ...taskItems]);
+      setLoading(false);
+      return;
+    }
     if (!businessId || !supabase) { setItems([]); setLoading(false); return; }
     setLoading(true);
     const { data, error } = await supabase.from("twiga_tasks")
@@ -65,7 +88,7 @@ export default function Organizer() {
     if (error) setMessage(error.message);
     else setItems((data || []) as Task[]);
     setLoading(false);
-  }, [businessId]);
+  }, [businessId, demoMode, sampleTasks]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -77,7 +100,15 @@ export default function Organizer() {
   }, [businessId, load]);
 
   const add = async () => {
-    if (!businessId || !supabase || title.trim().length < 3) return;
+    if (title.trim().length < 3) return;
+    if (demoMode) {
+      const now = new Date().toISOString();
+      setItems((current) => [{ id: "demo-manual-" + Date.now(), title: title.trim(), description: description.trim() || null, status: "open", kind, category, priority, due_at: dueAt ? new Date(dueAt).toISOString() : null, approval_required: false, approval_status: "not_required", action_type: null, action_payload: null, source: "demo", created_at: now }, ...current]);
+      setTitle(""); setDescription(""); setDueAt(""); setKind("task"); setPriority("normal");
+      setMessage("Added to this temporary demo. Nothing was sent or saved to a real business.");
+      return;
+    }
+    if (!businessId || !supabase) return;
     setBusy(true); setMessage("");
     try {
       const { data: auth } = await supabase.auth.getUser();
@@ -108,6 +139,7 @@ export default function Organizer() {
   };
 
   const updateStatus = async (item: Task, status: string) => {
+    if (demoMode) { setItems((current) => current.map((x) => x.id === item.id ? { ...x, status } : x)); setMessage("Demo task updated locally."); return; }
     if (!supabase || !businessId) return;
     setBusy(true); setMessage("");
     const { error } = await supabase.from("twiga_tasks").update({
@@ -120,6 +152,7 @@ export default function Organizer() {
   };
 
   const remove = async (id: string) => {
+    if (demoMode) { setItems((current) => current.filter((x) => x.id !== id)); setMessage("Removed from this temporary demo."); return; }
     if (!supabase || !businessId) return;
     setBusy(true);
     const { error } = await supabase.from("twiga_tasks").delete().eq("id", id).eq("business_id", businessId);
@@ -128,6 +161,11 @@ export default function Organizer() {
   };
 
   const decideCallback = async (item: Task, decision: "approve_callback" | "reject_callback") => {
+    if (demoMode) {
+      setItems((current) => current.map((x) => x.id === item.id ? { ...x, approval_status: decision === "approve_callback" ? "approved" : "rejected", status: decision === "approve_callback" ? "open" : "cancelled" } : x));
+      setMessage(decision === "approve_callback" ? "Demo approval recorded locally. No real callback was queued or placed." : "Demo request rejected locally. No call was placed.");
+      return;
+    }
     if (!supabase || !businessId) return;
     setBusy(true); setMessage(decision === "approve_callback" ? "Approving and scheduling the consented callback…" : "Rejecting the proposed callback…");
     try {
