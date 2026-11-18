@@ -1,0 +1,14 @@
+name = "twiga-recording-gateway"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+keep_vars = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "twiga-db"
+database_id = "77f5a69f-a2e7-4de6-a164-8e98beaedfd8"
+
+[[r2_buckets]]
+binding = "TWIGA_CALLS"
+bucket_name = "twiga-call-recordings"
