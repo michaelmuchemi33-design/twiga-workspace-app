@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Model = { id: string; voices?: string[]; rate_per_minute_minor?: number; currency?: string };
-type SautiKitConfig = { keyConfigured?: boolean; isPlatformAdmin?: boolean; voicePreference?: { voice?: string; model?: string; gender?: string }; phoneLine?: any; number?: any; numberVerified?: boolean; providerNumber?: string; agent?: any; models?: Model[]; scripts?: { greeting?: string; inbound?: string; outbound?: string }; inboundBound?: boolean; inboundVerified?: boolean; providerError?: string };
+type SautiKitConfig = { keyConfigured?: boolean; serverProxyReady?: boolean; providerConnected?: boolean; providerVerificationAt?: string | null; providerConnectionSource?: string | null; isPlatformAdmin?: boolean; voicePreference?: { voice?: string; model?: string; gender?: string }; phoneLine?: any; number?: any; numberVerified?: boolean; providerNumber?: string; agent?: any; models?: Model[]; scripts?: { greeting?: string; inbound?: string; outbound?: string }; inboundBound?: boolean; inboundVerified?: boolean; providerError?: string };
 type ScheduledCall = { id: string; customer_name: string; phone_number: string; reason: string; scheduled_at: string; trigger_type: string; status: string; last_error?: string | null };
-type CallRecord = { id: string; created_at: string; direction: string; from_number?: string | null; to_number?: string | null; status: string; duration_seconds?: number | null; summary?: string | null; provider?: string | null };
+type CallRecord = { id: string; created_at: string; direction: string; from_number?: string | null; to_number?: string | null; status: string; duration_seconds?: number | null; summary?: string | null; provider?: string | null; metadata?: Record<string, any> | null };
 
 function toE164(value: string) {
   let number = String(value || "").replace(/[\s().-]/g, "");
@@ -69,7 +69,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
       setOutboundPrompt(next.scripts?.outbound || "");
       const [scheduled, calls] = await Promise.all([
         supabase.from("twiga_scheduled_calls").select("id,customer_name,phone_number,reason,scheduled_at,trigger_type,status,last_error").eq("business_id", businessId).order("scheduled_at", { ascending: true }).limit(50),
-        supabase.from("twiga_call_records").select("id,created_at,direction,from_number,to_number,status,duration_seconds,summary,provider").eq("business_id", businessId).eq("provider", "sautikit").order("created_at", { ascending: false }).limit(20),
+        supabase.from("twiga_call_records").select("id,created_at,direction,from_number,to_number,status,duration_seconds,summary,provider,metadata").eq("business_id", businessId).eq("provider", "sautikit").order("created_at", { ascending: false }).limit(20),
       ]);
       if (scheduled.error) throw new Error(scheduled.error.message);
       if (calls.error) throw new Error(calls.error.message);
@@ -81,21 +81,37 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
 
   useEffect(() => { void load(); }, [load]);
   const allVoices = useMemo(() => (config.models || []).flatMap(m => (m.voices || []).map(voice => ({ model: m.id, voice }))), [config.models]);
-  const voiceOptions = allVoices.length ? allVoices : [{ model: voiceModel || "sautikit-flash", voice: "Woman" }, { model: voiceModel || "sautikit-flash", voice: "amara" }];
+  const voiceOptions = allVoices.length ? allVoices : [{ model: voiceModel || "sautikit-flash", voice: "Woman" }, { model: voiceModel || "sautikit-flash", voice: "Man" }];
   const line = config.phoneLine;
   const settings = line?.settings || {};
   const displayedPhoneNumber = String(config.providerNumber || config.number?.phone_number || config.number?.number_e164 || config.number?.phoneNumber || config.number?.number || line?.line_number || "");
-  const providerFailed = config.keyConfigured === false || line?.inbound_status === "failed" || line?.outbound_status === "failed";
-  const canPlaceLiveTest = config.keyConfigured === true && config.numberVerified === true && !!config.agent?.id;
+  const providerConnected = config.providerConnected === true || (config.providerConnected === undefined && config.keyConfigured === true);
+  const serverProxyReady = config.serverProxyReady === true || (config.serverProxyReady === undefined && config.keyConfigured === true);
+  const providerFailed = config.providerConnected === false || line?.inbound_status === "failed" || line?.outbound_status === "failed";
+  const canPlaceLiveTest = serverProxyReady && config.numberVerified === true && !!config.agent?.id;
   const canPublishVoice = canPlaceLiveTest;
   const voiceReadinessIssues = [
-    config.keyConfigured !== true ? "TWIGA's shared SautiKit account is not connected or verified." : "",
+    !providerConnected ? "TWIGA's shared SautiKit account has not been verified against this business line." : "",
     config.numberVerified !== true ? "The assigned SautiKit phone number is not yet verified against that account." : "",
     !config.agent?.id ? "No SautiKit receptionist agent is linked to this business line." : "",
+    !serverProxyReady ? (providerConnected && config.numberVerified && config.agent?.id
+      ? "The SautiKit account, number and agent are linked and verified. TWIGA's server-side Composio Project API key is still missing, so live calls and voice publishing remain paused."
+      : "TWIGA's server-side Composio Project API key is not configured, so live calls remain paused.") : "",
   ].filter(Boolean);
   const voiceReadinessMessage = voiceReadinessIssues.join(" ");
   const inboundStatus = config.inboundVerified ? "verified" : config.inboundBound ? "agent bound · live test pending" : line?.inbound_status || "not configured";
   const outboundStatus = line?.outbound_status || (line?.outbound_enabled ? "enabled" : "disabled");
+  const voiceTestFor = (voice: string) => callRecords.find(call =>
+    call.direction === "outbound" && String(call.metadata?.voice || "") === voice
+  );
+  const voiceTestLabel = (voice: string) => {
+    const result = voiceTestFor(voice);
+    if (!result) return "No recorded test yet";
+    if (result.status === "completed") return "Previously connected" + (result.duration_seconds ? ` · ${result.duration_seconds}s` : "");
+    if (result.status === "no_answer") return "Last call rang, but was not answered";
+    if (result.status === "failed") return "Last test failed before a conversation";
+    return "Last test: " + result.status.replace(/_/g, " ");
+  };
 
   const continueVoice = async () => {
     if (!supabase || !businessId) { setError("Sign in and select a business before choosing a voice."); return; }
@@ -132,7 +148,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const testVoice = async () => {
     const to = toE164(testPhone);
     if (!to) { setError("Enter a valid phone number, e.g. +2547XXXXXXXX."); return; }
-    if (!canPlaceLiveTest) { setError("Live calling is paused while TWIGA completes its central SautiKit connection. No customer API key is needed. Please try again after the provider status shows verified."); return; }
+    if (!canPlaceLiveTest) { setError(voiceReadinessMessage || "Live calling is paused until TWIGA completes its server-side Composio connection."); return; }
     setTestingCall(true); setError(""); setMessage("Submitting your voice test call…");
     try {
       const { data, error: invokeError } = await supabase!.functions.invoke("twiga-sautikit", { body: { action: "send_call", businessId, to, voice: voiceId, model: voiceModel, reason: "TWIGA AI receptionist voice test requested by the business owner", authorised: true, consent: true } });
@@ -184,12 +200,12 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     </header>
 
     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5 md:col-span-2"><p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Assigned TWIGA AI phone number</p><div className="mt-2 flex flex-wrap items-center gap-3"><p className="text-3xl font-bold tracking-tight text-neutral-950">{displayedPhoneNumber || "No AI line assigned"}</p>{displayedPhoneNumber && <button onClick={() => void navigator.clipboard?.writeText(displayedPhoneNumber)} className="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700">Copy number</button>}<span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${config.numberVerified ? "border-emerald-200 bg-emerald-50 text-emerald-800" : providerFailed ? "border-red-200 bg-red-50 text-red-800" : line ? "border-amber-200 bg-amber-50 text-amber-800" : "border-neutral-200 bg-neutral-50 text-neutral-600"}`}>{config.numberVerified ? "Provider confirmed" : providerFailed ? "Provider not connected" : line ? "Saved · provider check pending" : "Not assigned"}</span></div><p className="mt-2 text-xs leading-5 text-neutral-500">{config.numberVerified ? "The number was successfully retrieved from TWIGA’s connected voice provider." : config.keyConfigured === false ? "Your existing SautiKit number is retained. TWIGA’s one-time central server connection still needs to be completed; customers never need to enter provider keys." : providerFailed ? "The provider number could not be verified. Live calls remain safely paused until TWIGA confirms the connection." : line ? "This number is saved against your TWIGA business, but the provider has not been verified yet. TWIGA manages that connection centrally." : "TWIGA has not assigned an AI phone number to this business yet."} Your personal callback number is entered separately when scheduling an authorised call.</p></div>
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5 md:col-span-2"><p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Assigned TWIGA AI phone number</p><div className="mt-2 flex flex-wrap items-center gap-3"><p className="text-3xl font-bold tracking-tight text-neutral-950">{displayedPhoneNumber || "No AI line assigned"}</p>{displayedPhoneNumber && <button onClick={() => void navigator.clipboard?.writeText(displayedPhoneNumber)} className="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs font-semibold text-neutral-700">Copy number</button>}<span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${config.numberVerified ? "border-emerald-200 bg-emerald-50 text-emerald-800" : providerFailed ? "border-red-200 bg-red-50 text-red-800" : line ? "border-amber-200 bg-amber-50 text-amber-800" : "border-neutral-200 bg-neutral-50 text-neutral-600"}`}>{config.numberVerified ? "Provider confirmed" : providerFailed ? "Provider not connected" : line ? "Saved · provider check pending" : "Not assigned"}</span></div><p className="mt-2 text-xs leading-5 text-neutral-500">{config.numberVerified ? (serverProxyReady ? "The assigned number is verified against the connected SautiKit workspace." : "The assigned number was verified through Composio on " + fmtDate(config.providerVerificationAt || undefined) + ". TWIGA still needs its server-side Composio Project API key before it can send live calls.") : providerFailed ? "The provider number could not be verified. Live calls remain safely paused until TWIGA confirms the connection." : line ? "This number is saved against your TWIGA business, but provider verification is still pending." : "TWIGA has not assigned an AI phone number to this business yet."} Your personal callback number is entered separately when scheduling an authorised call.</p></div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Inbound calls</p><span className={`mt-2 inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold ${statusClass(config.inboundVerified ? "active" : "pending")}`}>{inboundStatus}</span><p className="mt-2 text-xs text-neutral-500">{line?.inbound_enabled ? "Inbound enabled" : "Inbound disabled"}. A real incoming call is still required to verify pickup end-to-end.</p></div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Outbound calls</p><span className={`mt-2 inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold ${statusClass(outboundStatus)}`}>{outboundStatus}</span><p className="mt-2 text-xs text-neutral-500">Current voice: {settings.inbound_voice || config.agent?.voice || "Not published"} · {settings.inbound_model_id || config.agent?.model || "No model"}</p></div>
     </section>
 
-    {settings.last_outbound_test_call_status && <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900"><strong>Latest verified voice test:</strong> {String(settings.last_outbound_test_call_status).replace(/_/g, " ")}. The proven female SautiKit voice remains the default until another voice is published.</div>}
+    {settings.last_outbound_test_call_status && <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900"><strong>Latest voice test result:</strong> {String(settings.last_outbound_test_call_status).replace(/_/g, " ")}. The proven female SautiKit voice remains the default until another voice is published.</div>}
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -200,11 +216,11 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
         <div className="grid gap-3 sm:grid-cols-2">
           <button type="button" aria-pressed={voiceId === "Woman"} onClick={() => setVoiceId("Woman")} className={`rounded-2xl border-2 p-5 text-left transition ${voiceId === "Woman" ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-neutral-400"}`}>
             <span className="flex items-center justify-between"><span className="text-lg font-bold text-neutral-950">Woman</span><span className={`grid h-5 w-5 place-items-center rounded-full border ${voiceId === "Woman" ? "border-orange-500 bg-orange-500 text-white" : "border-neutral-300"}`}>{voiceId === "Woman" ? "✓" : ""}</span></span>
-            <span className="mt-2 block text-sm text-neutral-600">Warm, clear female receptionist voice</span>
+            <span className="mt-2 block text-sm text-neutral-600">Warm, clear female receptionist voice · {voiceTestLabel("Woman")}</span>
           </button>
           <button type="button" aria-pressed={voiceId === "Man"} onClick={() => setVoiceId("Man")} className={`rounded-2xl border-2 p-5 text-left transition ${voiceId === "Man" ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-neutral-400"}`}>
             <span className="flex items-center justify-between"><span className="text-lg font-bold text-neutral-950">Male</span><span className={`grid h-5 w-5 place-items-center rounded-full border ${voiceId === "Man" ? "border-orange-500 bg-orange-500 text-white" : "border-neutral-300"}`}>{voiceId === "Man" ? "✓" : ""}</span></span>
-            <span className="mt-2 block text-sm text-neutral-600">Clear, confident male receptionist voice</span>
+            <span className="mt-2 block text-sm text-neutral-600">Clear, confident male receptionist voice · {voiceTestLabel("Man")}</span>
           </button>
         </div>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
