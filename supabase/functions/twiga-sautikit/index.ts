@@ -867,7 +867,6 @@ Deno.serve(async (req: Request) => {
       if (businessProfileError) throw businessProfileError;
       const productCatalogue = await buildProductCatalogue(admin, businessId);
       const profileFacts = [
-        PRODUCT_CATALOG_MARKER + "\n" + productCatalogue,
         "BUSINESS SUMMARY: " + String(businessProfile?.business_summary || "").slice(0, 2500),
         "WHAT THE BUSINESS DOES: " + String(businessProfile?.what_they_do || "").slice(0, 1800),
         "WHAT THE BUSINESS SELLS: " + String(businessProfile?.what_they_sell || "").slice(0, 1800),
@@ -885,7 +884,7 @@ Deno.serve(async (req: Request) => {
         "ADDITIONAL SETUP DETAILS:\n" + setupDetailLines(businessProfile?.setup_details),
       ].filter((value) => !value.endsWith(": "));
       const corePrompt = [String(body.corePrompt || agent.base_prompt || ""), profileFacts.join("\n")].filter(Boolean).join("\n\n");
-      const basePrompt = composePrompt(corePrompt, scripts.greeting, scripts.inbound, scripts.outbound);
+      const basePrompt = composePrompt(withProductCatalogue(corePrompt, productCatalogue), scripts.greeting, scripts.inbound, scripts.outbound);
       const updateBody = {
         name: String(agent.name || "TWIGA Product Demo Guide"),
         base_prompt: basePrompt,
