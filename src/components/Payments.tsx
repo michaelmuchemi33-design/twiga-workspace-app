@@ -20,12 +20,27 @@ type Tab = "collect" | "keys";
 type Channel = { id: string; provider_channel_id: string; name: string; type: "PAYBILL" | "TILL_NUMBER" | "SEND_MONEY"; shortcode: string; account_number?: string | null; is_default: boolean };
 type PendingOrder = { id: string; order_number: string; customer_name: string; customer_phone: string | null; total_amount: number; description: string; status: string; payment_status: string; created_at: string };
 
+async function functionErrorMessage(error: any, fallback = "The PalPluss service returned an error.") {
+  const response = error?.context;
+  if (response && typeof response.clone === "function") {
+    try {
+      const payload = await response.clone().json();
+      if (payload?.error) return String(payload.error);
+      if (payload?.message) return String(payload.message);
+    } catch {
+      try { const raw = await response.clone().text(); if (raw.trim()) return raw.slice(0, 500); } catch { /* no body */ }
+    }
+  }
+  return error?.message || fallback;
+}
+
 export default function Payments() {
   const { businessId } = useStore();
   const [tab, setTab] = useState<Tab>("collect");
   const [connected, setConnected] = useState(false);
   const [keyLast4, setKeyLast4] = useState("");
   const [keyDraft, setKeyDraft] = useState("");
+  const [base64Draft, setBase64Draft] = useState("");
   const [balance, setBalance] = useState<any>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
@@ -46,7 +61,7 @@ export default function Payments() {
   const invoke = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
     if (!supabase || !businessId) throw new Error("Create or select a business workspace first.");
     const { data, error } = await supabase.functions.invoke("twiga-palpluss", { body: { action, businessId, ...extra } });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(await functionErrorMessage(error));
     if (data?.error) throw new Error(String(data.error));
     return data;
   }, [businessId]);
@@ -100,8 +115,12 @@ export default function Payments() {
     setBusy(true);
     setMessage("");
     try {
-      const data = await invoke("save_key", { apiKey: keyDraft.trim() });
+      const data = await invoke("save_key", {
+        ...(keyDraft.trim() ? { apiKey: keyDraft.trim() } : {}),
+        ...(base64Draft.trim() ? { basicAuthorization: base64Draft.trim() } : {}),
+      });
       setKeyDraft("");
+      setBase64Draft("");
       setConnected(true);
       setKeyLast4(data.keyLast4 || "");
       setBalance(data.balance || null);
@@ -109,7 +128,7 @@ export default function Payments() {
       await loadTransactions();
       await loadChannels();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "PalPluss key could not be saved.");
+      setMessage(error instanceof Error ? error.message : "PalPluss credential could not be saved.");
     } finally { setBusy(false); }
   };
 
@@ -246,9 +265,17 @@ export default function Payments() {
       </section>
     </div> : <div className="grid gap-6 lg:grid-cols-3">
       <section className="rounded-2xl border border-neutral-200 bg-neutral-950 p-5 text-white shadow-lg lg:col-span-2">
-        <h2 className="text-lg font-semibold">Optional business-specific PalPluss key</h2><p className="mt-1 text-sm text-neutral-400">TWIGA normally uses the central PalPluss account configured by the platform administrator. Add a separate business key only if this business has its own PalPluss account.</p>
-        <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="off" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} placeholder="pp_live_…" className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-700 bg-neutral-900 px-3 font-mono text-sm text-white placeholder:text-neutral-500" /><button onClick={saveKey} disabled={busy || keyDraft.trim().length < 20} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Checking…" : "Validate & save"}</button></div>
-        <p className="mt-3 text-xs leading-5 text-neutral-400">The API uses HTTP Basic authentication with the API key as username and an empty password. TWIGA creates the Base64 header server-side; you do not need to paste the separate Base64 token.</p>
+        <h2 className="text-lg font-semibold">PalPluss API & Basic Base64 authentication</h2>
+        <p className="mt-1 text-sm leading-6 text-neutral-400">Connect this business's own PalPluss account. You may provide either the raw API key or the Base64 Basic Authorization value from your integration setup. TWIGA validates the credential against the PalPluss service wallet and stores only the decoded API key in encrypted Supabase Vault.</p>
+        <label className="mt-4 block text-xs font-semibold text-neutral-300">PalPluss API key
+          <input type="password" autoComplete="new-password" value={keyDraft} onChange={(e) => setKeyDraft(e.target.value)} placeholder="Paste PalPluss API key" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-700 bg-neutral-900 px-3 font-mono text-sm text-white placeholder:text-neutral-500" />
+        </label>
+        <div className="my-4 flex items-center gap-3"><div className="h-px flex-1 bg-neutral-800" /><span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">or paste Base64 Basic Authorization</span><div className="h-px flex-1 bg-neutral-800" /></div>
+        <label className="block text-xs font-semibold text-neutral-300">Base64 Authorization value
+          <input type="password" autoComplete="new-password" value={base64Draft} onChange={(e) => setBase64Draft(e.target.value)} placeholder="Basic YXBpX2tleTo= or YXBpX2tleTo=" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-700 bg-neutral-900 px-3 font-mono text-sm text-white placeholder:text-neutral-500" />
+        </label>
+        <div className="mt-4 flex flex-wrap items-center gap-3"><button onClick={saveKey} disabled={busy || (keyDraft.trim().length < 20 && base64Draft.trim().length < 8) || (!!keyDraft.trim() && !!base64Draft.trim())} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Validating…" : "Validate & securely save"}</button><a href="https://www.palpluss.com/" target="_blank" rel="noreferrer" className="text-xs font-semibold text-orange-300 underline">Open PalPluss console</a></div>
+        <p className="mt-3 text-xs leading-5 text-neutral-400">PalPluss API authentication is HTTP Basic, not an OAuth bearer-token flow. Authorization is Basic Base64(API_KEY + colon). If you paste the full Basic header or only its Base64 value, TWIGA decodes and validates it server-side, stores the API key securely, and recreates the Basic header for API requests. Do not paste Safaricom Daraja OAuth tokens here.</p>
       </section>
       <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><h2 className="font-semibold text-neutral-950">Connection</h2><div className="mt-4 flex justify-between border-b pb-3 text-sm"><span className="text-neutral-500">Status</span><strong>{connected ? "Connected" : "Not connected"}</strong></div><div className="mt-3 flex justify-between border-b pb-3 text-sm"><span className="text-neutral-500">Key</span><strong>{connected ? "•••• " + keyLast4 : "Not saved"}</strong></div><div className="mt-3 flex justify-between text-sm"><span className="text-neutral-500">Service wallet</span><strong>{balance?.availableBalance != null ? "KES " + Number(balance.availableBalance).toLocaleString() : "Not checked"}</strong></div><button onClick={refresh} disabled={busy || !connected} className="mt-4 w-full rounded-xl border px-4 py-2.5 text-sm font-semibold disabled:opacity-40">Refresh connection</button></section>
     </div>}
