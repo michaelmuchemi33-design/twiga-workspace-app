@@ -39,9 +39,9 @@ const groups: { title: string; items: TabDef[] }[] = [
   {
     title: "Money",
     items: [
-      { id: "pos", label: "Sell", icon: IconCart },
-      { id: "payments", label: "Pay", icon: IconCard },
-      { id: "products", label: "Products", icon: IconBox },
+      { id: "pos", label: "Money", icon: IconCart },
+      { id: "payments", label: "Payments", icon: IconCard },
+      { id: "products", label: "Products & services", icon: IconBox },
       { id: "reports", label: "Reports", icon: IconFile },
     ],
   },
