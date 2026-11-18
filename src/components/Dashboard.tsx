@@ -192,7 +192,7 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
             <p className="text-sm font-semibold text-neutral-900">{renewalDaysLeft < 0 ? "Your TWIGA subscription has expired" : renewalDaysLeft === 0 ? "Your TWIGA subscription expires today" : "Your TWIGA subscription is due soon"}</p>
             <p className="mt-1 text-xs text-neutral-600">{renewalDaysLeft < 0 ? "Review your renewal to restore uninterrupted service." : renewalDaysLeft === 0 ? "Review renewal options to avoid service interruption." : renewalDaysLeft + " days remaining. You can review renewal or available account top-up options in Payments."} TWIGA will never charge or purchase anything without your approval.</p>
           </div>
-          <button onClick={onPayments} className="shrink-0 rounded-xl bg-neutral-950 px-4 py-2.5 text-xs font-semibold text-white">Review in Payments</button>
+          <button onClick={onPayments} className="shrink-0 rounded-xl bg-orange-500 px-4 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-orange-600">Review in Payments</button>
         </div>
       )}
 
