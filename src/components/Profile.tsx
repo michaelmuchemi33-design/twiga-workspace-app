@@ -49,7 +49,6 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [retellKey, setRetellKey] = useState("");
   const [model, setModel] = useState("gpt-4.1-mini");
   const [callStatus, setCallStatus] = useState("Not started");
-  const [palKey, setPalKey] = useState("");
   const [palStatus, setPalStatus] = useState<any>({ keyConfigured: false });
   const [palPhone, setPalPhone] = useState("");
   const [palAmount, setPalAmount] = useState("");
@@ -67,6 +66,16 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [palPlatformConfig, setPalPlatformConfig] = useState<any>({ keyConfigured: false });
   const [palPlatformKey, setPalPlatformKey] = useState("");
   const [palPlatformMessage, setPalPlatformMessage] = useState("");
+  const [sautikitPlatformConfig, setSautikitPlatformConfig] = useState<any>({ keyConfigured: false });
+  const [sautikitPlatformKey, setSautikitPlatformKey] = useState("");
+  const [sautikitPlatformMessage, setSautikitPlatformMessage] = useState("");
+  const [platformClients, setPlatformClients] = useState<any[]>([]);
+  const [platformNumbers, setPlatformNumbers] = useState<any[]>([]);
+  const [provisionBusinessId, setProvisionBusinessId] = useState("");
+  const [provisionNumberId, setProvisionNumberId] = useState("");
+  const [provisionSearch, setProvisionSearch] = useState("");
+  const [provisionMessage, setProvisionMessage] = useState("");
+  const [provisionBusy, setProvisionBusy] = useState(false);
   const [inboundPrompt, setInboundPrompt] = useState("Greet callers warmly, understand what they need, and use only verified business information. Capture appointment and order requests for staff confirmation.");
   const [outboundPrompt, setOutboundPrompt] = useState("Only call people when the business has authorised the follow-up. Identify the business, explain the reason, ask if it is a convenient time, and respect requests not to be contacted.");
   const callSession = useRef<any>(null);
@@ -117,6 +126,22 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       if (!retellPlatformError && retellPlatformData?.isAdmin) setRetellPlatformConfig(retellPlatformData);
       const { data: palPlatformData, error: palPlatformError } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "palpluss.platform.status" } });
       if (!palPlatformError && palPlatformData?.isAdmin) setPalPlatformConfig(palPlatformData);
+      const { data: sautikitPlatformData, error: sautikitPlatformError } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "sautikit.platform.status" } });
+      if (!sautikitPlatformError && sautikitPlatformData?.isAdmin) {
+        setSautikitPlatformConfig(sautikitPlatformData);
+        const [adminOverview, numberPool] = await Promise.all([
+          supabase.functions.invoke("twiga-platform-admin", { body: { action: "overview" } }),
+          supabase.functions.invoke("twiga-sautikit", { body: { action: "admin_list_numbers" } }),
+        ]);
+        if (!adminOverview.error && Array.isArray(adminOverview.data?.clients)) {
+          setPlatformClients(adminOverview.data.clients);
+          setProvisionBusinessId((current: string) => current || adminOverview.data.clients[0]?.id || "");
+        }
+        if (!numberPool.error && Array.isArray(numberPool.data?.numbers)) {
+          setPlatformNumbers(numberPool.data.numbers);
+          setProvisionNumberId((current: string) => current || numberPool.data.numbers.find((number: any) => !number.assignedBusinessId && String(number.status).toLowerCase() === "active")?.id || "");
+        }
+      }
     }
   }, []);
 
@@ -153,6 +178,73 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     } catch (error) {
       setPalPlatformMessage(error instanceof Error ? error.message : "Could not save the central PalPluss key.");
     } finally { setBusy(false); }
+  };
+
+
+  const saveSautiKitPlatformKey = async () => {
+    if (!supabase || sautikitPlatformKey.trim().length < 20) return;
+    setBusy(true);
+    setSautikitPlatformMessage("Validating the shared SautiKit workspace and phone-number pool…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", {
+        body: { action: "sautikit.platform.save", apiKey: sautikitPlatformKey.trim() },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setSautikitPlatformKey("");
+      setSautikitPlatformConfig((current: any) => ({ ...current, ...data, keyConfigured: true }));
+      setSautikitPlatformMessage(data.message || "Shared SautiKit workspace connected.");
+      await refreshProvisioning();
+    } catch (e) {
+      setSautikitPlatformMessage(e instanceof Error ? e.message : "The shared SautiKit API key could not be saved.");
+    } finally { setBusy(false); }
+  };
+
+  const refreshProvisioning = async () => {
+    if (!supabase) return;
+    setProvisionBusy(true);
+    setProvisionMessage("Refreshing businesses and the shared SautiKit number pool…");
+    try {
+      const [adminOverview, numberPool] = await Promise.all([
+        supabase.functions.invoke("twiga-platform-admin", { body: { action: "overview" } }),
+        supabase.functions.invoke("twiga-sautikit", { body: { action: "admin_list_numbers" } }),
+      ]);
+      if (adminOverview.error) throw new Error(adminOverview.error.message);
+      if (adminOverview.data?.error) throw new Error(String(adminOverview.data.error));
+      if (numberPool.error) throw new Error(numberPool.error.message);
+      if (numberPool.data?.error) throw new Error(String(numberPool.data.error));
+      setPlatformClients(Array.isArray(adminOverview.data?.clients) ? adminOverview.data.clients : []);
+      setPlatformNumbers(Array.isArray(numberPool.data?.numbers) ? numberPool.data.numbers : []);
+      setProvisionMessage("Loaded " + (adminOverview.data?.clients?.length || 0) + " businesses and " + (numberPool.data?.numbers?.length || 0) + " SautiKit numbers.");
+    } catch (e) {
+      setProvisionMessage(e instanceof Error ? e.message : "Could not refresh platform provisioning.");
+    } finally { setProvisionBusy(false); }
+  };
+
+  const assignPlatformNumber = async () => {
+    if (!supabase || !provisionBusinessId || !provisionNumberId) return;
+    const target = platformClients.find((client: any) => client.id === provisionBusinessId);
+    const number = platformNumbers.find((item: any) => item.id === provisionNumberId);
+    if (!target || !number) return;
+    if (number.assignedBusinessId && number.assignedBusinessId !== provisionBusinessId) {
+      setProvisionMessage("That number is already assigned to another business.");
+      return;
+    }
+    if (!window.confirm("Assign " + number.phoneNumber + " to " + target.name + "? This reserves the number for that business. The receptionist still needs its business profile and agent setup completed.")) return;
+    setProvisionBusy(true);
+    setProvisionMessage("Assigning the number to " + target.name + "…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-sautikit", {
+        body: { action: "admin_assign_number", businessId: provisionBusinessId, numberId: provisionNumberId },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setProvisionMessage(data?.message || "Number assigned.");
+      await refreshProvisioning();
+      setProvisionNumberId("");
+    } catch (e) {
+      setProvisionMessage(e instanceof Error ? e.message : "Number assignment failed.");
+    } finally { setProvisionBusy(false); }
   };
 
   const saveGoogleOAuth = async () => {
