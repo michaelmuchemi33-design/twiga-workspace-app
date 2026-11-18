@@ -32,7 +32,7 @@ const stageMeta: Record<
 };
 
 export default function Customers() {
-  const { customers, advanceCustomer, businessId } = useStore();
+  const { customers, advanceCustomer, businessId, demoMode } = useStore();
   const [draftCustomerId, setDraftCustomerId] = useState("");
   const [draftCustomerName, setDraftCustomerName] = useState("");
   const [draftText, setDraftText] = useState("");
@@ -40,6 +40,12 @@ export default function Customers() {
   const [draftBusy, setDraftBusy] = useState(false);
 
   const draftFollowup = async (customer: Customer) => {
+    if (demoMode) {
+      setDraftCustomerId(customer.id); setDraftCustomerName(customer.name);
+      setDraftError("");
+      setDraftText("Hi " + customer.name.split(" ")[0] + ", karibu back! We hope you enjoyed your last visit. Would you like us to help you book your next appointment or answer any questions? Reply whenever convenient. This is a sample draft only; no message has been sent.");
+      return;
+    }
     if (!supabase || !businessId) { setDraftError("Choose a signed-in business workspace first."); return; }
     setDraftBusy(true); setDraftError(""); setDraftText(""); setDraftCustomerId(customer.id); setDraftCustomerName(customer.name);
     try {
