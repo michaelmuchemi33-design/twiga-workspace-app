@@ -376,7 +376,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       <div className="mt-3 flex flex-wrap gap-2">
         <button onClick={() => void savePalplussCredential()} disabled={palplussBusy || !businessId || (!palplussApiKey.trim() && !palplussBasicAuthorization.trim()) || (Boolean(palplussApiKey.trim()) && Boolean(palplussBasicAuthorization.trim()))} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{palplussBusy ? "Please wait…" : palplussConfig.keyConfigured ? "Validate & replace credential" : "Validate & connect PalPluss"}</button>
         <button onClick={() => void refreshProviders()} disabled={palplussBusy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700 disabled:opacity-40">Refresh PalPluss status</button>
-        <a href="https://app.palpluss.com" target="_blank" rel="noreferrer" className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-orange-700">Open PalPluss dashboard ↗</a>
+        <a href="https://www.palpluss.com/" target="_blank" rel="noreferrer" className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-orange-700">Open PalPluss dashboard ↗</a>
       </div>
       {palplussConfig.keyConfigured && <>
         <div className="mt-5 grid gap-4 lg:grid-cols-2">
