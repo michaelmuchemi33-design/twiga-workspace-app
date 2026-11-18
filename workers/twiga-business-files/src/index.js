@@ -37,6 +37,8 @@ async function ensureAiActionSchema(env) {
       env.DB.prepare("CREATE INDEX IF NOT EXISTS ai_staff_tasks_business_status ON ai_staff_tasks (business_id, status, created_at DESC)"),
       env.DB.prepare("CREATE TABLE IF NOT EXISTS ai_followups (followup_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, customer_name TEXT NOT NULL, phone TEXT NOT NULL, reason TEXT NOT NULL, scheduled_at TEXT NOT NULL, consent_confirmed INTEGER NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL)"),
       env.DB.prepare("CREATE INDEX IF NOT EXISTS ai_followups_business_status ON ai_followups (business_id, status, scheduled_at)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS ai_appointments (appointment_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, customer_name TEXT NOT NULL, phone TEXT NOT NULL, service TEXT NOT NULL, scheduled_at TEXT NOT NULL, duration_minutes INTEGER NOT NULL, notes TEXT, consent_confirmed INTEGER NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS ai_appointments_business_status ON ai_appointments (business_id, status, scheduled_at)"),
       env.DB.prepare("CREATE TABLE IF NOT EXISTS ai_notifications (notification_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, event_type TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT)"),
       env.DB.prepare("CREATE INDEX IF NOT EXISTS ai_notifications_business_status ON ai_notifications (business_id, status, created_at DESC)")
     ]).catch((e) => { aiActionSchemaReady = null; throw e; });
@@ -226,6 +228,26 @@ export default {
             .bind(notificationId, businessId, "new_order", "New order request", customerName + " requested " + lines.length + " item(s). Staff confirmation is required.", JSON.stringify({ orderId, customerName, phone: cleanPhone || null, items: lines, total: subtotal, currency: lines.find((line) => line.catalogueMatched)?.currency || "KES", status: orderStatus, needsStaffConfirmation: true }), "unread", stamp));
           await env.DB.batch(statements);
           return json(req, { ok: true, orderId, status: orderStatus, type: orderType, total: subtotal, currency: lines.find((line) => line.catalogueMatched)?.currency || "KES", contactSaved: !!contactStatement, ownerNotificationQueued: true, stockCommitted: false, paymentTaken: false, needsStaffConfirmation: true, quoteReviewRequired: needsQuote, storage: "cloudflare_d1" });
+        }
+
+        if (action === "book_appointment") {
+          const service = String(body.service || "").trim().slice(0, 180);
+          const scheduledAt = String(body.scheduled_at || "").trim();
+          const timestamp = Date.parse(scheduledAt);
+          const duration = Math.max(15, Math.min(240, Math.round(Number(body.duration_minutes || 30))));
+          const notes = String(body.notes || "").trim().slice(0, 1000);
+          if (!customerName || cleanPhone.length < 8 || !service) return json(req, { error: "A customer name, valid phone number and service are required." }, 400);
+          if (body.consent_confirmed !== true) return json(req, { error: "The customer must explicitly agree before saving an appointment request." }, 400);
+          if (!Number.isFinite(timestamp) || timestamp <= Date.now()) return json(req, { error: "Choose a specific future appointment date and time." }, 400);
+          const appointmentId = crypto.randomUUID();
+          const statements = [env.DB.prepare("INSERT INTO ai_appointments (appointment_id,business_id,customer_name,phone,service,scheduled_at,duration_minutes,notes,consent_confirmed,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+            .bind(appointmentId, businessId, customerName, cleanPhone, service, new Date(timestamp).toISOString(), duration, notes || null, 1, "pending_confirmation", stamp)];
+          if (contactStatement) statements.push(contactStatement);
+          const notificationId = crypto.randomUUID();
+          statements.push(env.DB.prepare("INSERT INTO ai_notifications (notification_id,business_id,event_type,title,body,payload_json,status,created_at) VALUES (?,?,?,?,?,?,?,?)")
+            .bind(notificationId, businessId, "new_appointment", "Appointment request", customerName + " requested " + service + ". Staff must confirm the slot.", JSON.stringify({ appointmentId, customerName, phone: cleanPhone, service, scheduledAt: new Date(timestamp).toISOString(), durationMinutes: duration, status: "pending_confirmation" }), "unread", stamp));
+          await env.DB.batch(statements);
+          return json(req, { ok: true, appointmentId, status: "pending_confirmation", ownerNotificationQueued: true, calendarEventCreated: false, storage: "cloudflare_d1" });
         }
 
         if (action === "create_staff_task") {
