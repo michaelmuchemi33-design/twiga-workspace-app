@@ -7,7 +7,7 @@ function cors(req) {
   const origin = req.headers.get("Origin") || "";
   return {
     "Access-Control-Allow-Origin": ALLOWED.has(origin) ? origin : "https://live.twiga.co.ke",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Authorization, Content-Type, apikey, x-client-info, x-twiga-ai-tool-secret",
     "Access-Control-Expose-Headers": "Content-Length, Content-Disposition",
     "Access-Control-Max-Age": "86400",
@@ -200,6 +200,7 @@ export default {
               name: catalogueItem?.name || name,
               sku: catalogueItem?.sku || sku || "",
               kind: catalogueItem?.kind || "unknown",
+              currency: catalogueItem?.currency || "KES",
               qty: quantity,
               unitPrice,
               total: lineTotal,
