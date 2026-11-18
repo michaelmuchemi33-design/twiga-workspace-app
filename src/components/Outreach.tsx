@@ -1,0 +1,183 @@
+import { useMemo, useRef, useState } from "react";
+import { supabase } from "@/lib/supabase";
+
+type Contact = { name: string; phone: string; consent: boolean };
+const DEFAULT_SCRIPT = "Hello, this is the AI assistant calling on behalf of {{business_name}}. We have a special offer: {{offer}}. Would you like me to tell you more? If you are not interested, I can end the call and make sure we do not contact you about this offer again.";
+const DAY_OPTIONS = [{ id: 1, label: "Mon" }, { id: 2, label: "Tue" }, { id: 3, label: "Wed" }, { id: 4, label: "Thu" }, { id: 5, label: "Fri" }, { id: 6, label: "Sat" }, { id: 0, label: "Sun" }];
+
+function normalizePhone(value: string) {
+  let n = String(value || "").trim().replace(/[\s().-]/g, "");
+  if (/^0[17]\d{8}$/.test(n)) n = "+254" + n.slice(1);
+  else if (/^254[17]\d{8}$/.test(n)) n = "+" + n;
+  return /^\+254[17]\d{8}$/.test(n) ? n : "";
+}
+function parseCsv(text: string): Contact[] {
+  const rows: string[][] = [];
+  let row: string[] = [], cell = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"' && quoted && text[i + 1] === '"') { cell += '"'; i++; }
+    else if (ch === '"') quoted = !quoted;
+    else if (ch === "," && !quoted) { row.push(cell.trim()); cell = ""; }
+    else if ((ch === "\n" || ch === "\r") && !quoted) {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(cell.trim()); if (row.some(Boolean)) rows.push(row); row = []; cell = "";
+    } else cell += ch;
+  }
+  row.push(cell.trim()); if (row.some(Boolean)) rows.push(row);
+  if (rows.length < 2) return [];
+  const headers = rows[0].map(h => h.toLowerCase().replace(/[ _-]/g, ""));
+  const phoneIndex = headers.findIndex(h => ["phone", "phonenumber", "mobile", "number"].includes(h));
+  const nameIndex = headers.findIndex(h => ["name", "customer", "customername", "firstname"].includes(h));
+  const consentIndex = headers.findIndex(h => ["consent", "optin", "optedin", "permission"].includes(h));
+  if (phoneIndex < 0 || consentIndex < 0) throw new Error("CSV must include phone and consent columns. Use consent values yes/true/1/opted-in for people who agreed to promotional calls.");
+  return rows.slice(1).map(r => ({
+    name: nameIndex >= 0 ? (r[nameIndex] || "Customer") : "Customer",
+    phone: normalizePhone(r[phoneIndex] || ""),
+    consent: ["yes", "true", "1", "opt-in", "opted-in", "consented"].includes(String(r[consentIndex] || "").toLowerCase().trim()),
+  })).filter(c => c.phone);
+}
+function nextSlot(from: Date, days: number[], start: string, end: string): Date {
+  const [sh, sm] = start.split(":").map(Number), [eh, em] = end.split(":").map(Number);
+  for (let offset = 0; offset < 35; offset++) {
+    const d = new Date(from); d.setDate(d.getDate() + offset);
+    if (!days.includes(d.getDay())) continue;
+    const begin = new Date(d); begin.setHours(sh, sm, 0, 0);
+    const finish = new Date(d); finish.setHours(eh, em, 0, 0);
+    const candidate = offset === 0 && from > begin ? new Date(from) : begin;
+    if (candidate < finish) return candidate;
+  }
+  throw new Error("Could not find a calling slot. Select at least one day and a valid calling window.");
+}
+export default function Outreach({ businessId, demo = false }: { businessId: string; demo?: boolean }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [offer, setOffer] = useState("");
+  const [script, setScript] = useState(DEFAULT_SCRIPT);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [fileName, setFileName] = useState("");
+  const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [start, setStart] = useState("09:00");
+  const [end, setEnd] = useState("17:00");
+  const [testNumber, setTestNumber] = useState("0793832286");
+  const [testConsent, setTestConsent] = useState(true);
+  const [publishing, setPublishing] = useState(false);
+  const [launching, setLaunching] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [testText, setTestText] = useState("A customer asks: What is the offer, how much does it cost, and how can I book?");
+  const [testReply, setTestReply] = useState("");
+  const optedIn = contacts.filter(c => c.consent);
+  const invalidCount = useMemo(() => contacts.length - optedIn.length, [contacts, optedIn.length]);
+  const publishedPrompt = useMemo(() => script.replaceAll("{{offer}}", offer || "our current offer"), [script, offer]);
+
+  const importFile = async (file?: File) => {
+    if (!file) return;
+    setError(""); setMessage("");
+    try {
+      if (!file.name.toLowerCase().endsWith(".csv")) throw new Error("Please upload a .csv file.");
+      const parsed = parseCsv(await file.text());
+      if (!parsed.length) throw new Error("No valid Kenyan phone numbers were found in this CSV.");
+      setContacts(parsed); setFileName(file.name);
+      setMessage("Imported " + parsed.length + " valid numbers. " + parsed.filter(c => c.consent).length + " have recorded promotional-call consent.");
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not read this CSV."); }
+  };
+  const publish = async () => {
+    if (!offer.trim() || !script.trim()) { setError("Add your offer and the words your AI should say."); return; }
+    if (!supabase || !businessId) { setError("Select a business workspace first."); return; }
+    setPublishing(true); setError(""); setMessage("Publishing your outbound offer to the AI receptionist…");
+    try {
+      const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "publish_agent", businessId, outboundPrompt: publishedPrompt } });
+      if (invokeError) throw new Error(invokeError.message);
+      if (data?.error) throw new Error(String(data.error));
+      setMessage(data?.message || "Offer and outbound instructions published.");
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not publish the offer."); }
+    finally { setPublishing(false); }
+  };
+  const testCall = async () => {
+    const to = normalizePhone(testNumber);
+    if (!to) { setError("Enter a valid Kenyan mobile number."); return; }
+    if (!testConsent) { setError("Confirm you own this number or have permission to receive the test call."); return; }
+    if (!supabase || !businessId) { setError("Select a business workspace first."); return; }
+    if (!window.confirm("Place a real AI test call to " + to + "? Provider call charges may apply.")) return;
+    setTesting(true); setError(""); setMessage("Sending your AI test call request…");
+    try {
+      const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "send_call", businessId, to, reason: "Owner-requested TWIGA promotional AI test call", authorised: true, consent: true } });
+      if (invokeError) throw new Error(invokeError.message);
+      if (data?.error) throw new Error(String(data.error));
+      setMessage(data?.message || "Test call request submitted to " + to + ".");
+    } catch (e) { setError(e instanceof Error ? e.message : "Test call could not be submitted."); }
+    finally { setTesting(false); }
+  };
+  const launch = async () => {
+    if (!offer.trim()) { setError("Publish an offer before starting the campaign."); return; }
+    if (!optedIn.length) { setError("Your CSV needs a consent/opt-in column, and at least one contact must have agreed to promotional calls."); return; }
+    if (!days.length) { setError("Choose at least one calling day."); return; }
+    if (start >= end) { setError("End time must be later than start time."); return; }
+    if (optedIn.length > 200) { setError("For safety, upload no more than 200 opted-in contacts per campaign batch."); return; }
+    if (!supabase || !businessId) { setError("Select a business workspace first."); return; }
+    if (!window.confirm("Queue " + optedIn.length + " consented contacts for promotional calls during " + start + "–" + end + " on your selected days? Calls will be scheduled, not placed all at once.")) return;
+    setLaunching(true); setError(""); setMessage("Scheduling opted-in contacts…");
+    try {
+      const rows: any[] = [];
+      let cursor = new Date();
+      cursor.setMinutes(cursor.getMinutes() + 5, 0, 0);
+      for (const contact of optedIn) {
+        const slot = nextSlot(cursor, days, start, end);
+        rows.push({
+          business_id: businessId, customer_name: contact.name, phone_number: contact.phone,
+          reason: "Promotional offer: " + offer.trim() + "\nAI instructions: " + publishedPrompt,
+          scheduled_at: slot.toISOString(), timezone: "Africa/Nairobi", consent_status: "opted_in",
+          trigger_type: "outreach", trigger_conditions: { campaign_type: "promotional", offer: offer.trim(), consent_source: fileName || "CSV upload" },
+          calling_window_start: start, calling_window_end: end, max_attempts: 1, retry_interval_minutes: 30, status: "scheduled",
+        });
+        cursor = new Date(slot.getTime() + 5 * 60_000);
+      }
+      const { error: insertError } = await supabase.from("twiga_scheduled_calls").insert(rows);
+      if (insertError) throw new Error(insertError.message);
+      setMessage("Campaign queued: " + rows.length + " consented contacts scheduled. The existing call worker will dispatch due calls inside the selected calling windows.");
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not queue the campaign."); }
+    finally { setLaunching(false); }
+  };
+  const runTextTest = () => {
+    const q = testText.toLowerCase();
+    if (q.includes("price") || q.includes("cost")) setTestReply("The AI should explain the offer price clearly, confirm what is included, and avoid inventing discounts. Add the exact price and conditions to your offer before publishing.");
+    else if (q.includes("stop") || q.includes("not interested")) setTestReply("The AI should politely thank the person, end the call, and respect the request not to receive further promotional calls.");
+    else if (q.includes("book") || q.includes("appointment")) setTestReply("The AI should ask what day and time works, collect the customer's details, and confirm availability before promising a booking.");
+    else setTestReply("Suggested AI opening: " + publishedPrompt);
+  };
+
+  if (demo) return <section className="rounded-2xl border border-neutral-200 bg-white p-6"><h1 className="text-2xl font-bold">Outreach</h1><p className="mt-2 text-sm text-neutral-600">Create promotional calling campaigns, upload a CSV and test your AI receptionist. Sign in to use live calling.</p></section>;
+  return <div className="mx-auto max-w-6xl space-y-5">
+    <header className="rounded-2xl border border-neutral-200 bg-white p-6"><p className="text-xs font-bold uppercase tracking-widest text-orange-600">TWIGA · Campaigns</p><h1 className="mt-2 text-3xl font-bold text-neutral-950">Outreach</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Create a promotional offer, upload opted-in contacts, choose when the AI may call, and test the experience before launch.</p></header>
+    {(message || error) && <div className={"rounded-xl border px-4 py-3 text-sm " + (error ? "border-red-200 bg-red-50 text-red-800" : "border-orange-200 bg-orange-50 text-orange-900")}>{error || message}</div>}
+    <section className="grid gap-5 lg:grid-cols-2">
+      <div className="space-y-4 rounded-2xl border border-neutral-200 bg-white p-5">
+        <div><p className="text-xs font-bold uppercase tracking-wide text-orange-600">01 · Your offer</p><h2 className="mt-1 text-xl font-bold text-neutral-950">What should the agent promote?</h2><p className="mt-1 text-sm text-neutral-600">Be clear about the product, price, dates and conditions. The AI must not invent details.</p></div>
+        <label className="block text-sm font-semibold text-neutral-800">Offer details<textarea value={offer} onChange={e => setOffer(e.target.value)} rows={4} placeholder="e.g. This week: 20% off all haircuts. Book before Friday. Terms apply." className="mt-2 w-full rounded-xl border border-neutral-200 bg-white p-3 text-sm text-neutral-900 outline-none focus:border-orange-400" /></label>
+        <label className="block text-sm font-semibold text-neutral-800">What the AI should say<textarea value={script} onChange={e => setScript(e.target.value)} rows={5} className="mt-2 w-full rounded-xl border border-neutral-200 bg-white p-3 text-sm text-neutral-900 outline-none focus:border-orange-400" /></label>
+        <p className="text-xs text-neutral-500">Use {{business_name}} for your business name and {{offer}} for the offer details.</p>
+        <button onClick={() => void publish()} disabled={publishing} className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">{publishing ? "Publishing…" : "Publish offer to AI"}</button>
+      </div>
+      <div className="space-y-4 rounded-2xl border border-neutral-200 bg-white p-5">
+        <div><p className="text-xs font-bold uppercase tracking-wide text-orange-600">02 · Contact list</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Upload your CSV</h2><p className="mt-1 text-sm text-neutral-600">Required columns: phone and consent. Optional: name. Only people who agreed to promotional calls will be queued.</p></div>
+        <button onClick={() => fileRef.current?.click()} className="flex w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 px-4 py-8 text-center hover:border-orange-400"><span className="text-2xl">↑</span><span className="mt-2 text-sm font-bold text-neutral-800">Choose CSV file</span><span className="mt-1 text-xs text-neutral-500">{fileName || "Upload .csv · max 200 opted-in contacts per batch"}</span></button>
+        <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={e => void importFile(e.target.files?.[0])} />
+        <div className="grid grid-cols-3 gap-2"><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Valid numbers</p><p className="text-xl font-bold text-neutral-900">{contacts.length}</p></div><div className="rounded-xl bg-orange-50 p-3"><p className="text-xs text-orange-700">Opted in</p><p className="text-xl font-bold text-neutral-900">{optedIn.length}</p></div><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Not eligible</p><p className="text-xl font-bold text-neutral-900">{invalidCount}</p></div></div>
+        <p className="text-xs text-neutral-500">Example CSV: <code>name,phone,consent</code> then <code>Jane,0712345678,yes</code>. Keep proof of consent and honour opt-outs.</p>
+        {contacts.length > 0 && <div className="max-h-36 overflow-y-auto rounded-xl border border-neutral-200"><div className="grid grid-cols-3 bg-neutral-50 px-3 py-2 text-xs font-bold text-neutral-600"><span>Name</span><span>Phone</span><span>Permission</span></div>{contacts.slice(0, 8).map((c, i) => <div key={i} className="grid grid-cols-3 border-t border-neutral-100 px-3 py-2 text-xs"><span className="truncate">{c.name}</span><span>{c.phone}</span><span className={c.consent ? "text-orange-700" : "text-neutral-500"}>{c.consent ? "Opted in" : "Not eligible"}</span></div>)}</div>}
+      </div>
+    </section>
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+      <p className="text-xs font-bold uppercase tracking-wide text-orange-600">03 · Calling schedule</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Choose days and calling hours</h2>
+      <div className="mt-4 flex flex-wrap gap-2">{DAY_OPTIONS.map(d => <button key={d.id} onClick={() => setDays(old => old.includes(d.id) ? old.filter(x => x !== d.id) : [...old, d.id])} className={"rounded-xl border px-4 py-2 text-sm font-semibold " + (days.includes(d.id) ? "border-orange-300 bg-orange-50 text-orange-800" : "border-neutral-200 bg-white text-neutral-600")}>{d.label}</button>)}</div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-sm font-semibold text-neutral-700">Start time (Kenya time)<input type="time" value={start} onChange={e => setStart(e.target.value)} className="mt-1 block w-full rounded-xl border border-neutral-200 p-3" /></label><label className="text-sm font-semibold text-neutral-700">End time (Kenya time)<input type="time" value={end} onChange={e => setEnd(e.target.value)} className="mt-1 block w-full rounded-xl border border-neutral-200 p-3" /></label></div>
+      <p className="mt-3 text-xs text-neutral-500">Calls are queued at least five minutes apart and only for contacts marked opted-in. Check local rules and your customers' preferences before launching.</p>
+      <button onClick={() => void launch()} disabled={launching || !optedIn.length} className="mt-4 w-full rounded-xl bg-neutral-950 px-4 py-3 text-sm font-bold text-white hover:bg-neutral-800 disabled:opacity-40">{launching ? "Scheduling campaign…" : "Start outreach campaign · " + optedIn.length + " opted-in contacts"}</button>
+    </section>
+    <section className="grid gap-5 lg:grid-cols-2">
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-bold uppercase tracking-wide text-orange-600">04 · Real test call</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Call yourself first</h2><p className="mt-1 text-sm text-neutral-600">Your requested number is prefilled. This places a real provider call and may incur call charges.</p><label className="mt-4 block text-sm font-semibold text-neutral-700">Your mobile number<input value={testNumber} onChange={e => setTestNumber(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-200 p-3" /></label><label className="mt-3 flex items-start gap-2 text-xs text-neutral-600"><input type="checkbox" checked={testConsent} onChange={e => setTestConsent(e.target.checked)} className="mt-0.5" />I own this number or have permission to receive this test call.</label><button onClick={() => void testCall()} disabled={testing} className="mt-4 w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">{testing ? "Calling…" : "Call me · 0793832286"}</button></div>
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-bold uppercase tracking-wide text-orange-600">05 · AI test space</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Try a customer question</h2><p className="mt-1 text-sm text-neutral-600">Preview your script and think through common questions before the live call.</p><textarea value={testText} onChange={e => setTestText(e.target.value)} rows={3} className="mt-4 w-full rounded-xl border border-neutral-200 p-3 text-sm" /><button onClick={runTextTest} className="mt-2 rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-bold text-neutral-800 hover:bg-neutral-50">Preview response</button>{testReply && <div className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm leading-6 text-neutral-800">{testReply}</div>}<p className="mt-3 text-xs text-neutral-500">This text preview is a rehearsal aid, not a live model response. Use the real test call above to hear the configured voice.</p></div>
+    </section>
+  </div>;
+}
