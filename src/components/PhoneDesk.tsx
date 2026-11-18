@@ -100,17 +100,16 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const settings = line?.settings || {};
   const displayedPhoneNumber = String(config.providerNumber || config.number?.phone_number || config.number?.number_e164 || config.number?.phoneNumber || config.number?.number || line?.line_number || "");
   const providerConnected = config.providerConnected === true || (config.providerConnected === undefined && config.keyConfigured === true);
-  const serverDirectReady = config.serverDirectReady === true || config.serverDirectReady === true || (config.serverDirectReady === undefined && config.keyConfigured === true);
+  const serverDirectReady = config.serverDirectReady === true || config.serverProxyReady === true || (config.serverDirectReady === undefined && config.keyConfigured === true);
   const providerFailed = config.providerConnected === false || line?.inbound_status === "failed" || line?.outbound_status === "failed";
   const canPlaceLiveTest = serverDirectReady && config.numberVerified === true && !!config.agent?.id;
-  const canPublishVoice = canPlaceLiveTest;
+  const canPublishVoice = serverDirectReady && config.numberVerified === true;
   const voiceReadinessIssues = [
-    !providerConnected ? "This business’s SautiKit workspace has not been verified against its saved phone line." : "",
+    !config.keyConfigured ? "Connect this business’s SautiKit workspace API key in Connections & permissions." : "",
     config.numberVerified !== true ? "The assigned SautiKit phone number is not yet verified against that account." : "",
-    !config.agent?.id ? "No SautiKit receptionist agent is linked to this business line." : "",
-    !serverDirectReady ? (providerConnected && config.numberVerified && config.agent?.id
-      ? "SautiKit has the inbound route configured to its published receptionist agent; pickup still needs a real incoming-call test. This business needs its own SautiKit workspace API key connected in Connections & permissions before outbound test calls and voice publishing can run."
-      : "This business’s SautiKit workspace API key is not connected, so live calls remain paused.") : "",
+    !config.agent?.id ? "The receptionist agent has not been created for this business yet." : "",
+    config.agent?.id && !config.inboundBound ? "The receptionist agent is not yet bound to this business phone number for inbound calls." : "",
+    !serverDirectReady ? "This business’s SautiKit workspace API key is not connected, so live calls remain paused." : "",
   ].filter(Boolean);
   const voiceReadinessMessage = voiceReadinessIssues.join(" ");
   const inboundStatus = config.inboundVerified ? "provider route verified" : config.inboundBound ? "agent bound · pickup test pending" : line?.inbound_status || "not configured";
@@ -147,15 +146,27 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
 
   const publishVoice = async () => {
     if (!supabase || !businessId) { setError("Sign in and select a business before publishing."); return; }
-    if (!canPublishVoice) { setMessage(""); setError(voiceReadinessMessage || "Refresh the phone status and try again."); return; }
-    setSavingVoice(true); setError(""); setMessage("Publishing the selected SautiKit voice and call instructions…");
+    if (!canPublishVoice) { setMessage(""); setError(voiceReadinessMessage || "Connect the business SautiKit workspace and assign an active number first."); return; }
+    setSavingVoice(true); setError(""); setMessage(config.agent?.id ? "Publishing the receptionist voice and instructions…" : "Creating and publishing this business’s AI receptionist…");
     try {
-      const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "publish_agent", businessId, model: voiceModel, voice: voiceId, corePrompt, greeting, inboundPrompt, outboundPrompt } });
-      if (invokeError) throw new Error(await functionErrorMessage(invokeError, "The TWIGA phone service returned an error."));
-      if (data?.error) throw new Error(String(data.error));
-      setMessage(data?.message || `Published ${voiceId} on revision ${data?.revision || "latest"}.`);
+      const invoke = async (action: string) => {
+        const result = await supabase!.functions.invoke("twiga-sautikit", { body: { action, businessId, model: voiceModel, voice: voiceId, corePrompt, greeting, inboundPrompt, outboundPrompt } });
+        if (result.error) throw new Error(await functionErrorMessage(result.error, "The TWIGA phone service returned an error."));
+        if (result.data?.error) throw new Error(String(result.data.error));
+        return result.data || {};
+      };
+      let result: any;
+      if (!config.agent?.id) {
+        // First-time setup creates the dedicated agent, booking tool, publishes it and binds the number.
+        result = await invoke("create_agent");
+      } else {
+        // Repair an existing draft/agent's inbound binding before publishing its latest instructions.
+        if (!config.inboundBound) await invoke("bind_agent");
+        result = await invoke("publish_agent");
+      }
+      setMessage(result?.message || `The ${voiceId === "Man" ? "male" : "female"} receptionist voice and instructions were saved.`);
       await load();
-    } catch (e) { setError(e instanceof Error ? e.message : "Could not publish the voice."); }
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not create or publish the receptionist."); }
     finally { setSavingVoice(false); }
   };
 
@@ -227,7 +238,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
 
   return <div className="mx-auto max-w-6xl space-y-5">
     <header className="rounded-2xl border border-neutral-200 bg-white p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">TWIGA · AI phone desk</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Phone & AI receptionist</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Manage your AI receptionist, assigned business number, inbound route, customer callbacks, reminders and consent-based outreach from one place. TWIGA manages the voice provider connection centrally.</p></div><button onClick={() => void load()} disabled={loading} className="rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800 transition hover:bg-orange-100 disabled:opacity-60">{loading ? "Refreshing…" : "Refresh"}</button></div>
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">TWIGA · AI phone desk</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Phone & AI receptionist</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Manage this business’s SautiKit workspace, assigned phone number, AI receptionist, inbound route, customer callbacks, reminders and consent-based outreach from one place.</p></div><button onClick={() => void load()} disabled={loading} className="rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800 transition hover:bg-orange-100 disabled:opacity-60">{loading ? "Refreshing…" : "Refresh"}</button></div>
     </header>
 
     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
