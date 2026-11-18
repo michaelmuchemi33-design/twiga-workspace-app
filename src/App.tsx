@@ -40,6 +40,7 @@ import {
   IconClose,
   IconUsers,
   IconChat,
+  IconPhone,
 } from "@/components/Icons";
 
 const footerTabs = [
