@@ -35,7 +35,6 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const [inboundPrompt, setInboundPrompt] = useState("");
   const [outboundPrompt, setOutboundPrompt] = useState("");
   const [testPhone, setTestPhone] = useState("0793832286");
-  const [testConsent, setTestConsent] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [callReason, setCallReason] = useState("");
@@ -124,14 +123,12 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const testVoice = async () => {
     const to = toE164(testPhone);
     if (!to) { setError("Enter a valid phone number, e.g. +2547XXXXXXXX."); return; }
-    if (!testConsent) { setError("Confirm that you own this number or have permission to call it."); return; }
-    if (!window.confirm(`Place a real AI voice test call to ${to}?`)) return;
     setTestingCall(true); setError(""); setMessage("Submitting your voice test call…");
     try {
-      const { data, error: invokeError } = await supabase!.functions.invoke("twiga-sautikit", { body: { action: "send_call", businessId, to, reason: "TWIGA voice preview test requested by the business owner", authorised: true, consent: true } });
+      const { data, error: invokeError } = await supabase!.functions.invoke("twiga-sautikit", { body: { action: "send_call", businessId, to, voice: voiceId, model: voiceModel, reason: "TWIGA AI receptionist voice test requested by the business owner", authorised: true, consent: true } });
       if (invokeError) throw new Error(invokeError.message);
       if (data?.error) throw new Error(String(data.error));
-      setMessage(data?.message || `Test call submitted to ${to}.`);
+      setMessage(data?.message || `Your ${voiceId === "Man" ? "male" : "female"} voice test call has been submitted to ${to}.`);
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "Test call failed."); }
     finally { setTestingCall(false); }
@@ -183,8 +180,6 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     </section>
 
     {settings.last_outbound_test_call_status && <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900"><strong>Latest verified voice test:</strong> {String(settings.last_outbound_test_call_status).replace(/_/g, " ")}. The proven female SautiKit voice remains the default until another voice is published.</div>}
-    {!config.keyConfigured && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><strong>TWIGA voice connection is awaiting central verification.</strong> Your business does not need a SautiKit account or API key. TWIGA must finish connecting the shared voice service before live voice publishing and calls can be enabled.</div>}
-    {config.providerError && <div className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">SautiKit status: {config.providerError}</div>}
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -224,11 +219,15 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
 
     <section className="grid gap-5 lg:grid-cols-2">
       <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-        <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold text-neutral-950">Test the selected voice</h2><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-700">Live phone test</span></div><p className="mt-1 text-sm text-neutral-500">Enter your number and request a real outbound call. The AI receptionist will call you using the selected voice. Provider setup must be complete first.</p>
-        <label className="mt-4 block text-sm font-medium text-neutral-800">Your test phone number<input value={testPhone} onChange={e => setTestPhone(e.target.value)} placeholder="0793832286 or +2547XXXXXXXX" inputMode="tel" className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-3 text-base text-neutral-950 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100" /></label>
-        <label className="mt-3 flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" checked={testConsent} onChange={e => setTestConsent(e.target.checked)} className="mt-1" />I own this number or have permission to receive this test call.</label>
-        {!config.keyConfigured ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm leading-5 text-amber-900"><strong>Voice service is not connected to this app yet.</strong><p className="mt-1">The SautiKit account is connected in Composio, but its API credential has not been saved in TWIGA's encrypted server Vault. Connect it from the TWIGA Admin Connections page before requesting a live call.</p><a href="https://twigaadminmike.vercel.app" target="_blank" rel="noreferrer" className="mt-2 inline-flex rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-900 hover:bg-amber-100">Open TWIGA Admin</a></div> : !line || !config.agent ? <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">This business still needs an assigned SautiKit number and a linked receptionist agent before a test call can be placed.</p> : line.outbound_enabled !== true || line.outbound_status !== "active" ? <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">The provider line is not yet verified for outbound calling. Current status: <strong>{line.outbound_status || "not configured"}</strong>. Refresh after the provider connection is repaired.</p> : null}
-        <button onClick={() => void testVoice()} disabled={testingCall || !config.keyConfigured || !line || !config.agent || line.outbound_enabled !== true || line.outbound_status !== "active"} className="mt-4 w-full rounded-xl bg-orange-500 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-neutral-300 disabled:text-neutral-600 disabled:shadow-none">{testingCall ? "Requesting call…" : !config.keyConfigured ? "Connect voice service to request a call" : !line || !config.agent ? "Complete phone setup to request a call" : line.outbound_enabled !== true || line.outbound_status !== "active" ? "Outbound line not ready yet" : "Request test call"}</button>
+        <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold text-neutral-950">Test your AI receptionist</h2><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-700">Live voice test</span></div>
+        <p className="mt-1 text-sm text-neutral-500">Choose a voice, enter your number and press the button. TWIGA will call you so you can speak with your receptionist.</p>
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <button type="button" aria-pressed={voiceId === "Woman"} onClick={() => setVoiceId("Woman")} className={`rounded-xl border-2 p-3 text-left transition ${voiceId === "Woman" ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-neutral-400"}`}><span className="block text-base font-bold text-neutral-950">Female voice</span><span className="mt-1 block text-xs text-neutral-600">Warm and friendly</span></button>
+          <button type="button" aria-pressed={voiceId === "Man"} onClick={() => setVoiceId("Man")} className={`rounded-xl border-2 p-3 text-left transition ${voiceId === "Man" ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-neutral-400"}`}><span className="block text-base font-bold text-neutral-950">Male voice</span><span className="mt-1 block text-xs text-neutral-600">Clear and confident</span></button>
+        </div>
+        <label className="mt-4 block text-sm font-medium text-neutral-800">Phone number to call<input value={testPhone} onChange={e => setTestPhone(e.target.value)} placeholder="0793832286" inputMode="tel" className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-3 text-base text-neutral-950 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100" /></label>
+        <p className="mt-2 text-xs text-neutral-500">By pressing the test button, you confirm you can receive a call at this number. Test calls may incur provider charges.</p>
+        <button onClick={() => void testVoice()} disabled={testingCall} className="mt-4 w-full rounded-xl bg-orange-500 px-5 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 active:scale-[.99] disabled:cursor-wait disabled:opacity-60">{testingCall ? "Calling you…" : "Call me and test AI"}</button>
       </div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5"><h2 className="text-lg font-semibold text-neutral-950">Inbound routing check</h2><p className="mt-2 text-sm leading-6 text-neutral-600">{config.inboundVerified ? "The inbound provider route is verified." : config.inboundBound ? "The SautiKit agent is bound to this line, but a real incoming call still needs to be tested." : "No verified inbound agent route is reported for this line yet."}</p><div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Inbound route</p><p className="mt-1 text-sm font-semibold text-neutral-900">{config.inboundBound ? "Agent bound" : "Not bound"}</p></div><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Live verification</p><p className="mt-1 text-sm font-semibold text-neutral-900">{config.inboundVerified ? "Verified" : "Pending"}</p></div></div></div>
     </section>
