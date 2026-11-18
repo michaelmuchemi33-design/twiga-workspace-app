@@ -41,15 +41,12 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   const [oauthConfig, setOauthConfig] = useState<any>({ serverConfigured: false });
   const [sautikitConfig, setSautikitConfig] = useState<any>({});
   const [xaiConfig, setXaiConfig] = useState<any>({});
-  const [sautikitKey, setSautikitKey] = useState("");
   const [selectedSautikitNumber, setSelectedSautikitNumber] = useState("");
   const [xaiKey, setXaiKey] = useState("");
   const [providerBusy, setProviderBusy] = useState(false);
   const [providerMessage, setProviderMessage] = useState("");
   const [grokTestMessage, setGrokTestMessage] = useState("");
   const [palplussConfig, setPalplussConfig] = useState<any>({});
-  const [palplussApiKey, setPalplussApiKey] = useState("");
-  const [palplussBasicAuthorization, setPalplussBasicAuthorization] = useState("");
   const [palplussPaylinkId, setPalplussPaylinkId] = useState("");
   const [palplussChannels, setPalplussChannels] = useState<any[]>([]);
   const [palplussTransactions, setPalplussTransactions] = useState<any[]>([]);
@@ -98,8 +95,16 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     ]);
     if (sautikit.status === "fulfilled" && !sautikit.value.error && !sautikit.value.data?.error) {
       const cfg = sautikit.value.data || {};
+      if (cfg.isPlatformAdmin && cfg.keyScope === "platform") {
+        const pool = await supabase.functions.invoke("twiga-sautikit", { body: { action: "admin_list_numbers" } });
+        if (!pool.error && Array.isArray(pool.data?.numbers)) cfg.availableNumbers = pool.data.numbers;
+      }
       setSautikitConfig(cfg);
-      setSelectedSautikitNumber(cfg.phoneLine?.provider_reference || cfg.availableNumbers?.[0]?.id || "");
+      const assignable = (cfg.availableNumbers || []).find((number: any) =>
+        String(number.status).toLowerCase() === "active" &&
+        (!number.assignedBusinessId || number.assignedBusinessId === businessId)
+      );
+      setSelectedSautikitNumber(cfg.phoneLine?.provider_reference || assignable?.id || "");
     } else {
       setSautikitConfig({ isPlatformAdmin: false, providerError: sautikit.status === "rejected" ? String(sautikit.reason) : await edgeFunctionError(sautikit.value.error, "SautiKit status could not be loaded.") });
     }
@@ -166,44 +171,29 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     finally { setBusy(false); }
   };
 
-  const saveProviderKey = async (provider: "grok" | "sautikit") => {
-    const apiKey = (provider === "grok" ? xaiKey : sautikitKey).trim();
+  const saveProviderKey = async () => {
+    const apiKey = xaiKey.trim();
     if (!apiKey || !supabase) { setProviderMessage("Paste the API key first."); return; }
-    setProviderBusy(true); setProviderMessage(provider === "grok" ? "Validating the xAI key…" : "Validating this business’s SautiKit workspace API key…");
+    setProviderBusy(true); setProviderMessage("Validating the xAI key…");
     try {
-      const functionName = provider === "grok" ? "twiga-platform-secrets" : "twiga-sautikit";
-      const actionName = provider === "grok" ? "save_xai_key" : "connect_business";
-      const { data, error } = await supabase.functions.invoke(functionName, { body: { action: actionName, apiKey, ...(provider === "sautikit" ? { businessId } : {}) } });
+      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "save_xai_key", apiKey } });
       if (error) throw error;
       if (data?.error) throw new Error(String(data.error));
-      if (provider === "grok") setXaiKey(""); else setSautikitKey("");
-      setProviderMessage(data?.message || (provider === "grok" ? "Grok key validated and saved in encrypted storage." : "This business’s SautiKit workspace key was validated and saved in encrypted storage."));
+      setXaiKey("");
+      setProviderMessage(data?.message || "Grok key validated and saved in encrypted storage.");
       await refreshProviders();
     } catch (e: any) {
-      // Supabase FunctionsHttpError keeps the Edge Function response in context.
-      // Read its JSON body so provider errors (401/403/Vault failures) are shown
-      // instead of the unhelpful "Edge Function returned a non-2xx status code".
-      let detail = "";
-      const response = e?.context;
-      if (response && typeof response.clone === "function") {
-        try {
-          const payload = await response.clone().json();
-          detail = String(payload?.error || payload?.message || "");
-        } catch {
-          try { detail = (await response.clone().text()).slice(0, 500); } catch { /* no readable response body */ }
-        }
-      }
-      const status = Number(response?.status || e?.status || 0);
-      setProviderMessage(detail || (status ? "Connection failed (HTTP " + status + "). " : "") + await edgeFunctionError(e, "Could not save provider key."));
-    }
-    finally { setProviderBusy(false); }
+      const status = Number(e?.context?.status || e?.status || 0);
+      setProviderMessage((status ? "Connection failed (HTTP " + status + "). " : "") + await edgeFunctionError(e, "Could not save the xAI key."));
+    } finally { setProviderBusy(false); }
   };
 
   const assignSautikitNumber = async () => {
     if (!supabase || !businessId || !selectedSautikitNumber) { setProviderMessage("Choose a SautiKit number first."); return; }
     setProviderBusy(true); setProviderMessage("Assigning the selected number to this business…");
     try {
-      const { data, error } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "assign_business_number", businessId, numberId: selectedSautikitNumber } });
+      const assignAction = sautikitConfig.keyScope === "platform" ? "admin_assign_number" : "assign_business_number";
+      const { data, error } = await supabase.functions.invoke("twiga-sautikit", { body: { action: assignAction, businessId, numberId: selectedSautikitNumber } });
       if (error) throw error;
       if (data?.error) throw new Error(String(data.error));
       setProviderMessage(data?.message || "SautiKit number assigned to this business.");
@@ -225,22 +215,6 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       setGrokTestMessage(data?.reply || "Grok responded successfully.");
     } catch (e) { setGrokTestMessage(e instanceof Error ? e.message : "Grok test failed."); }
     finally { setProviderBusy(false); }
-  };
-
-  const savePalplussCredential = async () => {
-    if (!businessId || !supabase) { setPalplussMessage("Choose a business first."); return; }
-    const apiKey = palplussApiKey.trim();
-    const basicAuthorization = palplussBasicAuthorization.trim();
-    if (!apiKey && !basicAuthorization) { setPalplussMessage("Enter the PalPluss API key or its Base64 Basic Authorization value."); return; }
-    if (apiKey && basicAuthorization) { setPalplussMessage("Use one credential field at a time."); return; }
-    setPalplussBusy(true); setPalplussMessage("Validating the PalPluss account and securely saving its credential…");
-    try {
-      const data = await palplussAction("save_key", apiKey ? { apiKey } : { basicAuthorization });
-      setPalplussApiKey(""); setPalplussBasicAuthorization("");
-      setPalplussMessage(data?.message || "PalPluss credential validated and saved securely.");
-      await refreshProviders();
-    } catch (e) { setPalplussMessage(e instanceof Error ? e.message : "Could not connect PalPluss."); }
-    finally { setPalplussBusy(false); }
   };
 
   const savePalplussPaylink = async () => {
@@ -338,20 +312,24 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       </div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5">
         <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">AI phone provider</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">SautiKit · Direct API</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${sautikitProviderConnected ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{sautikitBadge}</span></div>
-        <p className="mt-2 text-sm leading-6 text-neutral-600">Connect the SautiKit workspace that owns this business’s phone number. TWIGA calls SautiKit directly using HTTPS Bearer authentication; Composio is not in the phone-call path. Each business key is stored separately in encrypted Supabase Vault and is never exposed to the browser after saving.</p>
-        {sautikitConfig.phoneLine?.line_number && <p className="mt-2 text-sm font-semibold text-neutral-900">Saved AI line: {sautikitConfig.phoneLine.line_number}</p>}
-        {sautikitConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Encrypted credential saved{sautikitConfig.keyLast4 ? ` · ending ${sautikitConfig.keyLast4}` : ""}{sautikitConfig.keyScope ? ` · ${sautikitConfig.keyScope} scope` : ""}.</p>}
-        <label className="mt-4 block text-sm font-medium text-neutral-800">{sautikitConfig.keyScope === "business" ? "Replace this business’s SautiKit workspace API key" : "SautiKit workspace API key"}<input type="password" autoComplete="new-password" value={sautikitKey} onChange={e => setSautikitKey(e.target.value)} placeholder="Paste SautiKit workspace API key" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
-        <p className="mt-2 text-xs leading-5 text-neutral-500">Create the key inside the SautiKit workspace that owns this business’s phone number: Developers → API keys. Use a workspace key, not a personal/KYC key or Composio key. If the saved phone number belongs to a different SautiKit workspace, TWIGA will report that mismatch and keep calling disabled until the correct number is assigned.</p>
-        <a href="https://app.sautikit.com/developers/api-keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Open SautiKit API keys ↗</a>
-        <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => void saveProviderKey("sautikit")} disabled={providerBusy || !businessId || !sautikitKey.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{providerBusy ? "Checking…" : "Validate & connect this business"}</button><button onClick={() => void refreshProviders()} disabled={providerBusy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">Refresh status</button></div>
-        {Array.isArray(sautikitConfig.availableNumbers) && sautikitConfig.availableNumbers.length > 0 && <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3">
-          <label className="block text-sm font-medium text-neutral-800">Phone number in this SautiKit workspace
+        <p className="mt-2 text-sm leading-6 text-neutral-600">TWIGA manages one shared SautiKit provider connection for all customer accounts. Each business has its own assigned phone number, dedicated receptionist agent, call history and operating instructions. Customers do not need a SautiKit API key.</p>
+        {sautikitConfig.phoneLine?.line_number && <p className="mt-2 text-sm font-semibold text-neutral-900">This business's AI line: {sautikitConfig.phoneLine.line_number}</p>}
+        <p className="mt-2 text-xs text-neutral-500">{sautikitConfig.keyConfigured
+          ? "Shared SautiKit account connected · managed by TWIGA" + (sautikitConfig.keyLast4 ? " · •••• " + sautikitConfig.keyLast4 : "")
+          : "Shared SautiKit account not configured yet. The TWIGA platform administrator must add the provider key in Profile → Platform settings."}</p>
+        <a href="https://app.sautikit.com/developers/api-keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">SautiKit workspace API keys ↗</a>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button onClick={() => void refreshProviders()} disabled={providerBusy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800">Refresh provider status</button>
+        </div>
+        {sautikitConfig.isPlatformAdmin && <p className="mt-2 text-xs text-neutral-500">You are viewing this business as a TWIGA platform administrator. Manage the shared key and customer-number allocation in Profile → Platform settings.</p>}
+        {Array.isArray(sautikitConfig.availableNumbers) && sautikitConfig.availableNumbers.filter((number: any) => String(number.status).toLowerCase() === "active" && (!number.assignedBusinessId || number.assignedBusinessId === businessId)).length > 0 && <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3">
+          <label className="block text-sm font-medium text-neutral-800">Available number for this business
             <select value={selectedSautikitNumber} onChange={e => setSelectedSautikitNumber(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm">
-              {sautikitConfig.availableNumbers.map((number: any) => <option key={number.id} value={number.id}>{number.e164 || number.id} · {number.status}</option>)}
+              {sautikitConfig.availableNumbers.filter((number: any) => String(number.status).toLowerCase() === "active" && (!number.assignedBusinessId || number.assignedBusinessId === businessId)).map((number: any) => <option key={number.id} value={number.id}>{number.e164 || number.phoneNumber || number.id}{number.assignedBusinessName ? " · Already assigned here" : " · Available"}</option>)}
             </select>
           </label>
-          <button onClick={() => void assignSautikitNumber()} disabled={providerBusy || !selectedSautikitNumber} className="mt-3 rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">Assign selected number to this business</button>
+          <button onClick={() => void assignSautikitNumber()} disabled={providerBusy || !selectedSautikitNumber || !(sautikitConfig.isPlatformAdmin || sautikitConfig.keyScope === "business")} className="mt-3 rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">Assign selected number to this business</button>
+          {sautikitConfig.keyScope === "platform" && !sautikitConfig.isPlatformAdmin && <p className="mt-2 text-xs text-neutral-500">Number allocation is managed centrally by TWIGA.</p>}
         </div>}
         {sautikitConfig.providerError && <p role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{sautikitConfig.providerError}</p>}
       </div>
@@ -362,22 +340,10 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
         <span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${palplussConfig.keyConfigured ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{palplussConfig.keyConfigured ? (palplussConfig.keySource === "business" ? "Business account connected" : "Platform account available") : "Credential needed"}</span>
       </div>
       <div className="mt-4 rounded-xl border border-orange-100 bg-orange-50 p-3 text-xs leading-5 text-orange-950">
-        <strong>Credential format:</strong> enter the PalPluss API key or a Base64 Basic Authorization value for API_KEY: (API key followed by a colon). PalPluss uses HTTP Basic authentication here, not a separate Safaricom Daraja OAuth token. TWIGA validates the credential on the server and stores the API key in encrypted Supabase Vault; it is never saved in browser storage.
+        <strong>Shared provider account:</strong> the TWIGA platform administrator connects the PalPluss API key once in Profile → Platform settings. This business only manages its own public Paylink ID, registered Till/Paybill channels, and payment records. Private credentials are never entered by customer accounts.
       </div>
-      {palplussConfig.keyConfigured && <p className="mt-3 text-xs text-neutral-500">Encrypted credential saved{palplussConfig.keyLast4 ? ` · ending ${palplussConfig.keyLast4}` : ""}{palplussConfig.keySource ? ` · ${palplussConfig.keySource} scope` : ""}. {palplussConfig.keyUpdatedAt ? "Updated " + new Date(palplussConfig.keyUpdatedAt).toLocaleString() + "." : ""}</p>}
-      <div className="mt-4 grid gap-3 md:grid-cols-2">
-        <label className="block text-sm font-medium text-neutral-800">PalPluss API key
-          <input type="password" autoComplete="new-password" value={palplussApiKey} onChange={e => setPalplussApiKey(e.target.value)} placeholder="Paste the API key from your PalPluss dashboard" className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" />
-        </label>
-        <label className="block text-sm font-medium text-neutral-800">Base64 Basic Authorization (optional)
-          <input type="password" autoComplete="new-password" value={palplussBasicAuthorization} onChange={e => setPalplussBasicAuthorization(e.target.value)} placeholder="Base64 value or Basic … header" className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" />
-        </label>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button onClick={() => void savePalplussCredential()} disabled={palplussBusy || !businessId || (!palplussApiKey.trim() && !palplussBasicAuthorization.trim()) || (Boolean(palplussApiKey.trim()) && Boolean(palplussBasicAuthorization.trim()))} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{palplussBusy ? "Please wait…" : palplussConfig.keyConfigured ? "Validate & replace credential" : "Validate & connect PalPluss"}</button>
-        <button onClick={() => void refreshProviders()} disabled={palplussBusy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700 disabled:opacity-40">Refresh PalPluss status</button>
-        <a href="https://www.palpluss.com/" target="_blank" rel="noreferrer" className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-orange-700">Open PalPluss dashboard ↗</a>
-      </div>
+      {palplussConfig.keyConfigured && <p className="mt-3 text-xs text-neutral-500">Shared PalPluss account connected · managed by TWIGA{palplussConfig.keyLast4 ? " · •••• " + palplussConfig.keyLast4 : ""}.</p>}
+      {!palplussConfig.keyConfigured && <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">The central PalPluss API key has not been connected yet. Ask the TWIGA platform administrator to configure it in Profile.</p>}
       {palplussConfig.keyConfigured && <>
         <div className="mt-5 grid gap-4 lg:grid-cols-2">
           <div className="rounded-xl border border-neutral-200 p-4">
