@@ -479,7 +479,7 @@ export default {
         }
         return json(req,{error:"Unknown POS action."},404);
       }
-      if (kind !== "files") return json(req, { error: "Not found." }, 404);
+      if (kind !== "files" && kind !== "usage") return json(req, { error: "Not found." }, 404);
       if (kind === "usage" && req.method === "GET" && !fileId) {
         const used = await currentUsage(env, businessId);
         return json(req, { usedBytes: used, quotaBytes: QUOTA, remainingBytes: Math.max(0, QUOTA - used), percentUsed: Math.min(100, Math.round(used / QUOTA * 10000) / 100) });
