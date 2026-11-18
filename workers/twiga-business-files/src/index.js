@@ -114,7 +114,12 @@ async function ensureR2Usage(env, businessId) {
     if (object) imageBytes += Number(object.size || 0);
   }
   const initialBytes = Number(files && files.bytes || 0) + imageBytes;
-  await env.DB.prepare("INSERT OR IGNORE INTO r2_usage (business_id, bytes_used) VALUES (?, ?)").bind(businessId, initialBytes).run();
+  const inserted = await env.DB.prepare("INSERT OR IGNORE INTO r2_usage (business_id, bytes_used) VALUES (?, ?)").bind(businessId, initialBytes).run();
+  // The previous counter combined D1 and R2. On the one-time R2 backfill,
+  // move the measured legacy R2 bytes out of that counter so D1 starts clean.
+  if (inserted.meta && inserted.meta.changes > 0 && initialBytes > 0) {
+    await env.DB.prepare("UPDATE usage SET bytes_used = MAX(0, bytes_used - ?) WHERE business_id = ?").bind(initialBytes, businessId).run();
+  }
 }
 async function currentR2Usage(env, businessId) {
   await ensureR2Usage(env, businessId);
