@@ -1,4 +1,6 @@
 const QUOTA = 524288000;
+const D1_QUOTA = QUOTA;
+const R2_QUOTA = QUOTA;
 const ALLOWED = new Set(["https://live.twiga.co.ke", "https://app.twiga.co.ke", "https://demo.twiga.co.ke", "capacitor://localhost", "http://localhost", "http://localhost:5173"]);
 let schemaReady;
 const safeName = (s) => String(s || "file").normalize("NFKD").replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 120) || "file";
@@ -20,8 +22,12 @@ function json(req, body, status) {
 }
 async function ensureSchema(env) {
   if (!schemaReady) {
-    schemaReady = env.DB.prepare("CREATE TABLE IF NOT EXISTS files (file_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, object_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, uploaded_by TEXT NOT NULL, created_at TEXT NOT NULL)").run()
-      .then(() => env.DB.prepare("CREATE INDEX IF NOT EXISTS files_business_created ON files (business_id, created_at DESC)").run())
+    schemaReady = env.DB.batch([
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS files (file_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, object_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, uploaded_by TEXT NOT NULL, created_at TEXT NOT NULL)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS files_business_created ON files (business_id, created_at DESC)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS usage (business_id TEXT PRIMARY KEY, bytes_used INTEGER NOT NULL DEFAULT 0)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS r2_usage (business_id TEXT PRIMARY KEY, bytes_used INTEGER NOT NULL DEFAULT 0)")
+    ])
       .catch((e) => { schemaReady = null; throw e; });
   }
   return schemaReady;
@@ -80,30 +86,42 @@ function sameSecretHash(a, b) {
   for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return mismatch === 0;
 }
-async function currentUsage(env, businessId) {
+async function currentD1Usage(env, businessId) {
   const row = await env.DB.prepare("SELECT bytes_used FROM usage WHERE business_id = ?").bind(businessId).first();
   return Number(row && row.bytes_used || 0);
 }
-async function reserve(env, businessId, bytes) {
-  const row = await env.DB.prepare("INSERT INTO usage (business_id, bytes_used) VALUES (?, ?) ON CONFLICT(business_id) DO UPDATE SET bytes_used = usage.bytes_used + excluded.bytes_used WHERE usage.bytes_used + excluded.bytes_used <= ? RETURNING bytes_used").bind(businessId, bytes, QUOTA).first();
-  if (!row) throw new Error("STORAGE_QUOTA");
+async function currentR2Usage(env, businessId) {
+  const row = await env.DB.prepare("SELECT bytes_used FROM r2_usage WHERE business_id = ?").bind(businessId).first();
+  return Number(row && row.bytes_used || 0);
 }
-async function release(env, businessId, bytes) {
+async function reserveD1(env, businessId, bytes) {
+  const row = await env.DB.prepare("INSERT INTO usage (business_id, bytes_used) VALUES (?, ?) ON CONFLICT(business_id) DO UPDATE SET bytes_used = usage.bytes_used + excluded.bytes_used WHERE usage.bytes_used + excluded.bytes_used <= ? RETURNING bytes_used").bind(businessId, bytes, D1_QUOTA).first();
+  if (!row) throw new Error("D1_STORAGE_QUOTA");
+}
+async function releaseD1(env, businessId, bytes) {
   if (bytes > 0) await env.DB.prepare("UPDATE usage SET bytes_used = MAX(0, bytes_used - ?) WHERE business_id = ?").bind(bytes, businessId).run();
+}
+async function reserveR2(env, businessId, bytes) {
+  const row = await env.DB.prepare("INSERT INTO r2_usage (business_id, bytes_used) VALUES (?, ?) ON CONFLICT(business_id) DO UPDATE SET bytes_used = r2_usage.bytes_used + excluded.bytes_used WHERE r2_usage.bytes_used + excluded.bytes_used <= ? RETURNING bytes_used").bind(businessId, bytes, R2_QUOTA).first();
+  if (!row) throw new Error("R2_STORAGE_QUOTA");
+}
+async function releaseR2(env, businessId, bytes) {
+  if (bytes > 0) await env.DB.prepare("UPDATE r2_usage SET bytes_used = MAX(0, bytes_used - ?) WHERE business_id = ?").bind(bytes, businessId).run();
 }
 function failure(req, e) {
   const m = String(e && e.message || e);
   if (m === "SIGN_IN_REQUIRED" || m === "SESSION_EXPIRED") return json(req, { error: "Please sign in again." }, 401);
   if (m === "NO_BUSINESS_ACCESS") return json(req, { error: "You do not have access to this business workspace." }, 403);
   if (m === "SUBSCRIPTION_INACTIVE") return json(req, { error: "This business workspace needs an active subscription to use file storage." }, 402);
-  if (m === "STORAGE_QUOTA") return json(req, { error: "This business has reached its 500 MB storage allowance. Delete an old file before uploading another." }, 413);
+  if (m === "STORAGE_QUOTA" || m === "R2_STORAGE_QUOTA") return json(req, { error: "This business has reached its 500 MB R2 file-storage allowance. Delete an old file before uploading another." }, 413);
+  if (m === "D1_STORAGE_QUOTA") return json(req, { error: "This business has reached its 500 MB D1 data allowance." }, 413);
   return json(req, { error: "The file storage request could not be completed." }, 500);
 }
 export default {
   async fetch(req, env) {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(req) });
     const url = new URL(req.url);
-    if (req.method === "GET" && url.pathname === "/health") return json(req, { ok: true, service: "twiga-business-files", quotaBytes: QUOTA });
+    if (req.method === "GET" && url.pathname === "/health") return json(req, { ok: true, service: "twiga-business-files", quotas: { d1BytesPerBusiness: D1_QUOTA, r2BytesPerBusiness: R2_QUOTA } });
     const parts = url.pathname.split("/").filter(Boolean);
     if (parts[0] !== "v1" || parts.length < 3) return json(req, { error: "Not found." }, 404);
     const kind = parts[1], businessId = parts[2], fileId = parts[3];
@@ -371,7 +389,7 @@ export default {
           try { await env.DB.prepare("INSERT INTO workspace_data (business_id,workspace_json,size_bytes,updated_by,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(business_id) DO UPDATE SET workspace_json=excluded.workspace_json,size_bytes=excluded.size_bytes,updated_by=excluded.updated_by,updated_at=excluded.updated_at").bind(businessId,packed,bytes,member.userId,now()).run(); }
           catch(e){ if(delta>0) await release(env,businessId,delta).catch(()=>{}); throw e; }
           if(delta<0) await release(env,businessId,Math.abs(delta));
-          return json(req,{saved:true,updated_at:now(),bytes,storage:"cloudflare_d1",usedBytes:await currentUsage(env,businessId),quotaBytes:QUOTA});
+          return json(req,{saved:true,updated_at:now(),bytes,storage:"cloudflare_d1",d1UsedBytes:await currentD1Usage(env,businessId),d1QuotaBytes:D1_QUOTA});
         }
         return json(req,{error:"Method not allowed."},405);
       }
@@ -404,9 +422,9 @@ export default {
         const form=await req.formData(); const file=form.get("file"); if(!(file instanceof File))return json(req,{error:"Choose a product photo."},400);
         if(!file.size||file.size>5*1024*1024)return json(req,{error:"Product photos must be under 5 MB."},413); const type=String(file.type||"").toLowerCase(); if(!["image/webp","image/jpeg","image/png"].includes(type))return json(req,{error:"Use a WebP, JPEG or PNG photo."},415);
         const item=await env.DB.prepare("SELECT item_id FROM items WHERE business_id=? AND item_id=? AND active=1").bind(businessId,fileId).first(); if(!item)return json(req,{error:"Save the product before uploading its photo."},404);
-        const key="businesses/"+businessId+"/product-images/"+fileId+"/"+crypto.randomUUID()+".webp"; const bytes=await file.arrayBuffer(); await reserve(env,businessId,bytes.byteLength);
-        try{await env.FILES.put(key,bytes,{httpMetadata:{contentType:type,cacheControl:"private, no-store"},customMetadata:{business_id:businessId,item_id:fileId}});await env.DB.prepare("UPDATE items SET image_key=?,updated_at=? WHERE business_id=? AND item_id=?").bind(key,now(),businessId,fileId).run();}catch(e){await env.FILES.delete(key).catch(()=>{});await release(env,businessId,bytes.byteLength).catch(()=>{});throw e;}
-        return json(req,{uploaded:true,imageKey:key,usedBytes:await currentUsage(env,businessId),quotaBytes:QUOTA});
+        const key="businesses/"+businessId+"/product-images/"+fileId+"/"+crypto.randomUUID()+".webp"; const bytes=await file.arrayBuffer(); await reserveR2(env,businessId,bytes.byteLength);
+        try{await env.FILES.put(key,bytes,{httpMetadata:{contentType:type,cacheControl:"private, no-store"},customMetadata:{business_id:businessId,item_id:fileId}});await env.DB.prepare("UPDATE items SET image_key=?,updated_at=? WHERE business_id=? AND item_id=?").bind(key,now(),businessId,fileId).run();}catch(e){await env.FILES.delete(key).catch(()=>{});await releaseR2(env,businessId,bytes.byteLength).catch(()=>{});throw e;}
+        return json(req,{uploaded:true,imageKey:key,r2UsedBytes:await currentR2Usage(env,businessId),r2QuotaBytes:R2_QUOTA});
       }
       if (kind === "pos") {
         const branch=String(url.searchParams.get("branch")||"Main branch").trim().slice(0,80)||"Main branch";
@@ -487,7 +505,7 @@ export default {
       if (kind !== "files") return json(req, { error: "Not found." }, 404);
       if (req.method === "GET" && !fileId) {
         const result = await env.DB.prepare("SELECT file_id, name, content_type, size_bytes, created_at FROM files WHERE business_id = ? ORDER BY created_at DESC LIMIT 200").bind(businessId).all();
-        return json(req, { files: result.results || [], usedBytes: await currentUsage(env, businessId), quotaBytes: QUOTA });
+        return json(req, { files: result.results || [], usedBytes: await currentR2Usage(env, businessId), quotaBytes: R2_QUOTA });
       }
       if (req.method === "POST" && !fileId) {
         const form = await req.formData();
@@ -501,16 +519,16 @@ export default {
         const name = safeName(file.name);
         const objectKey = "businesses/" + businessId + "/files/" + id + "/" + name;
         const bytes = await file.arrayBuffer();
-        await reserve(env, businessId, bytes.byteLength);
+        await reserveR2(env, businessId, bytes.byteLength);
         try {
           await env.FILES.put(objectKey, bytes, { httpMetadata: { contentType, cacheControl: "private, no-store" }, customMetadata: { business_id: businessId, file_id: id, uploaded_by: member.userId, original_name: name } });
           await env.DB.prepare("INSERT INTO files (file_id, business_id, object_key, name, content_type, size_bytes, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").bind(id, businessId, objectKey, name, contentType, bytes.byteLength, member.userId, now()).run();
         } catch (e) {
           await env.FILES.delete(objectKey).catch(() => {});
-          await release(env, businessId, bytes.byteLength).catch(() => {});
+          await releaseR2(env, businessId, bytes.byteLength).catch(() => {});
           throw e;
         }
-        return json(req, { uploaded: true, file: { file_id: id, name, content_type: contentType, size_bytes: bytes.byteLength, created_at: now() }, usedBytes: await currentUsage(env, businessId), quotaBytes: QUOTA });
+        return json(req, { uploaded: true, file: { file_id: id, name, content_type: contentType, size_bytes: bytes.byteLength, created_at: now() }, usedBytes: await currentR2Usage(env, businessId), quotaBytes: R2_QUOTA });
       }
       if (req.method === "GET" && fileId) {
         const row = await env.DB.prepare("SELECT object_key, name, content_type, size_bytes FROM files WHERE business_id = ? AND file_id = ?").bind(businessId, fileId).first();
@@ -529,7 +547,7 @@ export default {
         if (!row) return json(req, { error: "File not found." }, 404);
         await env.FILES.delete(row.object_key);
         await env.DB.prepare("DELETE FROM files WHERE business_id = ? AND file_id = ?").bind(businessId, fileId).run();
-        await release(env, businessId, Number(row.size_bytes || 0));
+        await releaseR2(env, businessId, Number(row.size_bytes || 0));
         return json(req, { deleted: true, usedBytes: await currentUsage(env, businessId), quotaBytes: QUOTA });
       }
       return json(req, { error: "Method not allowed." }, 405);
