@@ -65,6 +65,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [retellPlatformMessage, setRetellPlatformMessage] = useState("");
   const [palPlatformConfig, setPalPlatformConfig] = useState<any>({ keyConfigured: false });
   const [palPlatformKey, setPalPlatformKey] = useState("");
+  const [palPlatformBasic, setPalPlatformBasic] = useState("");
   const [palPlatformMessage, setPalPlatformMessage] = useState("");
   const [sautikitPlatformConfig, setSautikitPlatformConfig] = useState<any>({ keyConfigured: false });
   const [sautikitPlatformKey, setSautikitPlatformKey] = useState("");
@@ -165,13 +166,15 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   };
 
   const savePalPlussPlatformKey = async () => {
-    if (!supabase || palPlatformKey.trim().length < 20) return;
+    if (!supabase || (!palPlatformKey.trim() && !palPlatformBasic.trim())) return;
+    if (palPlatformKey.trim() && palPlatformBasic.trim()) { setPalPlatformMessage("Use either the API key or the Base64 Basic Authorization value, not both."); return; }
     setBusy(true); setPalPlatformMessage("");
     try {
-      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "palpluss.platform.save", apiKey: palPlatformKey.trim() } });
+      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "palpluss.platform.save", ...(palPlatformKey.trim() ? { apiKey: palPlatformKey.trim() } : { basicAuthorization: palPlatformBasic.trim() }) } });
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(String(data.error));
       setPalPlatformKey("");
+      setPalPlatformBasic("");
       setPalPlatformConfig((current: any) => ({ ...current, ...data, keyConfigured: true }));
       setPalPlatformMessage(data.message || "Central PalPluss account connected.");
       await loadPal();
@@ -573,8 +576,16 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     </section>}
     {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Central PalPluss collections</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">Connect one TWIGA PalPluss account here. Each business then registers its own Safaricom Buy Goods Till or Paybill, and payment prompts route to that business's shortcode.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{palPlatformConfig.keyConfigured ? "Connected · •••• " + palPlatformConfig.keyLast4 : "Needs API key"}</span></div>
-      <div className="mt-4 flex flex-col gap-2 sm:flex-row"><input type="password" autoComplete="new-password" value={palPlatformKey} onChange={(e) => setPalPlatformKey(e.target.value)} placeholder={palPlatformConfig.keyConfigured ? "Enter rotated PalPluss key to replace it" : "PalPluss platform API key"} className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-200 px-3 text-sm" /><button onClick={savePalPlussPlatformKey} disabled={busy || palPlatformKey.trim().length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save PalPluss</button></div>
-      <p className="mt-2 text-xs text-neutral-500">The central key is stored in encrypted Supabase Vault. It is never sent to the browser's payment requests.</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-600">PalPluss API key
+          <input type="password" autoComplete="new-password" value={palPlatformKey} onChange={(e) => setPalPlatformKey(e.target.value)} placeholder={palPlatformConfig.keyConfigured ? "Enter rotated API key to replace it" : "PalPluss platform API key"} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" />
+        </label>
+        <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-600">Base64 Basic Authorization (optional)
+          <input type="password" autoComplete="new-password" value={palPlatformBasic} onChange={(e) => setPalPlatformBasic(e.target.value)} placeholder="Basic … or Base64 value" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case" />
+        </label>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2"><button onClick={savePalPlussPlatformKey} disabled={busy || (!palPlatformKey.trim() && !palPlatformBasic.trim()) || (!!palPlatformKey.trim() && !!palPlatformBasic.trim())} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save PalPluss</button><a href="https://www.palpluss.com/" target="_blank" rel="noreferrer" className="text-sm font-semibold text-orange-700 underline">Open PalPluss ↗</a></div>
+      <p className="mt-2 text-xs leading-5 text-neutral-500">You may enter the raw API key or its Basic Base64 encoding of API_KEY: (empty password). TWIGA validates and stores only the API key in encrypted Vault, then constructs the Basic header server-side. This is not a separate Safaricom Daraja OAuth token.</p>
       {palPlatformMessage && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{palPlatformMessage}</p>}
     </section>}
     {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
