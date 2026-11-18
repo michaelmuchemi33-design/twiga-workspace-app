@@ -15,6 +15,7 @@ type Tab = "sell" | "sales" | "expenses" | "stock";
 
 const fmt = (value: number) => "KSh " + Number(value || 0).toLocaleString("en-KE", { maximumFractionDigits: 2 });
 const todayKey = () => new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Nairobi" });
+const localDay = (value: string) => new Date(value).toLocaleDateString("en-CA", { timeZone: "Africa/Nairobi" });
 const safeDate = (value: string) => new Date(value).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" });
 
 export default function PointOfSale() {
@@ -91,7 +92,7 @@ export default function PointOfSale() {
   const cartTotal = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
   const cartQty = cart.reduce((sum, line) => sum + line.quantity, 0);
   const total = Math.max(0, cartTotal - Math.max(0, Number(discount) || 0) + Math.max(0, Number(tax) || 0));
-  const todaySales = sales.filter((x) => x.created_at.slice(0, 10) === todayKey() && x.status !== "voided");
+  const todaySales = sales.filter((x) => localDay(x.created_at) === todayKey() && x.status !== "voided");
   const todayRevenue = todaySales.filter((x) => x.payment_status === "paid").reduce((sum, x) => sum + Number(x.total_amount), 0);
   const todayExpenses = expenses.filter((x) => x.expense_date === todayKey()).reduce((sum, x) => sum + Number(x.amount), 0);
   const todayProfit = todaySales.filter((x) => x.payment_status === "paid").reduce((sum, x) => sum + Number(x.gross_profit), 0);
