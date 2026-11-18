@@ -1,0 +1,77 @@
+name: Deploy all TWIGA apps to Cloudflare
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout continuation workspace
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+
+      - name: Build TWIGA dashboard
+        run: npm install && npm run build
+        env:
+          VITE_SUPABASE_URL: https://ztyxxikkposfpxsutnfr.supabase.co
+          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_Zex31DUxW6bX3LP6Wlos2Q_pMiZ_JeT
+          VITE_APP_MODE: live
+
+      - name: Deploy TWIGA dashboard (app/live/demo)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: 1cc614c3da5df801f742a023ae1ffc95
+          command: pages deploy dist --project-name=twiga-workspace --branch=main
+
+      - name: Checkout public landing site
+        uses: actions/checkout@v4
+        with:
+          repository: michaelmuchemi33-design/ai-receptionist-kenya
+          ref: main
+          path: public-site-source
+
+      - name: Prepare public landing assets
+        run: |
+          mkdir -p public-site-dist
+          rsync -a --exclude='.git/' --exclude='.github/' --exclude='*.py' --exclude='README*' public-site-source/ public-site-dist/
+
+      - name: Deploy public landing site
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: 1cc614c3da5df801f742a023ae1ffc95
+          command: pages deploy public-site-dist --project-name=twiga-public-site --branch=main
+
+      - name: Checkout TWIGA admin/site source
+        uses: actions/checkout@v4
+        with:
+          repository: michaelmuchemi33-design/TWIGA
+          ref: main
+          path: twiga-admin-source
+
+      - name: Build admin/site and Pages Functions
+        working-directory: twiga-admin-source/web
+        run: npm install && npm run build
+        env:
+          VITE_SUPABASE_URL: https://ztyxxikkposfpxsutnfr.supabase.co
+          VITE_SUPABASE_ANON_KEY: sb_publishable_Zex31DUxW6bX3LP6Wlos2Q_pMiZ_JeT
+          VITE_ADMIN_OWNER_EMAIL: michaelmuchemi33@gmail.com
+
+      - name: Deploy admin/site and API functions
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: 1cc614c3da5df801f742a023ae1ffc95
+          workingDirectory: twiga-admin-source/web
+          command: pages deploy dist --project-name=twiga-admin --branch=main
