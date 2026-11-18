@@ -180,9 +180,9 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   const googleOAuthReady = !!oauthConfig.serverConfigured;
   const sautikitProviderConnected = sautikitConfig.providerConnected === true;
   const sautikitDirectReady = sautikitConfig.serverDirectReady === true || sautikitConfig.serverProxyReady === true || sautikitConfig.keyConfigured === true;
-  const sautikitBadge = sautikitProviderConnected
-    ? (sautikitDirectReady ? "Direct · ready" : "Linked · key needed")
-    : (sautikitDirectReady ? "Checking workspace" : "Connect workspace");
+  const sautikitBadge = sautikitDirectReady
+    ? (sautikitProviderConnected && sautikitConfig.inboundVerified ? "Direct · verified" : "Workspace connected · setup needed")
+    : "Connect workspace";
   return <div className="mx-auto max-w-5xl space-y-5">
     <header className="rounded-2xl border border-neutral-200 bg-white p-6">
       <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Workspace integrations</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Connections & permissions</h1>
@@ -231,7 +231,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
         {sautikitConfig.phoneLine?.line_number && <p className="mt-2 text-sm font-semibold text-neutral-900">Saved AI line: {sautikitConfig.phoneLine.line_number}</p>}
         {sautikitConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Encrypted credential saved{sautikitConfig.keyLast4 ? ` · ending ${sautikitConfig.keyLast4}` : ""}{sautikitConfig.keyScope ? ` · ${sautikitConfig.keyScope} scope` : ""}.</p>}
         <label className="mt-4 block text-sm font-medium text-neutral-800">{sautikitConfig.keyScope === "business" ? "Replace this business’s SautiKit workspace API key" : "SautiKit workspace API key"}<input type="password" autoComplete="new-password" value={sautikitKey} onChange={e => setSautikitKey(e.target.value)} placeholder="Paste SautiKit workspace API key" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
-        <p className="mt-2 text-xs leading-5 text-neutral-500">Create the key inside the SautiKit workspace that owns this business’s phone number: Settings → API keys. Use a workspace key, not a personal/KYC key or Composio key. If the saved phone number belongs to a different SautiKit workspace, TWIGA will report that mismatch and keep calling disabled until the correct number is assigned.</p>
+        <p className="mt-2 text-xs leading-5 text-neutral-500">Create the key inside the SautiKit workspace that owns this business’s phone number: Developers → API keys. Use a workspace key, not a personal/KYC key or Composio key. If the saved phone number belongs to a different SautiKit workspace, TWIGA will report that mismatch and keep calling disabled until the correct number is assigned.</p>
         <a href="https://app.sautikit.com/developers/api-keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Open SautiKit API keys ↗</a>
         <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => void saveProviderKey("sautikit")} disabled={providerBusy || !businessId || !sautikitKey.trim()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{providerBusy ? "Checking…" : "Validate & connect this business"}</button><button onClick={() => void refreshProviders()} disabled={providerBusy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">Refresh status</button></div>
         {Array.isArray(sautikitConfig.availableNumbers) && sautikitConfig.availableNumbers.length > 0 && <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3">
