@@ -35,7 +35,7 @@ async function functionErrorMessage(error: any, fallback = "The PalPluss service
 }
 
 export default function Payments() {
-  const { businessId } = useStore();
+  const { businessId, demoMode, payments: samplePayments } = useStore();
   const [tab, setTab] = useState<Tab>("collect");
   const [connected, setConnected] = useState(false);
   const [keyLast4, setKeyLast4] = useState("");
@@ -85,7 +85,30 @@ export default function Payments() {
     if (!businessId || !supabase) return;
     void loadPendingOrders();
     const channel = supabase.channel("twiga-payment-orders-" + businessId).on("postgres_changes", { event: "*", schema: "public", table: "twiga_orders", filter: "business_id=eq." + businessId }, () => { void loadPendingOrders(); }).subscribe();
-    return () => { void supabase.removeChannel(channel); };
+    if (demoMode) return <div className="space-y-6">
+    <header className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wider text-orange-600">Sample payment workspace</p>
+      <h1 className="mt-1 text-2xl font-bold text-neutral-950">Payments & M-Pesa</h1>
+      <p className="mt-2 text-sm text-neutral-600">Explore sample payment requests and statuses. Demo mode never sends a real STK prompt or saves payment credentials.</p>
+    </header>
+    <div className="grid gap-4 sm:grid-cols-3">
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs text-neutral-500">Sample transactions</p><p className="mt-1 text-2xl font-bold text-neutral-950">{samplePayments.length}</p></div>
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs text-neutral-500">Sample collected</p><p className="mt-1 text-2xl font-bold text-neutral-950">KSh {samplePayments.filter((x) => x.status === "paid").reduce((sum, x) => sum + x.amount, 0).toLocaleString()}</p></div>
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs text-neutral-500">Awaiting payment</p><p className="mt-1 text-2xl font-bold text-neutral-950">{samplePayments.filter((x) => x.status === "pending").length}</p></div>
+    </div>
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <h2 className="text-lg font-semibold text-neutral-950">Sample payment activity</h2>
+      <div className="mt-3 divide-y divide-neutral-100">
+        {samplePayments.map((payment) => <div key={payment.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+          <div><p className="text-sm font-semibold text-neutral-900">{payment.customer}</p><p className="mt-1 text-xs text-neutral-500">{payment.phone} · {payment.note}</p></div>
+          <div className="flex items-center gap-3"><strong className="text-sm text-neutral-950">KSh {payment.amount.toLocaleString()}</strong><span className={"rounded-full px-3 py-1 text-xs font-semibold " + (payment.status === "paid" ? "bg-neutral-900 text-white" : payment.status === "pending" ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600")}>{payment.status}</span></div>
+        </div>)}
+      </div>
+      <p className="mt-4 rounded-xl bg-orange-50 p-3 text-xs leading-5 text-orange-900">To connect a real PalPluss account, leave demo mode and open Connections & permissions. API keys and Base64 credentials should only be entered in the authenticated business workspace.</p>
+    </section>
+  </div>;
+
+  return () => { void supabase.removeChannel(channel); };
   }, [businessId, loadPendingOrders]);
 
   const loadTransactions = useCallback(async () => {
