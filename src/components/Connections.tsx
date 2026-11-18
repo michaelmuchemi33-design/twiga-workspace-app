@@ -121,7 +121,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       );
       setSelectedSautikitNumber(cfg.phoneLine?.provider_reference || assignable?.id || "");
     } else {
-      setSautikitConfig({ isPlatformAdmin: false, providerError: sautikit.status === "rejected" ? String(sautikit.reason) : await edgeFunctionError(sautikit.value.error, "SautiKit status could not be loaded.") });
+      setSautikitConfig({ isPlatformAdmin: false, providerError: sautikit.status === "rejected" ? String(sautikit.reason) : await edgeFunctionError(sautikit.value.error, "TWIGA phone service status could not be loaded.") });
     }
     if (xai.status === "fulfilled" && !xai.value.error && !xai.value.data?.error) setXaiConfig(xai.value.data || {});
     else setXaiConfig({ isAdmin: false });
@@ -214,18 +214,18 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   };
 
   const assignSautikitNumber = async () => {
-    if (!supabase || !businessId || !selectedSautikitNumber) { setProviderMessage("Choose a SautiKit number first."); return; }
+    if (!supabase || !businessId || !selectedSautikitNumber) { setProviderMessage("Choose a phone number first."); return; }
     setProviderBusy(true); setProviderMessage("Assigning the selected number to this business…");
     try {
       const assignAction = sautikitConfig.keyScope === "platform" ? "admin_assign_number" : "assign_business_number";
       const { data, error } = await supabase.functions.invoke("twiga-sautikit", { body: { action: assignAction, businessId, numberId: selectedSautikitNumber } });
       if (error) throw error;
       if (data?.error) throw new Error(String(data.error));
-      setProviderMessage(data?.message || "SautiKit number assigned to this business.");
+      setProviderMessage(data?.message || "Phone number assigned to this business.");
       await refreshProviders();
     } catch (e: any) {
       const status = Number(e?.context?.status || e?.status || 0);
-      setProviderMessage((status ? "Number assignment failed (HTTP " + status + "). " : "") + await edgeFunctionError(e, "Could not assign the SautiKit number."));
+      setProviderMessage((status ? "Number assignment failed (HTTP " + status + "). " : "") + await edgeFunctionError(e, "Could not assign the phone number."));
     } finally { setProviderBusy(false); }
   };
 
@@ -360,13 +360,13 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
         </> : <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">Only the TWIGA platform administrator can manage this shared API key.</p>}
       </div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">AI phone provider</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">SautiKit · Direct API</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${sautikitProviderConnected ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{sautikitBadge}</span></div>
-        <p className="mt-2 text-sm leading-6 text-neutral-600">TWIGA manages one shared SautiKit provider connection for all customer accounts. Each business has its own assigned phone number, dedicated receptionist agent, call history and operating instructions. Customers do not need a SautiKit API key.</p>
+        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Phone service</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">Phone service connection</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${sautikitProviderConnected ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{sautikitBadge}</span></div>
+        <p className="mt-2 text-sm leading-6 text-neutral-600">TWIGA manages the phone connection centrally for customer accounts. Each business has its own assigned phone number, dedicated receptionist agent, call history and operating instructions. Customers do not need a TWIGA phone service API key.</p>
         {sautikitConfig.phoneLine?.line_number && <p className="mt-2 text-sm font-semibold text-neutral-900">This business's AI line: {sautikitConfig.phoneLine.line_number}</p>}
         <p className="mt-2 text-xs text-neutral-500">{sautikitConfig.keyConfigured
-          ? "Shared SautiKit account connected · managed by TWIGA" + (sautikitConfig.keyLast4 ? " · •••• " + sautikitConfig.keyLast4 : "")
-          : "Shared SautiKit account not configured yet. The TWIGA platform administrator must add the provider key in Profile → Platform settings."}</p>
-        <a href="https://app.sautikit.com/developers/api-keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">SautiKit workspace API keys ↗</a>
+          ? "Phone service connected · managed by TWIGA" + (sautikitConfig.keyLast4 ? " · •••• " + sautikitConfig.keyLast4 : "")
+          : "Phone service setup is pending. TWIGA support will complete the connection; business owners do not need API credentials."}</p>
+        <a href="https://app.sautikit.com/developers/api-keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Phone service credentials ↗</a>
         <div className="mt-3 flex flex-wrap gap-2">
           <button onClick={() => void refreshProviders()} disabled={providerBusy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800">Refresh provider status</button>
         </div>
@@ -380,7 +380,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
           <button onClick={() => void assignSautikitNumber()} disabled={providerBusy || !selectedSautikitNumber || !(sautikitConfig.isPlatformAdmin || sautikitConfig.keyScope === "business")} className="mt-3 rounded-xl border border-neutral-300 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 disabled:opacity-40">Assign selected number to this business</button>
           {sautikitConfig.keyScope === "platform" && !sautikitConfig.isPlatformAdmin && <p className="mt-2 text-xs text-neutral-500">Number allocation is managed centrally by TWIGA.</p>}
         </div>}
-        {sautikitConfig.providerError && <p role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{sautikitConfig.providerError}</p>}
+        {sautikitConfig.providerError && <p role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{String(sautikitConfig.providerError).replace(/SautiKit/gi, "phone service")}</p>}
       </div>
     </section>
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
