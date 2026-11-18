@@ -34,7 +34,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const [greeting, setGreeting] = useState("Hello, karibu! How can I help you today?");
   const [inboundPrompt, setInboundPrompt] = useState("");
   const [outboundPrompt, setOutboundPrompt] = useState("");
-  const [testPhone, setTestPhone] = useState("");
+  const [testPhone, setTestPhone] = useState("0793832286");
   const [testConsent, setTestConsent] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -125,7 +125,6 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     const to = toE164(testPhone);
     if (!to) { setError("Enter a valid phone number, e.g. +2547XXXXXXXX."); return; }
     if (!testConsent) { setError("Confirm that you own this number or have permission to call it."); return; }
-    if (!config.keyConfigured || !line || !config.agent) { setError("Connect SautiKit and assign an active AI phone line before placing a test call."); return; }
     if (!window.confirm(`Place a real AI voice test call to ${to}?`)) return;
     setTestingCall(true); setError(""); setMessage("Submitting your voice test call…");
     try {
@@ -174,7 +173,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
 
   return <div className="mx-auto max-w-6xl space-y-5">
     <header className="rounded-2xl border border-neutral-200 bg-white p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">TWIGA · AI phone desk</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Phone & AI receptionist</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Manage your AI receptionist, assigned business number, inbound route, customer callbacks, reminders and consent-based outreach from one place. TWIGA manages the voice provider connection centrally.</p></div><button onClick={() => void load()} disabled={loading} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700 disabled:opacity-40">{loading ? "Refreshing…" : "Refresh"}</button></div>
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">TWIGA · AI phone desk</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Phone & AI receptionist</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Manage your AI receptionist, assigned business number, inbound route, customer callbacks, reminders and consent-based outreach from one place. TWIGA manages the voice provider connection centrally.</p></div><button onClick={() => void load()} disabled={loading} className="rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800 transition hover:bg-orange-100 disabled:opacity-60">{loading ? "Refreshing…" : "Refresh"}</button></div>
     </header>
 
     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -205,7 +204,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
         </div>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-neutral-500">Selected: <strong className="text-neutral-900">{voiceId}</strong></p>
-          <button type="button" onClick={() => void continueVoice()} disabled={savingVoiceChoice} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-bold text-neutral-950 disabled:opacity-50">{savingVoiceChoice ? "Saving…" : "Continue →"}</button>
+          <button type="button" onClick={() => void continueVoice()} disabled={savingVoiceChoice} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 active:scale-[.99] disabled:cursor-wait disabled:opacity-60">{savingVoiceChoice ? "Saving…" : "Continue →"}</button>
         </div>
       </div> : <div className="mt-5 grid gap-4 lg:grid-cols-2">
         <div className="space-y-4">
@@ -218,17 +217,17 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
           <label className="block text-sm font-medium text-neutral-800">Inbound call instructions<textarea value={inboundPrompt} onChange={e => setInboundPrompt(e.target.value)} rows={4} maxLength={5000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
           <label className="block text-sm font-medium text-neutral-800">Outbound call instructions<textarea value={outboundPrompt} onChange={e => setOutboundPrompt(e.target.value)} rows={4} maxLength={5000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
           <p className="rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-800">{config.keyConfigured && line && config.agent ? "The selected voice can be published to your SautiKit receptionist." : "Your preference is saved. Publishing is available when the SautiKit account, number and receptionist agent are connected."}</p>
-          <button onClick={() => void publishVoice()} disabled={savingVoice || !voiceModel || !voiceId || !config.keyConfigured || !line || !config.agent} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{savingVoice ? "Publishing…" : "Publish voice & instructions"}</button>
+          <button onClick={() => void publishVoice()} disabled={savingVoice || !voiceModel || !voiceId || !config.keyConfigured || !line || !config.agent} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-wait disabled:opacity-60">{savingVoice ? "Publishing…" : "Publish voice & instructions"}</button>
         </div>
       </div>}
     </section>
 
     <section className="grid gap-5 lg:grid-cols-2">
       <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-        <h2 className="text-lg font-semibold text-neutral-950">Test the selected voice</h2><p className="mt-1 text-sm text-neutral-500">This places a real outbound call to the number you enter.</p>
-        <label className="mt-4 block text-sm font-medium text-neutral-800">Your test phone number<input value={testPhone} onChange={e => setTestPhone(e.target.value)} placeholder="+2547XXXXXXXX" inputMode="tel" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
+        <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold text-neutral-950">Test the selected voice</h2><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-700">Live phone test</span></div><p className="mt-1 text-sm text-neutral-500">Enter your number and request a real outbound call. The AI receptionist will call you using the selected voice. Provider setup must be complete first.</p>
+        <label className="mt-4 block text-sm font-medium text-neutral-800">Your test phone number<input value={testPhone} onChange={e => setTestPhone(e.target.value)} placeholder="0793832286 or +2547XXXXXXXX" inputMode="tel" className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-3 text-base text-neutral-950 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100" /></label>
         <label className="mt-3 flex items-start gap-2 text-sm text-neutral-700"><input type="checkbox" checked={testConsent} onChange={e => setTestConsent(e.target.checked)} className="mt-1" />I own this number or have permission to receive this test call.</label>
-        <button onClick={() => void testVoice()} disabled={testingCall || !config.keyConfigured || !line || !config.agent} className="mt-4 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{testingCall ? "Calling…" : "Call my phone to test voice"}</button>
+        <button onClick={() => void testVoice()} disabled={testingCall} className="mt-4 w-full rounded-xl bg-orange-500 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-wait disabled:opacity-60">{testingCall ? "Requesting call…" : "Request test call"}</button>
       </div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5"><h2 className="text-lg font-semibold text-neutral-950">Inbound routing check</h2><p className="mt-2 text-sm leading-6 text-neutral-600">{config.inboundVerified ? "The inbound provider route is verified." : config.inboundBound ? "The SautiKit agent is bound to this line, but a real incoming call still needs to be tested." : "No verified inbound agent route is reported for this line yet."}</p><div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Inbound route</p><p className="mt-1 text-sm font-semibold text-neutral-900">{config.inboundBound ? "Agent bound" : "Not bound"}</p></div><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Live verification</p><p className="mt-1 text-sm font-semibold text-neutral-900">{config.inboundVerified ? "Verified" : "Pending"}</p></div></div></div>
     </section>
