@@ -95,12 +95,16 @@ const ACTIONS = {
     const paid = d.paid === true && method !== 'M-Pesa STK' ? total : 0;
     const status = paid >= total ? 'Paid' : (type === 'Quote' ? 'Quote' : 'New');
     const customer = txt(d.customer, 120) || 'Walk-in', t = now();
+    const branch = txt(d.branch, 80) || 'Main branch';
+    const source = d.source === 'ai_receptionist' ? 'ai_receptionist' : 'pos';
+    const itemLines = items.map(it => ({productId: it.itemId, name: it.name, qty: it.qty, unitPrice: it.price, total: it.total, kind: it.kind || 'product'}));
+    const stockCommitted = paid >= total;
     await room(env, biz, size(customer, d.notes) + items.length * 160);
     const out = {ok: true, orderId: orderId, total: total, status: status};
-    const st = [env.DB.prepare('INSERT INTO orders (business_id, order_id, created_at, date, customer, phone, type, status, total, paid, method, notes, staff, branch, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(biz, orderId, t, txt(d.date, 20) || today(), customer, txt(d.phone, 30), type, status, total, paid, method, txt(d.notes, 300), txt(d.staff, 80), txt(d.branch, 80), t)];
+    const st = [env.DB.prepare('INSERT INTO orders (business_id, order_id, created_at, date, customer, phone, type, status, total, paid, method, notes, staff, branch, updated_at, items_json, source, subtotal, payment_status, stock_committed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(biz, orderId, t, txt(d.date, 20) || today(), customer, txt(d.phone, 30), type, status, total, paid, method, txt(d.notes, 300), txt(d.staff, 80), branch, t, JSON.stringify(itemLines), source, total, paid >= total ? 'paid' : 'unpaid', stockCommitted ? 1 : 0)];
     items.forEach((it, i) => {
       st.push(env.DB.prepare('INSERT INTO order_items (business_id, order_id, line, item_id, name, qty, unit_price, line_total) VALUES (?,?,?,?,?,?,?,?)').bind(biz, orderId, i + 1, it.itemId, it.name, it.qty, it.price, it.total));
-      if (it.itemId) st.push(env.DB.prepare('UPDATE items SET stock = stock - ?, updated_at = ? WHERE business_id = ? AND item_id = ? AND track_stock = 1 AND stock >= ?').bind(it.qty, t, biz, it.itemId, it.qty));
+      if (stockCommitted && it.itemId) st.push(env.DB.prepare('UPDATE items SET stock = stock - ?, updated_at = ? WHERE business_id = ? AND item_id = ? AND track_stock = 1 AND stock >= ?').bind(it.qty, t, biz, it.itemId, it.qty));
     });
     st.push(charge(env, biz, size(customer, d.notes) + items.length * 160));
     if (txn) st.push(remember(env, biz, txn, out));
@@ -275,6 +279,7 @@ async function aiCreateOrder(env, ctx, args, callId, toolId) {
   const order = await ACTIONS.createOrder(env, ctx, {
     type: 'Sale', customer: customer, phone: phone, method: 'Pay later', paid: false,
     notes: txt(args.notes, 250) || 'Order taken by TWIGA AI receptionist.',
+    source: 'ai_receptionist',
     items: items
   }, txn);
   await aiSaveContact(env, ctx, customer, phone);
@@ -365,7 +370,8 @@ async function aiBookAppointment(env, ctx, args, callId, toolId) {
       type: 'Appointment', customer: customer, phone: phone, method: 'Booking', paid: false,
       date: availability.date,
       notes: 'Time: ' + availability.time + ' (' + availability.durationMinutes + ' minutes). ' + txt(args.notes, 180),
-      items: [{itemId: service.ItemId, name: service.Name, qty: 1, unitPrice: Number(service.Price || 0)}]
+      source: 'ai_receptionist',
+      items: [{itemId: service.ItemId, name: service.Name, qty: 1, unitPrice: Number(service.Price || 0), kind: 'service'}]
     }, txn);
   }
   const start = new Date(availability.date + 'T' + availability.time + ':00+03:00');
