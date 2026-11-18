@@ -55,7 +55,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
   onBusinessCreated: (id: string) => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([
-    { id: "welcome", role: "ai", text: "Hi! I can configure your TWIGA business and AI receptionist. Tell me what your business does, what you offer, your prices and opening hours. I'll organise your services, bookings, orders, FAQs, language, greeting and call-handling rules. I can update the business profile and receptionist settings, but I cannot change your subscription, buy services or make payments." },
+    { id: "welcome", role: "ai", text: "Hi! I can configure your TWIGA business and AI receptionist. Tell me what your business does, what you offer, your prices and opening hours, or attach your business files. I'll organise your services, bookings, orders, FAQs, language, greeting and call-handling rules. I can update the business profile and receptionist settings, but I cannot change your subscription, buy services or make payments." },
   ]);
   const [input, setInput] = useState("");
   const [ownerName, setOwnerName] = useState("");
@@ -138,7 +138,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
         const lower = x.toLowerCase();
         return lower.includes("products") ? !merged.products_and_services : lower.includes("opening") ? !merged.opening_hours : lower.includes("booking") ? !merged.setup_details?.booking_policy : lower.includes("order") ? !merged.setup_details?.order_handling : lower.includes("faq") ? !merged.frequently_asked_questions : !merged.receptionist_greeting;
       }));
-      if (merged.business_name) setMessages([{ id: "welcome", role: "ai", text: "I have loaded the saved profile for " + merged.business_name + ". Tell me what you want to change or add. I will preserve the details already saved and update only the business and AI settings you discuss. Billing, subscriptions and purchases stay outside my control." }]);
+      if (merged.business_name) setMessages([{ id: "welcome", role: "ai", text: "I have loaded the saved profile for " + merged.business_name + ". Tell me what you want to change, or attach text and CSV files to add verified business details. I will preserve the details already saved and update only the business and AI settings you discuss. Billing, subscriptions and purchases stay outside my control." }]);
     }).catch((e) => { if (active) setError(e instanceof Error ? e.message : "Could not load the saved business profile."); })
       .finally(() => { if (active) setLoadingProfile(false); });
     return () => { active = false; };
@@ -176,7 +176,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
           const file = attachments[index];
           if (!file.size || file.size > 25 * 1024 * 1024) throw new Error(file.name + " must be between 1 byte and 25 MB.");
           const extension = file.name.split(".").pop()?.toLowerCase() || "";
-          const contentType = file.type === "text/markdown" || file.type === "application/json" ? "text/plain" : (file.type || fallbackTypes[extension] || "application/octet-stream");
+          const contentType = ["md", "json"].includes(extension) ? "text/plain" : (fallbackTypes[extension] || file.type || "application/octet-stream");
           const uploadFile = new File([file], file.name, { type: contentType });
           const form = new FormData();
           form.append("file", uploadFile, file.name);
@@ -330,7 +330,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       const taskSummary = setupTaskCount > 0
         ? " " + setupTaskCount + " onboarding task(s) were added to Organize."
         : " No new onboarding tasks were created (there may be no task templates yet, or they were already added).";
-      setMessages((m) => [...m, { id: String(Date.now()), role: "ai", text: "Your business profile and AI setup instructions have been saved." + taskSummary + " " + phoneSummary + " Your subscription, payments and purchases have not been changed." }]);
+      setMessages((m) => [...m, { id: String(Date.now()), role: "ai", text: "Your business profile and AI setup instructions have been saved." + taskSummary + " " + phoneSummary.replace(/SautiKit/gi, "phone service") + " Your subscription, payments and purchases have not been changed." }]);
       setNotice("Business profile saved.");
       if (!isEditing) onDone();
     } catch (e) {
@@ -396,6 +396,6 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       </aside>
     </div>
     {notice && <p role="status" className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-xs text-orange-900">{notice}</p>}
-    {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+    {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error.replace(/SautiKit/gi, "phone service")}</p>}
   </div>;
 }
