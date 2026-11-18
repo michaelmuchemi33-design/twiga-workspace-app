@@ -159,8 +159,9 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
         // First-time setup creates the dedicated agent, booking tool, publishes it and binds the number.
         result = await invoke("create_agent");
       } else {
-        // Repair an existing draft/agent's inbound binding before publishing its latest instructions.
-        if (!config.inboundBound) await invoke("bind_agent");
+        // Always re-attach booking, CRM, task and consent-based callback tools.
+        // Older published agents can have a working inbound route but zero tools.
+        result = await invoke("bind_agent");
         result = await invoke("publish_agent");
       }
       setMessage(result?.message || `The ${voiceId === "Man" ? "male" : "female"} receptionist voice and instructions were saved.`);
