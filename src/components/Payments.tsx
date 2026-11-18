@@ -286,7 +286,7 @@ if (demoMode) return (<div className="space-y-6">
         <div className="mt-3 flex justify-between text-sm"><span className="text-neutral-500">Service wallet</span><strong>{balance?.availableBalance != null ? "KES " + Number(balance.availableBalance).toLocaleString() : "Not checked"}</strong></div>
         <button onClick={refresh} disabled={busy || !connected} className="mt-4 w-full rounded-xl border px-4 py-2.5 text-sm font-semibold disabled:opacity-40">Refresh wallet & status</button>
       </section>
-    </div>
+    </div>}
 
     {message && <p className="rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{message}</p>}
   </div>;
