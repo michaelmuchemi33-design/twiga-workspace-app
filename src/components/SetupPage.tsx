@@ -73,6 +73,8 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
   const [businessFiles, setBusinessFiles] = useState<BusinessFile[]>([]);
   const [storageUsedBytes, setStorageUsedBytes] = useState(0);
   const [storageQuotaBytes, setStorageQuotaBytes] = useState(500 * 1024 * 1024);
+  const [d1StorageUsedBytes, setD1StorageUsedBytes] = useState(0);
+  const [d1StorageQuotaBytes, setD1StorageQuotaBytes] = useState(500 * 1024 * 1024);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [fileMessage, setFileMessage] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -80,12 +82,14 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
   const isEditing = Boolean(businessId);
 
   const refreshBusinessFiles = useCallback(async () => {
-    if (demo || !businessId || !supabase) { setBusinessFiles([]); setStorageUsedBytes(0); return; }
+    if (demo || !businessId || !supabase) { setBusinessFiles([]); setStorageUsedBytes(0); setD1StorageUsedBytes(0); return; }
     const { data, error } = await supabase.auth.getSession();
     if (error || !data.session?.access_token) throw new Error("Sign in again to access business files.");
     const response = await fetch(`${BUSINESS_FILES_API}/usage/${encodeURIComponent(businessId)}`, { headers: { Authorization: `Bearer ${data.session.access_token}` } });
     if (!response.ok) { const result = await response.json().catch(() => ({})); throw new Error(result.error || "Could not load business storage usage."); }
     const usage = await response.json();
+    setD1StorageUsedBytes(Number(usage.d1UsedBytes || 0));
+    setD1StorageQuotaBytes(Number(usage.d1QuotaBytes || 500 * 1024 * 1024));
     const listResponse = await fetch(`${BUSINESS_FILES_API}/files/${encodeURIComponent(businessId)}`, { headers: { Authorization: `Bearer ${data.session.access_token}` } });
     const result = await listResponse.json().catch(() => ({}));
     if (!listResponse.ok) throw new Error(result.error || "Could not load business files.");
@@ -384,7 +388,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
         </div>
         <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-semibold text-neutral-900">Business files</h3><span className="text-[11px] text-neutral-500">{businessFiles.length} files</span></div>
-          <p className="mt-2 text-xs leading-5 text-neutral-500">Private storage for this business. {formatFileSize(storageUsedBytes)} used of {formatFileSize(storageQuotaBytes)}. Files stay scoped to this workspace.</p>
+          <p className="mt-2 text-xs leading-5 text-neutral-500">Private storage for this business. R2 files: {formatFileSize(storageUsedBytes)} of {formatFileSize(storageQuotaBytes)}. D1 business data: {formatFileSize(d1StorageUsedBytes)} of {formatFileSize(d1StorageQuotaBytes)} (metered data allowance). Files stay scoped to this workspace.</p>
           {!businessId ? <p className="mt-3 rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600">Create your workspace to enable secure file storage.</p> : businessFiles.length ? <div className="mt-3 max-h-64 space-y-2 overflow-y-auto">{businessFiles.map((file) => <div key={file.file_id} className="flex items-center gap-2 rounded-lg bg-neutral-50 p-2"><div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-neutral-800">{file.name}</p><p className="text-[10px] text-neutral-500">{formatFileSize(file.size_bytes)} · {file.content_type}</p></div><button type="button" onClick={() => void downloadBusinessFile(file)} className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-[10px] font-semibold text-neutral-700">Get</button><button type="button" onClick={() => void deleteBusinessFile(file)} className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-[10px] font-semibold text-neutral-700">Delete</button></div>)}</div> : <p className="mt-3 rounded-lg bg-neutral-50 p-3 text-xs text-neutral-600">No business files uploaded yet.</p>}
           {fileMessage && <p role="status" className="mt-3 text-xs text-neutral-600">{fileMessage}</p>}
         </div>
