@@ -120,13 +120,13 @@ export default function Products() {
       await load();
       const sync = await supabase!.functions.invoke("twiga-sautikit", { body: { action: "sync_catalog", businessId } });
       if (sync.error || sync.data?.error) {
-        setMessage("Saved to your catalogue. SautiKit has not confirmed a sync yet; check the shared provider connection and try again.");
+        setMessage("Saved to your catalogue. receptionist catalogue sync is not confirmed yet; check the phone connection and try again.");
       } else if (sync.data?.synced === false) {
-        setMessage("Saved. Your catalogue will be included automatically when this business's SautiKit receptionist is created.");
+        setMessage("Saved. Your catalogue will be included automatically when this business's TWIGA receptionist receptionist is created.");
       } else if (sync.data?.synced === true) {
-        setMessage("Saved and synced to your SautiKit receptionist. The working inbound number and route were left unchanged.");
+        setMessage("Saved and synced to your TWIGA receptionist receptionist. The working inbound number and route were left unchanged.");
       } else {
-        setMessage("Saved to your catalogue. The SautiKit sync response could not be confirmed.");
+        setMessage("Saved to your catalogue. The TWIGA receptionist sync response could not be confirmed.");
       }
       reset();
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not save this catalogue item."); }
@@ -148,7 +148,7 @@ export default function Products() {
       await load();
       const sync = await supabase.functions.invoke("twiga-sautikit", { body: { action: "sync_catalog", businessId } });
       setMessage(sync.error || sync.data?.error
-        ? "Item archived. The receptionist catalogue was not confirmed as synced; try again after checking the shared provider connection."
+        ? "Item archived. The receptionist catalogue was not confirmed as synced; try again after checking the phone connection."
         : sync.data?.synced === false
           ? "Item archived. The updated catalogue will be included when this business's receptionist is created. Old sales remain in the ledger."
           : "Item archived and receptionist catalogue synced. Old sales remain in the ledger.");
@@ -160,7 +160,7 @@ export default function Products() {
 
   return <div className="space-y-6">
     <header className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-600">Business catalogue</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Products & services</h1><p className="mt-1 text-sm text-neutral-500">One catalogue powers checkout, stock records and SautiKit receptionist knowledge.</p></div>
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-600">Business catalogue</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Products & services</h1><p className="mt-1 text-sm text-neutral-500">One catalogue powers checkout, stock records and TWIGA receptionist receptionist knowledge.</p></div>
         <button onClick={() => { reset(); document.getElementById("twiga-product-form")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-orange-600">+ Add product or service</button></div>
       <div className="mt-5 grid gap-3 sm:grid-cols-3">
         <div className="rounded-xl bg-neutral-50 p-4"><p className="text-xs text-neutral-500">Active catalogue</p><p className="mt-1 text-2xl font-bold text-neutral-950">{rows.length}</p></div>
