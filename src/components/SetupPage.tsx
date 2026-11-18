@@ -178,14 +178,14 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
         onBusinessCreated(targetBusinessId);
       }
 
-      let phoneSummary = "The business profile and operating instructions are saved. Next, connect this business's own SautiKit workspace API key under Connections & permissions, then select one of that workspace's phone numbers. The receptionist is not live until a test call succeeds.";
+      let phoneSummary = "The business profile and operating instructions are saved. TWIGA manages the shared SautiKit provider connection; each business still needs its own assigned phone number and dedicated receptionist agent.";
       try {
         const { data: config, error: configError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId: targetBusinessId } });
         if (configError) throw new Error(await edgeFunctionError(configError));
         if (config?.phoneLine?.line_number) {
           phoneSummary = "TWIGA line on this workspace: " + config.phoneLine.line_number + ".";
           if (!config.keyConfigured) {
-            phoneSummary += " The line is recorded in TWIGA, but provider verification and AI call activation are waiting for this business's own SautiKit workspace key. Connect it in Connections & permissions.";
+            phoneSummary += " The line is recorded, but TWIGA's shared SautiKit connection is not available yet. The platform administrator must connect it; business customers do not enter provider API keys.";
           } else if (config.models?.length) {
             const model = config.models.find((m: any) => m.id === (profile.sautikit_model_id || "sautikit-flash")) || config.models[0];
             const voice = (model.voices || []).includes(profile.sautikit_voice_id || "Woman") ? (profile.sautikit_voice_id || "Woman") : (model.voices || [])[0];
@@ -197,11 +197,19 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
               const { data: provision, error: provisionError } = await supabase.functions.invoke("twiga-sautikit", { body });
               if (provisionError) throw new Error(await edgeFunctionError(provisionError));
               if (provision?.error) throw new Error(String(provision.error));
-              phoneSummary += " AI receptionist agent configured; inbound routing remains in testing until a real incoming call is answered.";
+              if (action === "create_agent" && provision?.bound !== true) {
+                throw new Error(String(provision?.message || "SautiKit created the agent but did not confirm the phone-number binding. Do not create another agent; use Retry inbound binding."));
+              }
+              if (action === "publish_agent" && provision?.published !== true) {
+                throw new Error(String(provision?.message || "SautiKit did not confirm that the existing receptionist was published."));
+              }
+              phoneSummary += " SautiKit confirmed the dedicated receptionist agent and its existing number binding. The current inbound route was preserved; continue using your working incoming-call test and check the receptionist's catalogue lookup before going live.";
             }
           }
-        } else if (config?.keyConfigured && Array.isArray(config.availableNumbers) && config.availableNumbers.length > 0) {
-          phoneSummary = "SautiKit is connected to this business workspace and " + config.availableNumbers.length + " phone number(s) are available. Open Connections & permissions and assign the correct number before creating the AI receptionist.";
+        } else if (config?.keyConfigured) {
+          phoneSummary = Array.isArray(config.availableNumbers) && config.availableNumbers.length > 0
+            ? "TWIGA's shared SautiKit provider is connected and this workspace has " + config.availableNumbers.length + " available number(s). A TWIGA platform administrator must assign a dedicated number to this business before creating its receptionist."
+            : "TWIGA's shared SautiKit provider is connected, but this business has no assigned phone number. A TWIGA platform administrator must allocate a number before the AI receptionist can be created.";
         }
       } catch (phoneError) {
         phoneSummary += " Phone activation needs TWIGA attention: " + (phoneError instanceof Error ? phoneError.message : "provider check failed") + ".";
