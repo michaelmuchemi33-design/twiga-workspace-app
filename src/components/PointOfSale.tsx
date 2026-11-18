@@ -1,755 +1,287 @@
-import { useMemo, useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  IconCart,
-  IconPlus,
-  IconTrash,
-  IconCoin,
-  IconBox,
-  IconCheck,
-  IconLink,
-  IconSwap,
-  IconSparkle,
-  IconSearch,
-  IconFile,
-  IconClock,
-  IconTag,
-} from "@/components/Icons";
-import {
-  useStore,
-  uid,
-  stamp,
-  type SaleLine,
-  type Product,
-  type SellMode,
-} from "@/lib/store";
-import { cn } from "@/lib/utils";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { useStore } from "@/lib/store";
 
-type CatalogTab = "sell" | "manage";
+type Item = {
+  id: string; name: string; sku?: string | null; category?: string; description?: string;
+  price: number; cost_price?: number | null; stock_quantity: number; low_stock_threshold?: number;
+  unit?: string; image_key?: string | null; item_type: string; track_stock: boolean; currency?: string;
+};
+type SaleRow = { id: string; sale_number: string; customer_name: string; customer_phone: string | null; items: any[]; subtotal: number; discount_amount: number; tax_amount: number; total_amount: number; cost_total: number; gross_profit: number; payment_method: string; payment_status: string; notes: string | null; status: string; created_at: string };
+type ExpenseRow = { id: string; expense_date: string; category: string; description: string; amount: number; payment_method: string; receipt_reference: string | null; created_at: string };
+type Movement = { id: string; product_id: string; movement_type: string; quantity_change: number; quantity_before: number; quantity_after: number; notes: string | null; created_at: string };
+type CartLine = { product_id: string; name: string; price: number; quantity: number; stock: number; trackStock: boolean; imageUrl?: string | null };
+type Tab = "sell" | "sales" | "expenses" | "stock";
+
+const fmt = (value: number) => "KSh " + Number(value || 0).toLocaleString("en-KE", { maximumFractionDigits: 2 });
+const todayKey = () => new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Nairobi" });
+const safeDate = (value: string) => new Date(value).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" });
 
 export default function PointOfSale() {
-  const {
-    products,
-    sales,
-    addSale,
-    addProduct,
-    removeProduct,
-    importCatalog,
-    catalogSource,
-    sellMode,
-    setSellMode,
-  } = useStore();
-
-  const [tab, setTab] = useState<CatalogTab>("sell");
-  const [cart, setCart] = useState<SaleLine[]>([]);
-  const [customer, setCustomer] = useState("Walk-in");
+  const { businessId, demoMode, products: demoProducts, sales: demoSales, settings } = useStore();
+  const [tab, setTab] = useState<Tab>("sell");
+  const [items, setItems] = useState<Item[]>([]);
+  const [sales, setSales] = useState<SaleRow[]>([]);
+  const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
+  const [movements, setMovements] = useState<Movement[]>([]);
+  const [cart, setCart] = useState<CartLine[]>([]);
   const [query, setQuery] = useState("");
+  const [kind, setKind] = useState<"all" | "product" | "service">("all");
+  const [customer, setCustomer] = useState("Walk-in");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("cash");
+  const [paymentStatus, setPaymentStatus] = useState("paid");
+  const [discount, setDiscount] = useState("0");
+  const [tax, setTax] = useState("0");
+  const [expenseForm, setExpenseForm] = useState({ category: "Supplies", description: "", amount: "", payment_method: "cash", receipt_reference: "", notes: "" });
+  const [stockProduct, setStockProduct] = useState("");
+  const [stockChange, setStockChange] = useState("1");
+  const [stockCost, setStockCost] = useState("");
+  const [stockNote, setStockNote] = useState("");
+  const [stockType, setStockType] = useState("stock_in");
+  const [lastReceipt, setLastReceipt] = useState<SaleRow | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const currency = settings.business.currency || "KSh";
 
-  const modeProducts = useMemo(
-    () => products.filter((p) => p.kind === sellMode),
-    [products, sellMode]
-  );
+  const load = useCallback(async () => {
+    if (demoMode) {
+      const sample = demoProducts.map((p: any) => ({
+        id: p.id, name: p.name, price: p.price, category: p.category, description: p.description || "",
+        stock_quantity: p.stock, low_stock_threshold: p.lowStockThreshold || 5, unit: p.unit || "piece",
+        item_type: p.kind === "service" ? "service" : "product", track_stock: p.kind !== "service",
+        currency: "KES", image_key: p.imageKey || null,
+      }));
+      setItems(sample);
+      return;
+    }
+    if (!supabase || !businessId) { setItems([]); setSales([]); setExpenses([]); setMovements([]); return; }
+    const [productResult, salesResult, expenseResult, movementResult] = await Promise.all([
+      supabase.from("twiga_products").select("*").eq("business_id", businessId).eq("is_active", true).order("name"),
+      supabase.from("twiga_pos_sales").select("*").eq("business_id", businessId).order("created_at", { ascending: false }).limit(100),
+      supabase.from("twiga_pos_expenses").select("*").eq("business_id", businessId).order("expense_date", { ascending: false }).limit(100),
+      supabase.from("twiga_pos_inventory_movements").select("*").eq("business_id", businessId).order("created_at", { ascending: false }).limit(100),
+    ]);
+    if (productResult.error) throw productResult.error;
+    if (salesResult.error) throw salesResult.error;
+    if (expenseResult.error) throw expenseResult.error;
+    if (movementResult.error) throw movementResult.error;
+    const mapped = await Promise.all((productResult.data || []).map(async (p: any) => {
+      let imageUrl: string | null = null;
+      if (p.image_key) {
+        const { data } = await supabase.storage.from("twiga-product-images").createSignedUrl(p.image_key, 3600);
+        imageUrl = data?.signedUrl || null;
+      }
+      return { ...p, imageUrl, price: Number(p.price), stock_quantity: Number(p.stock_quantity), low_stock_threshold: Number(p.low_stock_threshold || 0) };
+    }));
+    setItems(mapped);
+    setSales((salesResult.data || []) as SaleRow[]);
+    setExpenses((expenseResult.data || []) as ExpenseRow[]);
+    setMovements((movementResult.data || []) as Movement[]);
+    if (!stockProduct && mapped.length) setStockProduct(mapped[0].id);
+  }, [businessId, demoMode, demoProducts, stockProduct]);
 
-  const total = useMemo(
-    () => cart.reduce((sum, l) => sum + l.price * l.qty, 0),
-    [cart]
-  );
+  useEffect(() => { void load().catch((error) => setMessage(error instanceof Error ? error.message : "Could not load Money records.")); }, [load]);
 
-  const itemCount = useMemo(
-    () => cart.reduce((sum, l) => sum + l.qty, 0),
-    [cart]
-  );
+  const filtered = useMemo(() => items.filter((p) => {
+    const matchesType = kind === "all" || p.item_type === kind;
+    const haystack = (p.name + " " + (p.sku || "") + " " + (p.category || "") + " " + (p.barcode || "")).toLowerCase();
+    return p.item_type !== "archived" && matchesType && haystack.includes(query.trim().toLowerCase());
+  }), [items, query, kind]);
+  const cartTotal = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
+  const cartQty = cart.reduce((sum, line) => sum + line.quantity, 0);
+  const total = Math.max(0, cartTotal - Math.max(0, Number(discount) || 0) + Math.max(0, Number(tax) || 0));
+  const todaySales = sales.filter((x) => x.created_at.slice(0, 10) === todayKey() && x.status !== "voided");
+  const todayRevenue = todaySales.filter((x) => x.payment_status === "paid").reduce((sum, x) => sum + Number(x.total_amount), 0);
+  const todayExpenses = expenses.filter((x) => x.expense_date === todayKey()).reduce((sum, x) => sum + Number(x.amount), 0);
+  const todayProfit = todaySales.filter((x) => x.payment_status === "paid").reduce((sum, x) => sum + Number(x.gross_profit), 0);
+  const lowStock = items.filter((x) => x.track_stock && x.stock_quantity <= Number(x.low_stock_threshold || 0));
 
-  const filtered = useMemo(
-    () =>
-      modeProducts.filter((p) =>
-        p.name.toLowerCase().includes(query.trim().toLowerCase())
-      ),
-    [modeProducts, query]
-  );
+  const add = (p: Item) => setCart((current) => {
+    const found = current.find((x) => x.product_id === p.id);
+    const nextQty = (found?.quantity || 0) + 1;
+    if (p.track_stock && nextQty > p.stock_quantity) { setMessage("Only " + p.stock_quantity + " " + (p.unit || "units") + " of " + p.name + " are available."); return current; }
+    return found
+      ? current.map((x) => x.product_id === p.id ? { ...x, quantity: nextQty } : x)
+      : [...current, { product_id: p.id, name: p.name, price: p.price, quantity: 1, stock: p.stock_quantity, trackStock: p.track_stock, imageUrl: p.imageUrl }];
+  });
+  const changeQty = (id: string, delta: number) => setCart((current) => current.map((x) => {
+    if (x.product_id !== id) return x;
+    const quantity = x.quantity + delta;
+    const source = items.find((p) => p.id === id);
+    if (source?.track_stock && quantity > source.stock_quantity) { setMessage("Not enough stock for " + x.name + "."); return x; }
+    return { ...x, quantity };
+  }).filter((x) => x.quantity > 0));
 
-  const addToCart = (id: string) => {
-    const p = products.find((x) => x.id === id);
-    if (!p) return;
-    setCart((c) => {
-      const found = c.find((l) => l.productId === p.id);
-      if (found)
-        return c.map((l) =>
-          l.productId === p.id ? { ...l, qty: l.qty + 1 } : l
-        );
-      return [...c, { productId: p.id, name: p.name, price: p.price, qty: 1 }];
-    });
+  const checkout = async () => {
+    if (!cart.length || demoMode) { if (demoMode) setMessage("Demo mode is view-only. Create a live business workspace to record real sales."); return; }
+    if (!supabase || !businessId) { setMessage("Choose a business workspace first."); return; }
+    if (Number(discount) < 0 || Number(tax) < 0 || Number(discount) > cartTotal) { setMessage("Check discount and tax values."); return; }
+    setBusy(true); setMessage("");
+    const status = paymentMethod === "credit" ? "credit" : paymentMethod === "mpesa" ? "pending" : "paid";
+    try {
+      const { data, error } = await supabase.rpc("twiga_pos_checkout", {
+        p_business_id: businessId,
+        p_items: cart.map((x) => ({ product_id: x.product_id, quantity: x.quantity })),
+        p_customer_name: customer.trim() || "Walk-in",
+        p_customer_phone: customerPhone.trim() || null,
+        p_payment_method: paymentMethod,
+        p_payment_status: status,
+        p_discount_amount: Number(discount) || 0,
+        p_tax_amount: Number(tax) || 0,
+      });
+      if (error) throw error;
+      const result = Array.isArray(data) ? data[0] : data;
+      await load();
+      setLastReceipt({ ...(result || {}), customer_name: customer.trim() || "Walk-in", customer_phone: customerPhone || null,
+        payment_method: paymentMethod, payment_status: status, status: "completed", created_at: new Date().toISOString(),
+        items: result?.items || [], subtotal: result?.subtotal || cartTotal, discount_amount: result?.discount_amount || 0, tax_amount: result?.tax_amount || 0 });
+      setCart([]); setCustomer("Walk-in"); setCustomerPhone(""); setDiscount("0"); setTax("0");
+      setMessage(paymentMethod === "mpesa" ? "Sale saved as pending. Send the M-Pesa prompt from Payments and only mark it settled after the provider confirms payment." : paymentMethod === "credit" ? "Sale recorded as customer credit. It is not counted as money collected." : "Sale completed and stock updated.");
+      if (result?.id) {
+        const { data: saved } = await supabase.from("twiga_pos_sales").select("*").eq("business_id", businessId).eq("id", result.id).maybeSingle();
+        if (saved) setLastReceipt(saved as SaleRow);
+      }
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not complete this sale."); }
+    finally { setBusy(false); }
   };
 
-  const changeQty = (id: string, delta: number) =>
-    setCart((c) =>
-      c
-        .map((l) => (l.productId === id ? { ...l, qty: l.qty + delta } : l))
-        .filter((l) => l.qty > 0)
-    );
-
-  const checkout = () => {
-    if (!cart.length) return;
-    addSale({ id: uid(), lines: cart, total, customer, time: stamp() });
-    setCart([]);
-    setCustomer("Walk-in");
+  const saveExpense = async () => {
+    if (!expenseForm.description.trim() || Number(expenseForm.amount) <= 0) { setMessage("Add an expense description and amount greater than zero."); return; }
+    if (demoMode) { setMessage("Demo mode does not save real expenses."); return; }
+    if (!supabase || !businessId) return;
+    setBusy(true); setMessage("");
+    try {
+      const { error } = await supabase.from("twiga_pos_expenses").insert({
+        business_id: businessId, category: expenseForm.category.trim() || "Other", description: expenseForm.description.trim(),
+        amount: Number(expenseForm.amount), payment_method: expenseForm.payment_method,
+        receipt_reference: expenseForm.receipt_reference.trim() || null, notes: expenseForm.notes.trim() || null,
+      });
+      if (error) throw error;
+      setExpenseForm({ category: "Supplies", description: "", amount: "", payment_method: "cash", receipt_reference: "", notes: "" });
+      await load(); setMessage("Expense recorded.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not save expense."); }
+    finally { setBusy(false); }
   };
 
-  const switchMode = (m: SellMode) => {
-    setSellMode(m);
-    setCart([]);
-    setQuery("");
+  const adjustStock = async () => {
+    if (!stockProduct || !Number(stockChange)) { setMessage("Choose an item and enter a stock quantity."); return; }
+    if (demoMode) { setMessage("Demo mode does not update real stock."); return; }
+    if (!supabase || !businessId) return;
+    setBusy(true); setMessage("");
+    try {
+      const { error } = await supabase.rpc("twiga_pos_adjust_stock", {
+        p_business_id: businessId, p_product_id: stockProduct, p_quantity_change: Number(stockChange),
+        p_unit_cost: stockCost.trim() ? Number(stockCost) : null, p_notes: stockNote.trim() || null, p_movement_type: stockType,
+      });
+      if (error) throw error;
+      setStockChange("1"); setStockCost(""); setStockNote("");
+      await load(); setMessage("Stock movement saved and inventory balance updated.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Could not update stock."); }
+    finally { setBusy(false); }
   };
 
-  const isSeller = sellMode === "seller";
+  const printReceipt = () => window.print();
 
-  return (
-    <div className="space-y-5">
-      <div className="flex flex-col gap-4 rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-orange-500 text-white shadow-sm">
-            {isSeller ? (
-              <IconBox className="h-6 w-6" />
-            ) : (
-              <IconSparkle className="h-6 w-6" />
-            )}
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-neutral-900">
-              Point of Sale
-            </h1>
-            <p className="text-sm text-neutral-500">
-              {isSeller
-                ? `${modeProducts.length} products in hand`
-                : `${modeProducts.length} services offered`}
-            </p>
-          </div>
+  return <div className="space-y-5">
+    <style>{'@media print { body * { visibility:hidden !important; } .twiga-print-receipt, .twiga-print-receipt * { visibility:visible !important; } .twiga-print-receipt { position:absolute !important; inset:0 !important; width:100% !important; padding:24px !important; background:white !important; color:#111 !important; } }'}</style>
+    <header className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-600">Money workspace</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Point of Sale</h1><p className="mt-1 text-sm text-neutral-500">Sell products and services, manage stock, record expenses and print receipts.</p></div>
+        <button onClick={() => void load()} disabled={busy} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700">Refresh records</button></div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {[["Collected today",fmt(todayRevenue)],["Sales today",String(todaySales.length)],["Gross profit",fmt(todayProfit)],["Expenses today",fmt(todayExpenses)],["Low stock",String(lowStock.length)]].map(([label,value]) => <div key={label} className="rounded-xl bg-neutral-50 p-4"><p className="text-xs text-neutral-500">{label}</p><p className="mt-1 text-xl font-bold text-neutral-950">{value}</p></div>)}
+      </div>
+    </header>
+
+    <nav className="flex flex-wrap gap-1 rounded-xl border border-neutral-200 bg-white p-1 shadow-sm">
+      {([["sell","Sell"],["sales","Sales history"],["expenses","Expenses"],["stock","Inventory"]] as [Tab,string][]).map(([id,label]) => <button key={id} onClick={() => setTab(id)} className={"rounded-lg px-4 py-2 text-sm font-semibold " + (tab === id ? "bg-neutral-950 text-white" : "text-neutral-600 hover:bg-neutral-50")}>{label}</button>)}
+    </nav>
+
+    {tab === "sell" && <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_390px]">
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Choose items</h2><p className="mt-1 text-xs text-neutral-500">{items.length} active products and services</p></div><div className="flex gap-1 rounded-lg bg-neutral-100 p-1">{(["all","product","service"] as const).map((x) => <button key={x} onClick={() => setKind(x)} className={"rounded-md px-3 py-1.5 text-xs font-semibold capitalize " + (kind === x ? "bg-white text-neutral-950 shadow-sm" : "text-neutral-500")}>{x === "all" ? "All" : x === "product" ? "Products" : "Services"}</button>)}</div></div>
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find product, SKU or service…" className="mt-4 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400" />
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+          {filtered.map((p) => <button key={p.id} onClick={() => add(p)} disabled={p.track_stock && p.stock_quantity <= 0} className="rounded-xl border border-neutral-200 p-3 text-left transition hover:border-orange-300 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-45">
+            <div className="flex items-start gap-3">{p.imageUrl ? <img src={p.imageUrl} alt={p.name} className="h-14 w-14 rounded-lg object-cover" /> : <div className="grid h-14 w-14 shrink-0 place-items-center rounded-lg bg-orange-50 text-lg text-orange-600">{p.item_type === "service" ? "✦" : "□"}</div>}
+              <div className="min-w-0 flex-1"><p className="line-clamp-2 text-sm font-semibold text-neutral-950">{p.name}</p><p className="mt-1 text-xs text-neutral-500">{p.category || "General"}</p><p className="mt-2 text-sm font-bold text-orange-700">{fmt(p.price)}</p><p className="mt-1 text-[11px] text-neutral-400">{p.item_type === "service" || !p.track_stock ? "Service · no stock tracking" : p.stock_quantity + " " + (p.unit || "units") + " available"}</p></div>
+            </div>
+          </button>)}
+          {filtered.length === 0 && <div className="col-span-full rounded-xl border border-dashed border-neutral-200 p-10 text-center text-sm text-neutral-500">No matching items. Add them in Products & services.</div>}
         </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex rounded-xl border border-neutral-200 bg-neutral-50 p-1">
-            <ModeButton
-              active={isSeller}
-              onClick={() => switchMode("seller")}
-              icon={<IconBox className="h-4 w-4" />}
-              label="Seller"
-            />
-            <ModeButton
-              active={!isSeller}
-              onClick={() => switchMode("service")}
-              icon={<IconSparkle className="h-4 w-4" />}
-              label="Service"
-            />
-          </div>
-          <div className="flex items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3 py-2">
-            <IconLink className="h-4 w-4 text-orange-500" />
-            <span className="text-sm font-semibold text-orange-600">
-              {catalogSource}
-            </span>
-          </div>
+      </section>
+      <section className="h-fit rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between"><div><h2 className="text-lg font-semibold text-neutral-950">Current sale</h2><p className="text-xs text-neutral-500">{cartQty} item units</p></div><button onClick={() => setCart([])} disabled={!cart.length} className="text-xs font-semibold text-neutral-500 disabled:opacity-40">Clear</button></div>
+        <div className="mt-4 space-y-2">{cart.length === 0 && <div className="rounded-xl border border-dashed border-neutral-200 p-8 text-center text-sm text-neutral-400">Tap a product or service to add it here.</div>}
+          {cart.map((x) => <div key={x.product_id} className="flex items-center gap-2 rounded-xl bg-neutral-50 p-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-neutral-900">{x.name}</p><p className="text-xs text-neutral-500">{fmt(x.price)} each</p></div><div className="flex items-center gap-2"><button onClick={() => changeQty(x.product_id,-1)} className="grid h-7 w-7 place-items-center rounded-lg border bg-white">−</button><span className="w-5 text-center text-sm font-semibold">{x.quantity}</span><button onClick={() => changeQty(x.product_id,1)} className="grid h-7 w-7 place-items-center rounded-lg border bg-white">+</button></div><strong className="w-20 text-right text-sm">{fmt(x.price*x.quantity)}</strong></div>)}
         </div>
-      </div>
-
-      <div className="flex rounded-xl border border-neutral-200 bg-white p-1 shadow-sm">
-        <TabButton active={tab === "sell"} onClick={() => setTab("sell")}>
-          Sell
-        </TabButton>
-        <TabButton active={tab === "manage"} onClick={() => setTab("manage")}>
-          Catalog
-        </TabButton>
-      </div>
-
-      {tab === "sell" ? (
-        <div className="grid gap-5 lg:grid-cols-3">
-          <div className="space-y-5 lg:col-span-2">
-            <Card className="rounded-2xl border-neutral-200 shadow-sm">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-                <CardTitle className="text-lg font-semibold">
-                  {isSeller ? "Products in Hand" : "Services Offered"}
-                </CardTitle>
-                <Badge className="border-neutral-900 bg-neutral-950 text-white">
-                  {filtered.length}
-                </Badge>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="relative">
-                  <IconSearch className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-                  <Input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder={isSeller ? "Search products…" : "Search services…"}
-                    className="pl-9"
-                  />
-                </div>
-
-                {filtered.length === 0 && (
-                  <p className="rounded-xl border border-dashed border-neutral-200 py-10 text-center text-sm text-neutral-400">
-                    No items match "{query}"
-                  </p>
-                )}
-
-                {isSeller ? (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                    {filtered.map((p) => (
-                      <button
-                        key={p.id}
-                        onClick={() => addToCart(p.id)}
-                        className="group flex flex-col rounded-xl border border-neutral-200 bg-white p-3 text-left transition-all hover:-translate-y-0.5 hover:border-orange-300 hover:shadow-md active:translate-y-0"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-50 text-orange-500">
-                            <IconBox className="h-5 w-5" />
-                          </div>
-                          <span
-                            className={cn(
-                              "rounded-full px-2 py-0.5 text-xs font-semibold",
-                              p.stock <= 5
-                                ? "bg-red-50 text-red-600"
-                                : "bg-neutral-100 text-neutral-500"
-                            )}
-                          >
-                            {p.stock}
-                          </span>
-                        </div>
-                        <p className="mt-3 truncate text-sm font-medium text-neutral-900">
-                          {p.name}
-                        </p>
-                        <p className="truncate text-xs text-neutral-400">
-                          {p.category}
-                        </p>
-                        <div className="mt-2 flex items-center justify-between">
-                          <span className="text-sm font-bold text-orange-600">
-                            KSh {p.price.toLocaleString()}
-                          </span>
-                          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-neutral-950 text-white opacity-0 transition-opacity group-hover:opacity-100">
-                            <IconPlus className="h-3.5 w-3.5" />
-                          </span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {filtered.map((p) => (
-                      <div
-                        key={p.id}
-                        className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white p-3 transition-all hover:border-orange-300 hover:shadow-sm"
-                      >
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-orange-50 text-orange-500">
-                          <IconSparkle className="h-5 w-5" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-semibold text-neutral-900">
-                            {p.name}
-                          </p>
-                          <p className="truncate text-xs text-neutral-500">
-                            {p.description}
-                          </p>
-                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                            <span className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
-                              <IconTag className="h-3 w-3" /> {p.category}
-                            </span>
-                            {p.duration && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
-                                <IconClock className="h-3 w-3" /> {p.duration}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-3">
-                          <span className="text-sm font-bold text-orange-600">
-                            KSh {p.price.toLocaleString()}
-                          </span>
-                          <Button
-                            size="sm"
-                            onClick={() => addToCart(p.id)}
-                            className="bg-neutral-950 text-white hover:bg-neutral-800"
-                          >
-                            <IconPlus className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-2xl border-neutral-200 shadow-sm">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base font-semibold">Recent Sales</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {sales.length === 0 && (
-                  <p className="rounded-lg border border-dashed border-neutral-200 py-6 text-center text-sm text-neutral-400">
-                    No sales recorded yet
-                  </p>
-                )}
-                {sales.slice(0, 4).map((s) => (
-                  <div
-                    key={s.id}
-                    className="flex items-center justify-between rounded-lg bg-neutral-50 px-3 py-2 text-sm"
-                  >
-                    <div>
-                      <p className="font-medium text-neutral-900">{s.customer}</p>
-                      <p className="text-xs text-neutral-500">
-                        {s.lines.length} item{s.lines.length === 1 ? "" : "s"} · {s.time}
-                      </p>
-                    </div>
-                    <span className="font-semibold text-orange-600">
-                      KSh {s.total.toLocaleString()}
-                    </span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="lg:col-span-1">
-            <Card className="sticky top-6 rounded-2xl border-neutral-900 bg-neutral-950 text-white shadow-lg">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2 text-lg font-semibold">
-                    <IconCart className="h-5 w-5 text-orange-500" /> Current Sale
-                  </CardTitle>
-                  <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-xs font-semibold text-neutral-300">
-                    {itemCount} item{itemCount === 1 ? "" : "s"}
-                  </span>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <Input
-                  value={customer}
-                  onChange={(e) => setCustomer(e.target.value)}
-                  className="border-neutral-700 bg-neutral-900 text-white placeholder:text-neutral-500"
-                  placeholder="Customer name"
-                />
-
-                <div className="max-h-64 space-y-2 overflow-y-auto">
-                  {cart.length === 0 && (
-                    <p className="rounded-lg border border-dashed border-neutral-700 py-8 text-center text-sm text-neutral-500">
-                      Tap the catalog to start a sale
-                    </p>
-                  )}
-                  {cart.map((l) => (
-                    <div
-                      key={l.productId}
-                      className="flex items-center justify-between gap-2 rounded-lg bg-neutral-900 px-3 py-2"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">{l.name}</p>
-                        <p className="text-xs text-neutral-400">
-                          KSh {l.price.toLocaleString()}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => changeQty(l.productId, -1)}
-                          className="flex h-6 w-6 items-center justify-center rounded-md bg-neutral-800 text-sm hover:bg-neutral-700"
-                        >
-                          −
-                        </button>
-                        <span className="w-5 text-center text-sm">{l.qty}</span>
-                        <button
-                          onClick={() => changeQty(l.productId, 1)}
-                          className="flex h-6 w-6 items-center justify-center rounded-md bg-neutral-800 text-sm hover:bg-neutral-700"
-                        >
-                          +
-                        </button>
-                        <button
-                          onClick={() => changeQty(l.productId, -l.qty)}
-                          className="ml-1 flex h-6 w-6 items-center justify-center rounded-md bg-orange-500/20 text-orange-400 hover:bg-orange-500/30"
-                        >
-                          <IconTrash className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="flex items-center justify-between border-t border-neutral-800 pt-4">
-                  <span className="text-sm text-neutral-400">Total</span>
-                  <span className="text-2xl font-bold text-orange-500">
-                    KSh {total.toLocaleString()}
-                  </span>
-                </div>
-
-                <Button
-                  onClick={checkout}
-                  disabled={!cart.length}
-                  className={cn(
-                    "w-full bg-orange-500 text-white hover:bg-orange-600",
-                    !cart.length && "opacity-50"
-                  )}
-                >
-                  <IconCheck className="mr-2 h-4 w-4" /> Complete Sale
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
+        <div className="mt-4 space-y-3 border-t border-neutral-100 pt-4">
+          <label className="block text-xs font-semibold text-neutral-600">Customer name<input value={customer} onChange={(e) => setCustomer(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm font-normal" placeholder="Walk-in" /></label>
+          <label className="block text-xs font-semibold text-neutral-600">Customer phone (optional)<input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm font-normal" placeholder="+254 7xx xxx xxx" /></label>
+          <div className="grid grid-cols-2 gap-2"><label className="block text-xs font-semibold text-neutral-600">Discount (KES)<input type="number" min="0" value={discount} onChange={(e) => setDiscount(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm font-normal" /></label><label className="block text-xs font-semibold text-neutral-600">Tax / surcharge<input type="number" min="0" value={tax} onChange={(e) => setTax(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm font-normal" /></label></div>
+          <label className="block text-xs font-semibold text-neutral-600">Payment method<select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm font-normal"><option value="cash">Cash</option><option value="mpesa">M-Pesa · pending until confirmed</option><option value="card">Card</option><option value="credit">Customer credit</option><option value="bank">Bank transfer</option></select></label>
+          <div className="flex justify-between text-sm text-neutral-500"><span>Items subtotal</span><span>{fmt(cartTotal)}</span></div><div className="flex justify-between text-sm text-neutral-500"><span>Discount & tax</span><span>{fmt((Number(tax)||0)-(Number(discount)||0))}</span></div>
+          <div className="flex justify-between border-t pt-3"><strong className="text-sm">Total</strong><strong className="text-2xl text-neutral-950">{fmt(total)}</strong></div>
+          <button onClick={() => void checkout()} disabled={!cart.length || busy || demoMode} className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-orange-600 disabled:opacity-40">{busy ? "Saving sale…" : "Complete sale"}</button>
+          {demoMode && <p className="text-xs text-neutral-500">Sample data is view-only. Real checkout is disabled in demo mode.</p>}
+          {paymentMethod === "mpesa" && <p className="text-xs leading-5 text-orange-800">This records the sale as pending. Use Payments to initiate the actual M-Pesa request; a prompt is not proof of payment.</p>}
         </div>
-      ) : (
-        <CatalogManager
-          products={products}
-          sellMode={sellMode}
-          onAdd={addProduct}
-          onRemove={removeProduct}
-          onImport={importCatalog}
-        />
-      )}
-    </div>
-  );
-}
+      </section>
+    </div>}
 
-function CatalogManager({
-  products,
-  sellMode,
-  onAdd,
-  onRemove,
-  onImport,
-}: {
-  products: Product[];
-  sellMode: SellMode;
-  onAdd: (p: Product) => void;
-  onRemove: (id: string) => void;
-  onImport: (items: Product[], source: string) => void;
-}) {
-  const [name, setName] = useState("");
-  const [price, setPrice] = useState("");
-  const [category, setCategory] = useState("Retail");
-  const [stock, setStock] = useState("10");
-  const [description, setDescription] = useState("");
-  const [duration, setDuration] = useState("30 min");
-  const [url, setUrl] = useState("");
-  const [importing, setImporting] = useState(false);
-  const [imported, setImported] = useState(false);
-
-  const isService = sellMode === "service";
-
-  const submit = () => {
-    const value = Number(price);
-    if (!name.trim() || !value) return;
-    onAdd({
-      id: uid(),
-      name: name.trim(),
-      price: value,
-      category,
-      stock: isService ? 99 : Number(stock) || 0,
-      source: "manual",
-      kind: sellMode,
-      description: description.trim() || undefined,
-      duration: isService ? duration : undefined,
-    });
-    setName("");
-    setPrice("");
-    setStock("10");
-    setDescription("");
-  };
-
-  const runImport = () => {
-    if (!url.trim()) return;
-    setImporting(true);
-    setImported(false);
-    window.setTimeout(() => {
-      const scraped: Product[] = isService
-        ? [
-            { id: uid(), name: "Scalp Massage", price: 1600, category: "Treatment", stock: 99, source: "website", kind: "service", description: "Relaxing scalp massage with warm oils.", duration: "30 min" },
-            { id: uid(), name: "Hot Towel Shave", price: 1300, category: "Grooming", stock: 99, source: "website", kind: "service", description: "Classic shave with hot towel prep.", duration: "25 min" },
-          ]
-        : [
-            { id: uid(), name: "Argan Repair Mask", price: 1800, category: "Retail", stock: 30, source: "website", kind: "seller", description: "Weekly repair mask for damaged hair." },
-            { id: uid(), name: "Styling Gel 200ml", price: 1100, category: "Retail", stock: 45, source: "website", kind: "seller", description: "Strong-hold gel with a matte finish." },
-          ];
-      onImport(scraped, url.replace(/^https?:\/\//, "").replace(/\/$/, ""));
-      setImporting(false);
-      setImported(true);
-      setUrl("");
-    }, 1400);
-  };
-
-  const list = products.filter((p) => p.kind === sellMode);
-
-  return (
-    <div className="grid gap-5 lg:grid-cols-3">
-      <div className="lg:col-span-2">
-        <Card className="rounded-2xl border-neutral-200 shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-            <CardTitle className="text-lg font-semibold">
-              {isService ? "Service Database" : "Product Database"}
-            </CardTitle>
-            <Badge className="border-neutral-900 bg-neutral-950 text-white">
-              {list.length}
-            </Badge>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {list.map((p) => (
-              <div
-                key={p.id}
-                className="group flex items-center gap-3 rounded-xl border border-neutral-100 bg-white px-4 py-3 transition-colors hover:border-neutral-200 hover:bg-neutral-50"
-              >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-orange-50 text-orange-500">
-                  {isService ? (
-                    <IconSparkle className="h-4 w-4" />
-                  ) : (
-                    <IconBox className="h-4 w-4" />
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-neutral-900">
-                    {p.name}
-                  </p>
-                  <p className="truncate text-xs text-neutral-500">
-                    {isService
-                      ? `${p.category}${p.duration ? ` · ${p.duration}` : ""}`
-                      : `${p.category} · ${p.stock} in stock`}
-                  </p>
-                </div>
-                <span
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-xs font-medium",
-                    p.source === "website"
-                      ? "bg-emerald-50 text-emerald-700"
-                      : "bg-neutral-100 text-neutral-600"
-                  )}
-                >
-                  {p.source === "website" ? "Web" : "Manual"}
-                </span>
-                <span className="text-sm font-semibold text-neutral-900">
-                  KSh {p.price.toLocaleString()}
-                </span>
-                <button
-                  onClick={() => onRemove(p.id)}
-                  className="opacity-0 transition-opacity group-hover:opacity-100"
-                >
-                  <IconTrash className="h-4 w-4 text-neutral-400 hover:text-orange-500" />
-                </button>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+    {tab === "sales" && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Sales ledger</h2><p className="mt-1 text-xs text-neutral-500">Every completed sale, item breakdown, profit and payment state.</p></div><strong className="text-sm text-neutral-700">{sales.length} records</strong></div>
+      <div className="mt-4 space-y-2">{sales.length === 0 && <p className="rounded-xl border border-dashed p-10 text-center text-sm text-neutral-500">No live sales have been recorded yet.</p>}
+        {sales.map((s) => <article key={s.id} className="rounded-xl border border-neutral-100 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><strong className="text-sm text-neutral-950">{s.sale_number || "Sale"}</strong><p className="mt-1 text-xs text-neutral-500">{s.customer_name} · {safeDate(s.created_at)}</p></div><div className="text-right"><strong className="text-base text-neutral-950">{fmt(Number(s.total_amount))}</strong><p className="mt-1 text-xs text-neutral-500">Profit {fmt(Number(s.gross_profit))}</p></div></div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">{(s.items || []).map((x: any, i: number) => <span key={i} className="rounded-lg bg-neutral-50 px-2 py-1 text-neutral-700">{x.quantity} × {x.name}</span>)}</div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-neutral-500">{String(s.payment_method).toUpperCase()} · {String(s.payment_status).toUpperCase()}</span><button onClick={() => setLastReceipt(s)} className="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs font-semibold">View receipt</button></div>
+        </article>)}
       </div>
+    </section>}
 
-      <div className="space-y-5">
-        <Card className="rounded-2xl border-neutral-900 bg-neutral-950 text-white shadow-lg">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base font-semibold">
-              <IconLink className="h-4 w-4 text-orange-500" /> Connect Website
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <Input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://yourstore.co.ke"
-              className="border-neutral-700 bg-neutral-900 text-white placeholder:text-neutral-500"
-            />
-            <Button
-              onClick={runImport}
-              disabled={!url.trim() || importing}
-              className={cn(
-                "w-full bg-orange-500 text-white hover:bg-orange-600",
-                (!url.trim() || importing) && "opacity-50"
-              )}
-            >
-              {importing ? (
-                <>
-                  <IconSwap className="mr-2 h-4 w-4 animate-spin" /> Syncing…
-                </>
-              ) : (
-                <>
-                  <IconSwap className="mr-2 h-4 w-4" /> Import{" "}
-                  {isService ? "services" : "catalog"}
-                </>
-              )}
-            </Button>
-            {imported && (
-              <div className="flex items-start gap-2 rounded-lg bg-emerald-500/10 p-3">
-                <IconCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
-                <p className="text-xs text-emerald-300">
-                  Synced. New items are now available to your AI.
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+    {tab === "expenses" && <div className="grid gap-5 xl:grid-cols-[380px_1fr]">
+      <section className="h-fit rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><h2 className="text-lg font-semibold text-neutral-950">Record an expense</h2><p className="mt-1 text-xs text-neutral-500">Keep shop running costs separate from sales.</p>
+        <div className="mt-4 space-y-3"><label className="block text-xs font-semibold text-neutral-600">Category<select value={expenseForm.category} onChange={(e) => setExpenseForm((x) => ({...x,category:e.target.value}))} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm font-normal"><option>Supplies</option><option>Rent</option><option>Utilities</option><option>Transport</option><option>Staff</option><option>Marketing</option><option>Repairs</option><option>Other</option></select></label>
+          <label className="block text-xs font-semibold text-neutral-600">Description<input value={expenseForm.description} onChange={(e) => setExpenseForm((x) => ({...x,description:e.target.value}))} placeholder="What was paid for?" className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm font-normal" /></label>
+          <label className="block text-xs font-semibold text-neutral-600">Amount (KES)<input type="number" min="0.01" step="0.01" value={expenseForm.amount} onChange={(e) => setExpenseForm((x) => ({...x,amount:e.target.value}))} placeholder="0" className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm font-normal" /></label>
+          <label className="block text-xs font-semibold text-neutral-600">Paid with<select value={expenseForm.payment_method} onChange={(e) => setExpenseForm((x) => ({...x,payment_method:e.target.value}))} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm font-normal"><option value="cash">Cash</option><option value="mpesa">M-Pesa</option><option value="bank">Bank</option><option value="card">Card</option></select></label>
+          <label className="block text-xs font-semibold text-neutral-600">Receipt / reference<input value={expenseForm.receipt_reference} onChange={(e) => setExpenseForm((x) => ({...x,receipt_reference:e.target.value}))} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm font-normal" /></label>
+          <label className="block text-xs font-semibold text-neutral-600">Notes<textarea rows={2} value={expenseForm.notes} onChange={(e) => setExpenseForm((x) => ({...x,notes:e.target.value}))} className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm font-normal" /></label>
+          <button onClick={() => void saveExpense()} disabled={busy || demoMode} className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white disabled:opacity-40">Save expense</button>
+        </div>
+      </section>
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><div><h2 className="text-lg font-semibold text-neutral-950">Expense history</h2><p className="mt-1 text-xs text-neutral-500">Latest business expenses</p></div><strong className="text-lg">{fmt(expenses.reduce((sum,x)=>sum+Number(x.amount),0))}</strong></div>
+        <div className="mt-4 space-y-2">{expenses.length === 0 && <p className="rounded-xl border border-dashed p-8 text-center text-sm text-neutral-500">No expenses recorded.</p>}
+          {expenses.map((x) => <div key={x.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-100 p-3"><div><strong className="text-sm text-neutral-900">{x.description}</strong><p className="mt-1 text-xs text-neutral-500">{x.category} · {x.expense_date} · {x.payment_method}</p>{x.receipt_reference && <p className="mt-1 text-[11px] text-neutral-400">Receipt {x.receipt_reference}</p>}</div><strong className="text-sm">{fmt(Number(x.amount))}</strong></div>)}
+        </div>
+      </section>
+    </div>}
 
-        <Card className="rounded-2xl border-neutral-200 shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base font-semibold">
-              <IconFile className="h-4 w-4 text-orange-500" /> Add Manually
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-                {isService ? "Service name" : "Item name"}
-              </Label>
-              <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder={isService ? "e.g. Kids Cut" : "e.g. Hair Oil 100ml"}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-                  Price (KSh)
-                </Label>
-                <Input
-                  type="number"
-                  value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                  placeholder="1000"
-                />
-              </div>
-              {isService ? (
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-                    Duration
-                  </Label>
-                  <Select value={duration} onValueChange={setDuration}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {["15 min", "30 min", "45 min", "1 hr", "2 hr"].map((d) => (
-                        <SelectItem key={d} value={d}>
-                          {d}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-                    Stock
-                  </Label>
-                  <Input
-                    type="number"
-                    value={stock}
-                    onChange={(e) => setStock(e.target.value)}
-                    placeholder="10"
-                  />
-                </div>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-                Category
-              </Label>
-              <Select value={category} onValueChange={setCategory}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(isService
-                    ? ["Hair", "Grooming", "Treatment", "Colour", "Package"]
-                    : ["Retail", "Tools", "Consumables", "Package"]
-                  ).map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-                {isService ? "What it includes" : "Description"}
-              </Label>
-              <Textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder={
-                  isService
-                    ? "Describe the service so the AI can explain it…"
-                    : "Short product description…"
-                }
-                rows={3}
-              />
-            </div>
-            <Button
-              onClick={submit}
-              disabled={!name.trim() || !price}
-              className={cn(
-                "w-full bg-neutral-950 text-white hover:bg-neutral-800",
-                (!name.trim() || !price) && "opacity-50"
-              )}
-            >
-              <IconPlus className="mr-2 h-4 w-4" /> Add to{" "}
-              {isService ? "services" : "catalog"}
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    </div>
-  );
-}
+    {tab === "stock" && <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
+      <section className="h-fit rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><h2 className="text-lg font-semibold text-neutral-950">Update stock</h2><p className="mt-1 text-xs text-neutral-500">Stock changes are recorded with quantity before and after.</p>
+        <div className="mt-4 space-y-3"><label className="block text-xs font-semibold text-neutral-600">Product<select value={stockProduct} onChange={(e) => setStockProduct(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm font-normal">{items.filter((x) => x.track_stock).map((p) => <option key={p.id} value={p.id}>{p.name} · {p.stock_quantity} {p.unit || ""}</option>)}</select></label>
+          <label className="block text-xs font-semibold text-neutral-600">Movement<select value={stockType} onChange={(e) => { setStockType(e.target.value); setStockChange(e.target.value === "waste" ? "-1" : "1"); }} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm font-normal"><option value="stock_in">Stock received</option><option value="adjustment">Adjustment (positive or negative)</option><option value="return">Customer return</option><option value="waste">Waste / damaged</option></select></label>
+          <label className="block text-xs font-semibold text-neutral-600">Quantity change (+ / −)<input type="number" step="0.001" value={stockChange} onChange={(e) => setStockChange(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm font-normal" /></label>
+          <label className="block text-xs font-semibold text-neutral-600">Unit cost (optional)<input type="number" min="0" step="0.01" value={stockCost} onChange={(e) => setStockCost(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm font-normal" /></label>
+          <label className="block text-xs font-semibold text-neutral-600">Note / supplier / reference<input value={stockNote} onChange={(e) => setStockNote(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm font-normal" /></label>
+          <button onClick={() => void adjustStock()} disabled={busy || demoMode || !items.some((x) => x.track_stock)} className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white disabled:opacity-40">Save stock movement</button>
+        </div>
+      </section>
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><div><h2 className="text-lg font-semibold text-neutral-950">Inventory levels</h2><p className="mt-1 text-xs text-neutral-500">Current stock and reorder thresholds.</p></div>
+        <div className="mt-4 space-y-2">{items.filter((x) => x.track_stock).map((p) => <div key={p.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-100 p-3"><div><strong className="text-sm text-neutral-900">{p.name}</strong><p className="mt-1 text-xs text-neutral-500">{p.sku || "No SKU"} · Alert below {p.low_stock_threshold || 0}</p></div><div className="text-right"><strong className={"text-sm " + (p.stock_quantity <= Number(p.low_stock_threshold || 0) ? "text-orange-700" : "text-neutral-950")}>{p.stock_quantity} {p.unit || "units"}</strong><p className="text-[10px] text-neutral-400">{p.stock_quantity <= Number(p.low_stock_threshold || 0) ? "Reorder" : "Available"}</p></div></div>)}</div>
+        <div className="mt-5 border-t border-neutral-100 pt-4"><h3 className="text-sm font-semibold text-neutral-900">Recent stock activity</h3><div className="mt-2 space-y-2">{movements.slice(0,20).map((m) => <div key={m.id} className="flex items-center justify-between gap-3 rounded-lg bg-neutral-50 px-3 py-2 text-xs"><span className="text-neutral-600">{items.find((p)=>p.id===m.product_id)?.name || "Product"} · {m.movement_type} · {safeDate(m.created_at)}</span><strong className={Number(m.quantity_change)<0 ? "text-orange-700" : "text-neutral-900"}>{Number(m.quantity_change)>0?"+":""}{m.quantity_change}</strong></div>)}</div></div>
+      </section>
+    </div>}
 
-function ModeButton({
-  active,
-  onClick,
-  icon,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-        active
-          ? "bg-orange-500 text-white shadow-sm"
-          : "text-neutral-500 hover:text-neutral-900"
-      )}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-        active ? "bg-neutral-950 text-white" : "text-neutral-500 hover:text-neutral-900"
-      )}
-    >
-      {children}
-    </button>
-  );
+    {lastReceipt && <div className="twiga-print-receipt fixed bottom-4 right-4 z-50 max-w-sm rounded-xl border border-neutral-200 bg-white p-4 shadow-xl print:static print:max-w-full print:border-0 print:shadow-none">
+      <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-600">TWIGA · Receipt</p><h3 className="mt-1 text-lg font-bold text-neutral-950">{lastReceipt.sale_number || "Sale receipt"}</h3></div><button onClick={() => setLastReceipt(null)} className="text-xs text-neutral-400 print:hidden">Close</button></div>
+      <p className="mt-2 text-xs text-neutral-500">{lastReceipt.customer_name} · {safeDate(lastReceipt.created_at || new Date().toISOString())}</p>
+      <div className="my-3 space-y-2 border-y border-dashed py-3">{(lastReceipt.items || []).map((x:any,i:number)=><div key={i} className="flex justify-between gap-3 text-sm"><span>{x.quantity} × {x.name}</span><strong>{fmt(Number(x.line_total || Number(x.unit_price)*Number(x.quantity)))}</strong></div>)}</div>
+      <div className="flex justify-between text-sm text-neutral-500"><span>Subtotal</span><span>{fmt(Number(lastReceipt.subtotal))}</span></div><div className="mt-1 flex justify-between text-sm text-neutral-500"><span>Discount</span><span>{fmt(Number(lastReceipt.discount_amount))}</span></div>
+      <div className="mt-2 flex justify-between text-base font-bold text-neutral-950"><span>Total</span><span>{fmt(Number(lastReceipt.total_amount))}</span></div>
+      <p className="mt-2 text-xs text-neutral-500">{String(lastReceipt.payment_method || "").toUpperCase()} · {String(lastReceipt.payment_status || "").toUpperCase()}</p>
+      <button onClick={printReceipt} className="mt-4 w-full rounded-lg bg-neutral-950 px-3 py-2 text-sm font-semibold text-white print:hidden">Print receipt</button>
+    </div>}
+    {message && <p role="status" className="rounded-xl border border-neutral-200 bg-white p-3 text-sm text-neutral-700">{message}</p>}
+  </div>;
 }
