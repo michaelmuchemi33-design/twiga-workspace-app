@@ -27,7 +27,7 @@ jobs:
           for permission in ("android.permission.RECORD_AUDIO", "android.permission.MODIFY_AUDIO_SETTINGS"):
               tag = f'<uses-permission android:name="{permission}" />'
               if tag not in s:
-                  s = s.replace("<application", f"    {tag}\\n    <application", 1)
+                  s = s.replace("<application", f"    {tag}\n    <application", 1)
           p.write_text(s)
           PY
       - uses: actions/setup-java@v4
@@ -36,7 +36,7 @@ jobs:
           java-version: "21"
       - uses: android-actions/setup-android@v4
       - name: Install Android 35 SDK
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
       - name: Build debug APK
         run: |
           cd android
