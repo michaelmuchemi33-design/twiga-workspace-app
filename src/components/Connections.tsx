@@ -361,14 +361,14 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       </div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5">
         <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Phone service</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">Phone service connection</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${sautikitProviderConnected ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{sautikitBadge}</span></div>
-        <p className="mt-2 text-sm leading-6 text-neutral-600">TWIGA manages the phone connection centrally for customer accounts. Each business has its own assigned phone number, dedicated receptionist agent, call history and operating instructions. Customers do not need a TWIGA phone service API key.</p>
+        <p className="mt-2 text-sm leading-6 text-neutral-600">TWIGA manages the phone connection centrally for customer accounts. Each business has its own assigned phone number, dedicated receptionist agent, call history and operating instructions. Customers do not need a provider API key.</p>
         {sautikitConfig.phoneLine?.line_number && <p className="mt-2 text-sm font-semibold text-neutral-900">This business's AI line: {sautikitConfig.phoneLine.line_number}</p>}
         <p className="mt-2 text-xs text-neutral-500">{sautikitConfig.keyConfigured
           ? "Phone service connected · managed by TWIGA" + (sautikitConfig.keyLast4 ? " · •••• " + sautikitConfig.keyLast4 : "")
           : "Phone service setup is pending. TWIGA support will complete the connection; business owners do not need API credentials."}</p>
-        <a href="https://app.sautikit.com/developers/api-keys" target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-orange-700 underline">Phone service credentials ↗</a>
+        <p className="mt-2 text-xs text-neutral-500">Phone credentials are managed securely by TWIGA. Do not paste provider keys into this dashboard.</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <button onClick={() => void refreshProviders()} disabled={providerBusy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800">Refresh provider status</button>
+          <button onClick={() => void refreshProviders()} disabled={providerBusy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-800">Refresh phone status</button>
         </div>
         {sautikitConfig.isPlatformAdmin && <p className="mt-2 text-xs text-neutral-500">You are viewing this business as a TWIGA platform administrator. Manage the shared key and customer-number allocation in Profile → Platform settings.</p>}
         {Array.isArray(sautikitConfig.availableNumbers) && sautikitConfig.availableNumbers.filter((number: any) => String(number.status).toLowerCase() === "active" && (!number.assignedBusinessId || number.assignedBusinessId === businessId)).length > 0 && <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3">
