@@ -112,14 +112,23 @@ export default function Products() {
         business_id: businessId, name: form.name.trim(), sku: form.sku.trim() || null, barcode: form.barcode.trim() || null,
         description: form.description.trim(), category: form.category.trim() || "General", price: Number(form.price),
         cost_price: form.costPrice === "" ? null : Number(form.costPrice), currency: "KES", unit: form.unit.trim() || "piece",
-        stock_quantity: form.kind === "service" ? 0 : Math.max(0, Number(form.stock) || 0), low_stock_threshold: Number(form.lowStockThreshold) || 0,
+        stock_quantity: editing ? undefined : 0, low_stock_threshold: Number(form.lowStockThreshold) || 0,
         image_key: imageKey, item_type: form.kind === "service" ? "service" : "product", track_stock: form.kind !== "service",
         is_active: true, created_by: user.data.user?.id || null, updated_at: new Date().toISOString(),
       };
+      if (editing) delete (payload as Record<string, unknown>).stock_quantity;
       const queryResult = editing
         ? await supabase!.from("twiga_products").update(payload).eq("business_id", businessId).eq("id", id).select("id").single()
         : await supabase!.from("twiga_products").insert({ id, ...payload }).select("id").single();
       if (queryResult.error) throw queryResult.error;
+      if (!editing && form.kind === "seller" && Number(form.stock) > 0) {
+        const { error: openingStockError } = await supabase!.rpc("twiga_pos_adjust_stock", {
+          p_business_id: businessId, p_product_id: id, p_quantity_change: Number(form.stock),
+          p_unit_cost: form.costPrice.trim() ? Number(form.costPrice) : null,
+          p_notes: "Opening stock at catalogue setup", p_movement_type: "stock_in",
+        });
+        if (openingStockError) throw openingStockError;
+      }
       await load();
       const sync = await supabase!.functions.invoke("twiga-sautikit", { body: { action: "sync_catalog", businessId } });
       setMessage(sync.error || sync.data?.error ? "Saved to your catalogue. The receptionist catalogue will sync when its SautiKit agent is available." : "Saved. Your SautiKit receptionist catalogue has been updated without changing the working phone route.");
