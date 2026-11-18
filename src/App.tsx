@@ -140,7 +140,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
         setBusinesses([created]);
         setBusinessId(created.id);
         setBusinessesLoaded(true);
-        setTab("dashboard");
+        setTab("setup");
         setGoogleSetupMessage(googleAuth.tokens?.accessToken
           ? "Your dashboard is ready. Securing your Calendar, Contacts, Sheets and Drive connection…"
           : "Your dashboard is ready. Connect Calendar, Contacts, Sheets and Drive from Connections when you are ready.");
@@ -216,7 +216,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
   const businessCreated = async (id: string) => {
     await refreshBusinesses();
     setBusinessId(id);
-    setTab("dashboard");
+    setTab("setup");
   };
 
   const go = (id: string) => {
@@ -266,7 +266,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           {googleSetupMessage && !demo && <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-950"><span>{autoProvisioning && <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-orange-500" />}{googleSetupMessage}</span>{googleSetupMessage.includes("Google connection needs attention") && <button onClick={() => go("connections")} className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-bold">Open Google connections</button>}{googleSetupMessage.includes("could not be created") && <button onClick={() => { autoProvisioned.current = null; void refreshBusinesses(); }} className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-bold">Retry</button>}</div>}
           {demo && <div className="mb-6 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-900"><strong>This is a sample workspace.</strong> Explore the screens and test the controls. Demo changes are temporary and are not connected to a real customer's business account.</div>}
           {tab === "dashboard" && <Dashboard onSetup={() => go("setup")} onPayments={() => go("payments")} />}
-          {tab === "setup" && <SetupPage demo={demo} businessId={businessId} onDone={() => go("dashboard")} onBusinessCreated={businessCreated} />}
+          {tab === "setup" && <SetupPage demo={demo} businessId={businessId} onDone={() => go("setup")} onBusinessCreated={businessCreated} />}
           {tab === "phone" && <PhoneDesk businessId={businessId} demo={demo} onOpenProfile={() => go("connections")} />}
           {tab === "outreach" && <Outreach businessId={businessId} demo={demo} />}
           {tab === "connections" && <Connections businessId={businessId} demo={demo} googleAuth={googleAuth} />}
