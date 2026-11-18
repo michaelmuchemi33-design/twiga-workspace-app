@@ -81,7 +81,6 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
 
   useEffect(() => { void load(); }, [load]);
   const allVoices = useMemo(() => (config.models || []).flatMap(m => (m.voices || []).map(voice => ({ model: m.id, voice }))), [config.models]);
-  const voiceOptions = allVoices.length ? allVoices : [{ model: voiceModel || "sautikit-flash", voice: "Woman" }, { model: voiceModel || "sautikit-flash", voice: "Man" }];
   const line = config.phoneLine;
   const settings = line?.settings || {};
   const displayedPhoneNumber = String(config.providerNumber || config.number?.phone_number || config.number?.number_e164 || config.number?.phoneNumber || config.number?.number || line?.line_number || "");
@@ -205,7 +204,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
       <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Outbound calls</p><span className={`mt-2 inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold ${statusClass(outboundStatus)}`}>{outboundStatus}</span><p className="mt-2 text-xs text-neutral-500">Current voice: {settings.inbound_voice || config.agent?.voice || "Not published"} · {settings.inbound_model_id || config.agent?.model || "No model"}</p></div>
     </section>
 
-    {settings.last_outbound_test_call_status && <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900"><strong>Latest voice test result:</strong> {String(settings.last_outbound_test_call_status).replace(/_/g, " ")}. The proven female SautiKit voice remains the default until another voice is published.</div>}
+    {settings.last_outbound_test_call_status && <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900"><strong>Latest voice test result:</strong> {String(settings.last_outbound_test_call_status).replace(/_/g, " ")}. The result for each real male/female voice is shown in the voice selector.</div>}
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -237,9 +236,9 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
           <label className="block text-sm font-medium text-neutral-800">What the receptionist says first<textarea value={greeting} onChange={e => setGreeting(e.target.value)} rows={2} maxLength={4000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
           <label className="block text-sm font-medium text-neutral-800">Inbound call instructions<textarea value={inboundPrompt} onChange={e => setInboundPrompt(e.target.value)} rows={4} maxLength={5000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
           <label className="block text-sm font-medium text-neutral-800">Outbound call instructions<textarea value={outboundPrompt} onChange={e => setOutboundPrompt(e.target.value)} rows={4} maxLength={5000} className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm" /></label>
-          <p className="rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-800">{canPublishVoice ? "The selected voice can be published to your SautiKit receptionist." : "You can save your voice choice now. Publishing will activate once the shared provider account, assigned number and receptionist agent are verified."}</p>
+          <p className="rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-800">{canPublishVoice ? "The selected voice can be published to your SautiKit receptionist." : voiceReadinessMessage || "You can save your voice choice now. Publishing is paused until the server connection is ready."}</p>
           <button type="button" onClick={() => void publishVoice()} disabled={savingVoice || !voiceModel || !voiceId} title={canPublishVoice ? "Publish this voice and its instructions" : voiceReadinessMessage} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-wait disabled:opacity-60">{savingVoice ? "Publishing…" : "Save receptionist voice & instructions"}</button>
-          {!canPublishVoice && <p className="text-xs leading-5 text-amber-800">{voiceReadinessMessage} Use Refresh above after the platform connection is completed.</p>}
+          {!canPublishVoice && <p className="text-xs leading-5 text-amber-800">{voiceReadinessMessage}</p>}
         </div>
       </div>}
     </section>
@@ -247,7 +246,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     <section className="grid gap-5 lg:grid-cols-2">
       <div className="rounded-2xl border border-neutral-200 bg-white p-5">
         <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold text-neutral-950">Test your AI receptionist</h2><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-700">Live voice test</span></div>
-        <p className="mt-1 text-sm text-neutral-500">Choose a voice, enter your number and press the button. TWIGA will call you so you can speak with your receptionist.</p>
+        <p className="mt-1 text-sm text-neutral-500">Choose a voice and enter your number. Once the TWIGA server connection is ready, press the button and the receptionist will call you.</p>
         <div className="mt-4 grid grid-cols-2 gap-3">
           <button type="button" aria-pressed={voiceId === "Woman"} onClick={() => setVoiceId("Woman")} className={`rounded-xl border-2 p-3 text-left transition ${voiceId === "Woman" ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-neutral-400"}`}><span className="block text-base font-bold text-neutral-950">Female voice</span><span className="mt-1 block text-xs text-neutral-600">Warm and friendly</span></button>
           <button type="button" aria-pressed={voiceId === "Man"} onClick={() => setVoiceId("Man")} className={`rounded-xl border-2 p-3 text-left transition ${voiceId === "Man" ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-neutral-400"}`}><span className="block text-base font-bold text-neutral-950">Male voice</span><span className="mt-1 block text-xs text-neutral-600">Clear and confident</span></button>
