@@ -380,30 +380,62 @@ Deno.serve(async (req: Request) => {
       });
     }
     if (action === "calendar.ai.list" || action === "calendar.ai.create") {
-      const { connection, token } = await authenticateLine(req, body);
+      // SautiKit agents use the same tenant-scoped Vault credential as Google Drive search.
+      // Older Vapi/line flows continue to authenticate with the existing AI line secret.
+      const auth = req.headers.get("x-twiga-tool-secret")
+        ? await authenticateSautiKitTool(req, body)
+        : await authenticateLine(req, body);
+      const { connection, token } = auth;
       if (!connection || !token) return reply(req, { connected: false, items: [] });
+      const granted = new Set(String(connection.granted_scopes || "").split(/\\s+/).filter(Boolean));
+      if (!granted.has(REQUIRED_SCOPES[0]) && !granted.has("https://www.googleapis.com/auth/calendar.events")) {
+        throw new HttpError(403, "This business has not granted Google Calendar access.");
+      }
       if (action === "calendar.ai.list") {
         const start = String(body.timeMin || new Date().toISOString());
         const end = String(body.timeMax || new Date(Date.now() + 30 * 86400000).toISOString());
         const q = new URLSearchParams({ singleEvents: "true", orderBy: "startTime", maxResults: "100", timeMin: start, timeMax: end });
         const data = await googleJson(token, "https://www.googleapis.com/calendar/v3/calendars/primary/events?" + q);
-        return reply(req, { connected: true, items: data.items || [], nextPageToken: data.nextPageToken || null });
+        const items = (Array.isArray(data.items) ? data.items : []).map((event: any) => ({
+          start: event.start || null,
+          end: event.end || null,
+          summary: event.visibility === "private" ? "Busy" : safeDriveText(event.summary || "Busy", 120),
+          status: String(event.status || "confirmed"),
+          transparency: String(event.transparency || "opaque"),
+        }));
+        return reply(req, { connected: true, items, nextPageToken: data.nextPageToken || null });
       }
-      const event = body.event;
-      if (!event?.summary || !event?.start?.dateTime || !event?.end?.dateTime) {
+      const incomingEvent = body.event;
+      if (!incomingEvent?.summary || !incomingEvent?.start?.dateTime || !incomingEvent?.end?.dateTime) {
         throw new HttpError(400, "Appointment title, start and end are required.");
       }
-      const url = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
-      try {
-        const data = await googleJson(token, url, { method: "POST", body: JSON.stringify(event) });
-        return reply(req, { connected: true, event: data });
-      } catch (error) {
-        if (error instanceof HttpError && error.status === 409 && event.id) {
-          const existing = await googleJson(token, url + "/" + encodeURIComponent(String(event.id)));
-          return reply(req, { connected: true, event: existing, alreadyExists: true });
-        }
-        throw error;
-      }
+      const event = {
+        summary: safeDriveText(incomingEvent.summary, 160),
+        description: safeDriveText(incomingEvent.description || "TWIGA AI receptionist appointment request. Awaiting business confirmation.", 1800),
+        start: { dateTime: String(incomingEvent.start.dateTime), timeZone: String(incomingEvent.start.timeZone || "Africa/Nairobi") },
+        end: { dateTime: String(incomingEvent.end.dateTime), timeZone: String(incomingEvent.end.timeZone || "Africa/Nairobi") },
+        ...(incomingEvent.location ? { location: safeDriveText(incomingEvent.location, 240) } : {}),
+        status: "tentative",
+        transparency: "opaque",
+        visibility: "private",
+        attendees: [],
+        reminders: { useDefault: false, overrides: [] },
+      };
+      const url = "https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none";
+      const data = await googleJson(token, url, { method: "POST", body: JSON.stringify(event) });
+      return reply(req, {
+        connected: true,
+        event: {
+          id: data.id,
+          summary: data.summary,
+          start: data.start,
+          end: data.end,
+          status: data.status,
+          htmlLink: data.htmlLink || null,
+        },
+        confirmation: "tentative",
+        message: "A private tentative calendar hold was created. NILA staff must confirm it before the caller is told the appointment is final.",
+      });
     }
     const businessId = String(body.businessId || "");
     if (!businessId || businessId.length > 100) throw new HttpError(400, "A valid TWIGA business is required.");
