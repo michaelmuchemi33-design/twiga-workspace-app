@@ -335,6 +335,9 @@ Deno.serve(async (req: Request) => {
         }
       }
       const scripts = settings.sautikit_scripts && typeof settings.sautikit_scripts === "object" ? settings.sautikit_scripts : {};
+      if (!key) {
+        providerError = "TWIGA's central SautiKit server connection is not configured. No customer API key is needed; the platform team must finish the one-time provider connection.";
+      }
       const liveInboundRoute = number?.routing?.inbound_agent || number?.inbound_agent || number?.routing?.inboundAgent;
       const liveInboundAgentId = liveInboundRoute?.agent_id || liveInboundRoute?.agentId;
       const liveInboundVerified = !!(liveInboundRoute?.enabled && agent?.id && liveInboundAgentId === agentId);
@@ -418,8 +421,8 @@ Deno.serve(async (req: Request) => {
       return json({ saved: true, voice: providerVoice, gender: selectedVoice === "Man" ? "male" : "female", model: selectedModel, phoneLine: savedLine, message: "Your " + (selectedVoice === "Man" ? "male" : "female") + " voice preference has been saved." });
     }
 
-    if (!key) return json({ error: "Live calling is temporarily unavailable. Please try again shortly." }, 503);
-    if (!line || !numberId) return json({ error: "This receptionist is not ready to place a call yet. Please try again shortly." }, 503);
+    if (!key) return json({ error: "TWIGA's central SautiKit server connection still needs its one-time platform credential. No customer API key is required. Live calls are safely paused until the platform connection is completed." }, 503);
+    if (!line || !numberId) return json({ error: "This receptionist does not have a linked SautiKit phone number yet. Live calls are safely paused until the line is assigned." }, 409);
     if (!canManage && ["create_agent", "bind_agent", "publish_agent", "send_call", "configure_forwarding"].includes(action)) return json({ error: "Only the business owner, admin or TWIGA platform administrator can change or call from this receptionist." }, 403);
 
     const callbackUrl = "https://ztyxxikkposfpxsutnfr.supabase.co/functions/v1/twiga-sautikit-callback";
