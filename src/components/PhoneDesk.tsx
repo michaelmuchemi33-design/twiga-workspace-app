@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Model = { id: string; voices?: string[]; rate_per_minute_minor?: number; currency?: string };
@@ -64,6 +64,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const [onlyIfMissed, setOnlyIfMissed] = useState(false);
   const [onlyIfUnpaid, setOnlyIfUnpaid] = useState(false);
   const [callConsent, setCallConsent] = useState(false);
+  const autoBindAttempted = useRef("");
 
   const load = useCallback(async () => {
     if (!businessId || !supabase) return;
@@ -116,6 +117,45 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const allVoices = useMemo(() => (config.models || []).flatMap(m => (m.voices || []).map(voice => ({ model: m.id, voice }))), [config.models]);
   const line = config.phoneLine;
   const settings = line?.settings || {};
+
+  // Existing inbound agents with incomplete tools are repaired automatically
+  // when the owner opens Phone Desk. The server preserves the assigned number
+  // and never enables outbound calling as part of this repair.
+  useEffect(() => {
+    const agentId = String(config.agent?.id || "");
+    const assignedAgentId = String(settings.inbound_agent_id || "");
+    const ready = settings.sautikit_calendar_tools_ready === true
+      && settings.sautikit_booking_tool_ready === true
+      && settings.sautikit_cloudflare_files_tool_ready === true
+      && settings.sautikit_drive_tool_ready === true
+      && settings.sautikit_operational_tools_ready === true
+      && settings.sautikit_knowledge_tool_ready === true;
+    if (!supabase || !businessId || !agentId || assignedAgentId !== agentId
+      || line?.inbound_enabled !== true || ready) return;
+    const attemptKey = businessId + ":" + agentId;
+    if (autoBindAttempted.current === attemptKey) return;
+    autoBindAttempted.current = attemptKey;
+    let cancelled = false;
+    void (async () => {
+      setMessage("Connecting your receptionist to your business data and calendar…");
+      try {
+        const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", {
+          body: { action: "bind_agent", businessId },
+        });
+        if (invokeError) throw new Error(await functionErrorMessage(invokeError, "Could not connect the receptionist tools."));
+        if (data?.error) throw new Error(String(data.error));
+        if (cancelled) return;
+        setMessage(data?.message || "Your receptionist tools have been connected.");
+        await load();
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Could not connect the receptionist tools. Use Save voice to retry.");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [businessId, config.agent?.id, line?.inbound_enabled, settings.inbound_agent_id,
+      settings.sautikit_calendar_tools_ready, settings.sautikit_booking_tool_ready,
+      settings.sautikit_cloudflare_files_tool_ready, settings.sautikit_drive_tool_ready,
+      settings.sautikit_operational_tools_ready, settings.sautikit_knowledge_tool_ready, load]);
   const displayedPhoneNumber = String(config.providerNumber || config.number?.phone_number || config.number?.number_e164 || config.number?.phoneNumber || config.number?.number || line?.line_number || "");
   const serverDirectReady = config.serverDirectReady === true || config.serverProxyReady === true || (config.serverDirectReady === undefined && config.keyConfigured === true);
   const providerFailed = config.providerConnected === false || line?.inbound_status === "failed" || line?.outbound_status === "failed";
