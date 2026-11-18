@@ -385,10 +385,10 @@ export default {
           const packed = JSON.stringify(workspace); const bytes = new TextEncoder().encode(packed).byteLength;
           if (bytes > 4 * 1024 * 1024) return json(req,{error:"Workspace save is larger than 4 MB."},413);
           const previous = await env.DB.prepare("SELECT size_bytes FROM workspace_data WHERE business_id = ?").bind(businessId).first(); const oldBytes = Number(previous?.size_bytes || 0), delta = bytes-oldBytes;
-          if (delta > 0) await reserve(env,businessId,delta);
+          if (delta > 0) await reserveD1(env,businessId,delta);
           try { await env.DB.prepare("INSERT INTO workspace_data (business_id,workspace_json,size_bytes,updated_by,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(business_id) DO UPDATE SET workspace_json=excluded.workspace_json,size_bytes=excluded.size_bytes,updated_by=excluded.updated_by,updated_at=excluded.updated_at").bind(businessId,packed,bytes,member.userId,now()).run(); }
-          catch(e){ if(delta>0) await release(env,businessId,delta).catch(()=>{}); throw e; }
-          if(delta<0) await release(env,businessId,Math.abs(delta));
+          catch(e){ if(delta>0) await releaseD1(env,businessId,delta).catch(()=>{}); throw e; }
+          if(delta<0) await releaseD1(env,businessId,Math.abs(delta));
           return json(req,{saved:true,updated_at:now(),bytes,storage:"cloudflare_d1",d1UsedBytes:await currentD1Usage(env,businessId),d1QuotaBytes:D1_QUOTA});
         }
         return json(req,{error:"Method not allowed."},405);
@@ -499,8 +499,9 @@ export default {
       }
       if (kind !== "files" && kind !== "usage") return json(req, { error: "Not found." }, 404);
       if (kind === "usage" && req.method === "GET" && !fileId) {
-        const used = await currentUsage(env, businessId);
-        return json(req, { usedBytes: used, quotaBytes: QUOTA, remainingBytes: Math.max(0, QUOTA - used), percentUsed: Math.min(100, Math.round(used / QUOTA * 10000) / 100) });
+        const r2Used = await currentR2Usage(env, businessId);
+        const d1Used = await currentD1Usage(env, businessId);
+        return json(req, { usedBytes: r2Used, quotaBytes: R2_QUOTA, remainingBytes: Math.max(0, R2_QUOTA - r2Used), percentUsed: Math.min(100, Math.round(r2Used / R2_QUOTA * 10000) / 100), r2UsedBytes: r2Used, r2QuotaBytes: R2_QUOTA, d1UsedBytes: d1Used, d1QuotaBytes: D1_QUOTA });
       }
       if (kind !== "files") return json(req, { error: "Not found." }, 404);
       if (req.method === "GET" && !fileId) {
@@ -548,7 +549,7 @@ export default {
         await env.FILES.delete(row.object_key);
         await env.DB.prepare("DELETE FROM files WHERE business_id = ? AND file_id = ?").bind(businessId, fileId).run();
         await releaseR2(env, businessId, Number(row.size_bytes || 0));
-        return json(req, { deleted: true, usedBytes: await currentUsage(env, businessId), quotaBytes: QUOTA });
+        return json(req, { deleted: true, usedBytes: await currentR2Usage(env, businessId), quotaBytes: R2_QUOTA });
       }
       return json(req, { error: "Method not allowed." }, 405);
     } catch (e) {
