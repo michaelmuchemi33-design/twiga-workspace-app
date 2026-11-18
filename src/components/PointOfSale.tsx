@@ -18,7 +18,23 @@ const todayKey = () => new Date().toLocaleDateString("en-CA", { timeZone: "Afric
 const localDay = (value: string) => new Date(value).toLocaleDateString("en-CA", { timeZone: "Africa/Nairobi" });
 const safeDate = (value: string) => new Date(value).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" });
 
-export default function PointOfSale() {
+const CLOUDFLARE_POS_BASE = "https://twiga-business-files.twiga-ke.workers.dev/v1";
+async function twigaCloudflare(businessId: string, path: string, options: RequestInit = {}) {
+  if (!supabase) throw new Error("TWIGA sign-in is not ready.");
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session?.access_token) throw new Error("Sign in again before using the Money workspace.");
+  const headers = {
+    Authorization: `Bearer ${data.session.access_token}`,
+    ...((options.headers || {}) as Record<string, string>),
+    ...(options.body && !(options.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
+  };
+  const response = await fetch(`${CLOUDFLARE_POS_BASE}${path}`, { ...options, headers });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(String(result.error || "Cloudflare could not complete this Money action."));
+  return result;
+}
+
+export default function PointOfSale({ onManageProducts }: { onManageProducts?: () => void }) {
   const { businessId, demoMode, products: demoProducts, sales: demoSales, settings } = useStore();
   const [tab, setTab] = useState<Tab>("sell");
   const [items, setItems] = useState<Item[]>([]);
@@ -49,36 +65,29 @@ export default function PointOfSale() {
     if (demoMode) {
       const sample = demoProducts.map((p: any) => ({
         id: p.id, name: p.name, price: p.price, category: p.category, description: p.description || "",
-        stock_quantity: p.stock, low_stock_threshold: p.lowStockThreshold || 5, unit: p.unit || "piece",
-        item_type: p.kind === "service" ? "service" : "product", track_stock: p.kind !== "service",
-        currency: "KES", image_key: p.imageKey || null,
+        stock_quantity: p.stock, cost_price: p.costPrice || 0, low_stock_threshold: p.lowStockThreshold || 5,
+        unit: p.unit || "piece", item_type: p.kind === "service" ? "service" : "product", track_stock: p.kind !== "service",
+        currency: "KES", image_key: p.imageKey || null, imageUrl: p.imageUrl || null, sku: p.sku || "",
       }));
       setItems(sample);
       return;
     }
     if (!supabase || !businessId) { setItems([]); setSales([]); setExpenses([]); setMovements([]); return; }
-    const [productResult, salesResult, expenseResult, movementResult] = await Promise.all([
-      supabase.from("twiga_products").select("*").eq("business_id", businessId).eq("is_active", true).order("name"),
-      supabase.from("twiga_pos_sales").select("*").eq("business_id", businessId).order("created_at", { ascending: false }).limit(100),
-      supabase.from("twiga_pos_expenses").select("*").eq("business_id", businessId).order("expense_date", { ascending: false }).limit(100),
-      supabase.from("twiga_pos_inventory_movements").select("*").eq("business_id", businessId).order("created_at", { ascending: false }).limit(100),
+    const [catalogue, pos] = await Promise.all([
+      twigaCloudflare(businessId, `/products/${encodeURIComponent(businessId)}`),
+      twigaCloudflare(businessId, `/pos/${encodeURIComponent(businessId)}?range=week`),
     ]);
-    if (productResult.error) throw productResult.error;
-    if (salesResult.error) throw salesResult.error;
-    if (expenseResult.error) throw expenseResult.error;
-    if (movementResult.error) throw movementResult.error;
-    const mapped = await Promise.all((productResult.data || []).map(async (p: any) => {
-      let imageUrl: string | null = null;
-      if (p.image_key) {
-        const { data } = await supabase.storage.from("twiga-product-images").createSignedUrl(p.image_key, 3600);
-        imageUrl = data?.signedUrl || null;
-      }
-      return { ...p, imageUrl, price: Number(p.price), stock_quantity: Number(p.stock_quantity), low_stock_threshold: Number(p.low_stock_threshold || 0) };
+    const mapped: Item[] = (Array.isArray(catalogue.products) ? catalogue.products : []).map((p: any) => ({
+      id: String(p.id), name: String(p.name || ""), sku: p.sku || "", barcode: p.barcode || "",
+      category: p.category || "General", description: p.description || "", price: Number(p.price || 0),
+      cost_price: Number(p.costPrice || 0), stock_quantity: Number(p.stock || 0), low_stock_threshold: Number(p.lowStockThreshold || 5),
+      unit: p.unit || "piece", image_key: p.imageKey || null, imageUrl: p.imageUrl || null,
+      item_type: p.itemType === "service" ? "service" : "product", track_stock: p.trackStock !== false, currency: p.currency || "KES",
     }));
     setItems(mapped);
-    setSales((salesResult.data || []) as SaleRow[]);
-    setExpenses((expenseResult.data || []) as ExpenseRow[]);
-    setMovements((movementResult.data || []) as Movement[]);
+    setSales((pos.sales || []) as SaleRow[]);
+    setExpenses((pos.expenses || []) as ExpenseRow[]);
+    setMovements((pos.movements || []) as Movement[]);
     if (!stockProduct && mapped.length) setStockProduct(mapped[0].id);
   }, [businessId, demoMode, demoProducts, stockProduct]);
 
@@ -119,30 +128,33 @@ export default function PointOfSale() {
     if (!supabase || !businessId) { setMessage("Choose a business workspace first."); return; }
     if (Number(discount) < 0 || Number(tax) < 0 || Number(discount) > cartTotal) { setMessage("Check discount and tax values."); return; }
     setBusy(true); setMessage("");
-    const status = paymentMethod === "credit" ? "credit" : paymentMethod === "mpesa" ? "pending" : "paid";
+    const paymentStatus = paymentMethod === "mpesa" ? "pending" : paymentMethod === "credit" ? "credit" : "paid";
+    const confirmedPaid = paymentStatus === "paid";
     try {
-      const { data, error } = await supabase.rpc("twiga_pos_checkout", {
-        p_business_id: businessId,
-        p_items: cart.map((x) => ({ product_id: x.product_id, quantity: x.quantity })),
-        p_customer_name: customer.trim() || "Walk-in",
-        p_customer_phone: customerPhone.trim() || null,
-        p_payment_method: paymentMethod,
-        p_payment_status: status,
-        p_discount_amount: Number(discount) || 0,
-        p_tax_amount: Number(tax) || 0,
+      const result = await twigaCloudflare(businessId, `/pos/${encodeURIComponent(businessId)}/checkout`, {
+        method: "POST",
+        body: JSON.stringify({
+          orderId: crypto.randomUUID(), date: todayKey(), items: cart.map((x) => ({ productId: x.product_id, qty: x.quantity, price: x.price })),
+          customer: customer.trim() || "Walk-in", phone: customerPhone.trim(), method: paymentMethod,
+          paymentStatus, confirmedPaid, deductStock: paymentStatus !== "pending",
+          discountAmount: Number(discount) || 0, taxAmount: Number(tax) || 0,
+        }),
       });
-      if (error) throw error;
-      const result = Array.isArray(data) ? data[0] : data;
-      await load();
-      setLastReceipt({ ...(result || {}), customer_name: customer.trim() || "Walk-in", customer_phone: customerPhone || null,
-        payment_method: paymentMethod, payment_status: status, status: "completed", created_at: new Date().toISOString(),
-        items: result?.items || [], subtotal: result?.subtotal || cartTotal, discount_amount: result?.discount_amount || 0, tax_amount: result?.tax_amount || 0 });
+      const receipt: SaleRow = {
+        id: result.orderId, sale_number: result.receipt || result.orderId, customer_name: customer.trim() || "Walk-in",
+        customer_phone: customerPhone || null,
+        items: (result.items || []).map((x: any) => ({ name: x.name, quantity: Number(x.qty), unit_price: Number(x.unitPrice), line_total: Number(x.total) })),
+        subtotal: Number(result.subtotal || cartTotal), discount_amount: Number(result.discount || 0), tax_amount: Number(result.tax || 0),
+        total_amount: Number(result.total || total), cost_total: 0, gross_profit: 0, payment_method: paymentMethod,
+        payment_status: result.paymentStatus || paymentStatus, notes: null, status: result.status || "pending", created_at: result.createdAt || new Date().toISOString(),
+      };
+      await load(); setLastReceipt(receipt);
       setCart([]); setCustomer("Walk-in"); setCustomerPhone(""); setDiscount("0"); setTax("0");
-      setMessage(paymentMethod === "mpesa" ? "Sale saved as pending. Send the M-Pesa prompt from Payments and only mark it settled after the provider confirms payment." : paymentMethod === "credit" ? "Sale recorded as customer credit. It is not counted as money collected." : "Sale completed and stock updated.");
-      if (result?.id) {
-        const { data: saved } = await supabase.from("twiga_pos_sales").select("*").eq("business_id", businessId).eq("id", result.id).maybeSingle();
-        if (saved) setLastReceipt(saved as SaleRow);
-      }
+      setMessage(paymentMethod === "mpesa"
+        ? "Sale saved as pending. Use the Payments screen to request M-Pesa; only settle it after the provider confirms payment."
+        : paymentMethod === "credit"
+          ? "Sale recorded as customer credit. Stock was updated, but this is not counted as money collected."
+          : "Sale completed in Cloudflare and stock was updated.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not complete this sale."); }
     finally { setBusy(false); }
   };
@@ -153,14 +165,14 @@ export default function PointOfSale() {
     if (!supabase || !businessId) return;
     setBusy(true); setMessage("");
     try {
-      const { error } = await supabase.from("twiga_pos_expenses").insert({
-        business_id: businessId, category: expenseForm.category.trim() || "Other", description: expenseForm.description.trim(),
-        amount: Number(expenseForm.amount), payment_method: expenseForm.payment_method,
-        receipt_reference: expenseForm.receipt_reference.trim() || null, notes: expenseForm.notes.trim() || null,
+      await twigaCloudflare(businessId, `/pos/${encodeURIComponent(businessId)}/expense`, {
+        method: "POST",
+        body: JSON.stringify({ category: expenseForm.category.trim() || "Other", description: expenseForm.description.trim(),
+          amount: Number(expenseForm.amount), method: expenseForm.payment_method, notes: expenseForm.notes.trim(),
+          receiptReference: expenseForm.receipt_reference.trim(), date: todayKey() }),
       });
-      if (error) throw error;
       setExpenseForm({ category: "Supplies", description: "", amount: "", payment_method: "cash", receipt_reference: "", notes: "" });
-      await load(); setMessage("Expense recorded.");
+      await load(); setMessage("Expense recorded in Cloudflare.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not save expense."); }
     finally { setBusy(false); }
   };
@@ -171,13 +183,13 @@ export default function PointOfSale() {
     if (!supabase || !businessId) return;
     setBusy(true); setMessage("");
     try {
-      const { error } = await supabase.rpc("twiga_pos_adjust_stock", {
-        p_business_id: businessId, p_product_id: stockProduct, p_quantity_change: Number(stockChange),
-        p_unit_cost: stockCost.trim() ? Number(stockCost) : null, p_notes: stockNote.trim() || null, p_movement_type: stockType,
+      await twigaCloudflare(businessId, `/pos/${encodeURIComponent(businessId)}/stock-movement`, {
+        method: "POST",
+        body: JSON.stringify({ itemId: stockProduct, quantityChange: Number(stockChange), unitCost: stockCost.trim() ? Number(stockCost) : 0,
+          movementType: stockType, notes: stockNote.trim() }),
       });
-      if (error) throw error;
       setStockChange("1"); setStockCost(""); setStockNote("");
-      await load(); setMessage("Stock movement saved and inventory balance updated.");
+      await load(); setMessage("Stock movement saved to Cloudflare and inventory updated.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not update stock."); }
     finally { setBusy(false); }
   };
