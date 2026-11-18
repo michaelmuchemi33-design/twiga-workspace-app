@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Contact = { name: string; phone: string; consent: boolean };
@@ -53,6 +53,8 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
   const fileRef = useRef<HTMLInputElement>(null);
   const [offer, setOffer] = useState("");
   const [script, setScript] = useState(DEFAULT_SCRIPT);
+  const [greeting, setGreeting] = useState("Hello, karibu! How can I help you today?");
+  const [inboundPrompt, setInboundPrompt] = useState("Answer questions about the business accurately, help with bookings and orders, and ask before saving customer details.");
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [fileName, setFileName] = useState("");
   const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5]);
@@ -67,6 +69,15 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
   const [error, setError] = useState("");
   const [testText, setTestText] = useState("A customer asks: What is the offer, how much does it cost, and how can I book?");
   const [testReply, setTestReply] = useState("");
+  useEffect(() => {
+    if (!supabase || !businessId || demo) return;
+    void supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } }).then(({ data, error }) => {
+      if (error || !data) return;
+      if (data.scripts?.greeting) setGreeting(String(data.scripts.greeting));
+      if (data.scripts?.inbound) setInboundPrompt(String(data.scripts.inbound));
+      if (data.scripts?.outbound) setScript(String(data.scripts.outbound));
+    });
+  }, [businessId, demo]);
   const optedIn = contacts.filter(c => c.consent);
   const invalidCount = useMemo(() => contacts.length - optedIn.length, [contacts, optedIn.length]);
   const publishedPrompt = useMemo(() => script.replaceAll("{{offer}}", offer || "our current offer"), [script, offer]);
@@ -87,7 +98,7 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     if (!supabase || !businessId) { setError("Select a business workspace first."); return; }
     setPublishing(true); setError(""); setMessage("Publishing your outbound offer to the AI receptionist…");
     try {
-      const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "publish_agent", businessId, outboundPrompt: publishedPrompt } });
+      const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "publish_agent", businessId, greeting, inboundPrompt, outboundPrompt: publishedPrompt } });
       if (invokeError) throw new Error(invokeError.message);
       if (data?.error) throw new Error(String(data.error));
       setMessage(data?.message || "Offer and outbound instructions published.");
@@ -128,14 +139,14 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
           business_id: businessId, customer_name: contact.name, phone_number: contact.phone,
           reason: "Promotional offer: " + offer.trim() + "\nAI instructions: " + publishedPrompt,
           scheduled_at: slot.toISOString(), timezone: "Africa/Nairobi", consent_status: "opted_in",
-          trigger_type: "outreach", trigger_conditions: { campaign_type: "promotional", offer: offer.trim(), consent_source: fileName || "CSV upload" },
+          trigger_type: "timer", trigger_conditions: { campaign_type: "promotional", offer: offer.trim(), consent_source: fileName || "CSV upload" },
           calling_window_start: start, calling_window_end: end, max_attempts: 1, retry_interval_minutes: 30, status: "scheduled",
         });
         cursor = new Date(slot.getTime() + 5 * 60_000);
       }
       const { error: insertError } = await supabase.from("twiga_scheduled_calls").insert(rows);
       if (insertError) throw new Error(insertError.message);
-      setMessage("Campaign queued: " + rows.length + " consented contacts scheduled. The existing call worker will dispatch due calls inside the selected calling windows.");
+      setMessage("Campaign queued: " + rows.length + " consented contacts scheduled. The scheduled-call worker will dispatch due calls inside the selected calling windows.");
     } catch (e) { setError(e instanceof Error ? e.message : "Could not queue the campaign."); }
     finally { setLaunching(false); }
   };
