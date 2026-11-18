@@ -47,11 +47,36 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   const [providerBusy, setProviderBusy] = useState(false);
   const [providerMessage, setProviderMessage] = useState("");
   const [grokTestMessage, setGrokTestMessage] = useState("");
+  const [palplussConfig, setPalplussConfig] = useState<any>({});
+  const [palplussApiKey, setPalplussApiKey] = useState("");
+  const [palplussBasicAuthorization, setPalplussBasicAuthorization] = useState("");
+  const [palplussPaylinkId, setPalplussPaylinkId] = useState("");
+  const [palplussChannels, setPalplussChannels] = useState<any[]>([]);
+  const [palplussTransactions, setPalplussTransactions] = useState<any[]>([]);
+  const [palplussBusy, setPalplussBusy] = useState(false);
+  const [palplussMessage, setPalplussMessage] = useState("");
+  const [palplussChannelName, setPalplussChannelName] = useState("");
+  const [palplussChannelType, setPalplussChannelType] = useState("PAYBILL");
+  const [palplussShortcode, setPalplussShortcode] = useState("");
+  const [palplussAccountNumber, setPalplussAccountNumber] = useState("");
+  const [palplussDefaultChannel, setPalplussDefaultChannel] = useState(true);
+  const [palplussStkPhone, setPalplussStkPhone] = useState("");
+  const [palplussStkAmount, setPalplussStkAmount] = useState("");
 
   const action = useCallback(async (name: string, extra: Record<string, unknown> = {}) => {
     if (!supabase || !businessId) throw new Error("Choose a business workspace first.");
     const { data, error } = await supabase.functions.invoke("google-workspace", { body: { action: name, businessId, ...extra } });
     if (error) throw new Error(error.message);
+    if (data?.error) throw new Error(String(data.error));
+    return data;
+  }, [businessId]);
+
+  const palplussAction = useCallback(async (name: string, extra: Record<string, unknown> = {}) => {
+    if (!supabase || !businessId) throw new Error("Choose a business workspace first.");
+    const { data, error } = await supabase.functions.invoke("twiga-palpluss", {
+      body: { action: name, businessId, ...extra },
+    });
+    if (error) throw new Error(await edgeFunctionError(error, "PalPluss request failed."));
     if (data?.error) throw new Error(String(data.error));
     return data;
   }, [businessId]);
@@ -66,14 +91,41 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
 
   const refreshProviders = useCallback(async () => {
     if (!businessId || !supabase) return;
-    const [sautikit, xai] = await Promise.allSettled([
+    const [sautikit, xai, palpluss] = await Promise.allSettled([
       supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } }),
       supabase.functions.invoke("twiga-platform-secrets", { body: { action: "get_config" } }),
+      supabase.functions.invoke("twiga-palpluss", { body: { action: "get_config", businessId } }),
     ]);
-    if (sautikit.status === "fulfilled" && !sautikit.value.error && !sautikit.value.data?.error) { const cfg = sautikit.value.data || {}; setSautikitConfig(cfg); setSelectedSautikitNumber(cfg.phoneLine?.provider_reference || cfg.availableNumbers?.[0]?.id || ""); }
-    else setSautikitConfig({ isPlatformAdmin: false, providerError: sautikit.status === "rejected" ? String(sautikit.reason) : await edgeFunctionError(sautikit.value.error, "SautiKit status could not be loaded.") });
+    if (sautikit.status === "fulfilled" && !sautikit.value.error && !sautikit.value.data?.error) {
+      const cfg = sautikit.value.data || {};
+      setSautikitConfig(cfg);
+      setSelectedSautikitNumber(cfg.phoneLine?.provider_reference || cfg.availableNumbers?.[0]?.id || "");
+    } else {
+      setSautikitConfig({ isPlatformAdmin: false, providerError: sautikit.status === "rejected" ? String(sautikit.reason) : await edgeFunctionError(sautikit.value.error, "SautiKit status could not be loaded.") });
+    }
     if (xai.status === "fulfilled" && !xai.value.error && !xai.value.data?.error) setXaiConfig(xai.value.data || {});
     else setXaiConfig({ isAdmin: false });
+
+    if (palpluss.status === "fulfilled" && !palpluss.value.error && !palpluss.value.data?.error) {
+      const cfg = palpluss.value.data || {};
+      setPalplussConfig(cfg);
+      setPalplussPaylinkId(String(cfg.paylinkId || ""));
+      if (cfg.keyConfigured) {
+        const [channelsResult, transactionsResult] = await Promise.allSettled([
+          supabase.functions.invoke("twiga-palpluss", { body: { action: "channel.list", businessId } }),
+          supabase.functions.invoke("twiga-palpluss", { body: { action: "transactions.list", businessId, limit: 8 } }),
+        ]);
+        setPalplussChannels(channelsResult.status === "fulfilled" && !channelsResult.value.error ? (channelsResult.value.data?.channels || []) : []);
+        setPalplussTransactions(transactionsResult.status === "fulfilled" && !transactionsResult.value.error ? (transactionsResult.value.data?.transactions || []) : []);
+      } else {
+        setPalplussChannels([]);
+        setPalplussTransactions([]);
+      }
+    } else {
+      setPalplussConfig({ keyConfigured: false, error: palpluss.status === "rejected" ? String(palpluss.reason) : await edgeFunctionError(palpluss.value.error, "PalPluss status could not be loaded.") });
+      setPalplussChannels([]);
+      setPalplussTransactions([]);
+    }
   }, [businessId]);
 
   useEffect(() => { void refresh(); void refreshProviders(); }, [refresh, refreshProviders]);
@@ -175,6 +227,65 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     finally { setProviderBusy(false); }
   };
 
+  const savePalplussCredential = async () => {
+    if (!businessId || !supabase) { setPalplussMessage("Choose a business first."); return; }
+    const apiKey = palplussApiKey.trim();
+    const basicAuthorization = palplussBasicAuthorization.trim();
+    if (!apiKey && !basicAuthorization) { setPalplussMessage("Enter the PalPluss API key or its Base64 Basic Authorization value."); return; }
+    if (apiKey && basicAuthorization) { setPalplussMessage("Use one credential field at a time."); return; }
+    setPalplussBusy(true); setPalplussMessage("Validating the PalPluss account and securely saving its credential…");
+    try {
+      const data = await palplussAction("save_key", apiKey ? { apiKey } : { basicAuthorization });
+      setPalplussApiKey(""); setPalplussBasicAuthorization("");
+      setPalplussMessage(data?.message || "PalPluss credential validated and saved securely.");
+      await refreshProviders();
+    } catch (e) { setPalplussMessage(e instanceof Error ? e.message : "Could not connect PalPluss."); }
+    finally { setPalplussBusy(false); }
+  };
+
+  const savePalplussPaylink = async () => {
+    if (!palplussPaylinkId.trim()) { setPalplussMessage("Enter the public PalPluss Paylink ID."); return; }
+    setPalplussBusy(true); setPalplussMessage("Saving the business Paylink ID…");
+    try {
+      const data = await palplussAction("save_paylink", { paylinkId: palplussPaylinkId.trim() });
+      setPalplussMessage(data?.message || "Paylink ID saved.");
+      await refreshProviders();
+    } catch (e) { setPalplussMessage(e instanceof Error ? e.message : "Could not save the Paylink ID."); }
+    finally { setPalplussBusy(false); }
+  };
+
+  const createPalplussChannel = async () => {
+    if (!palplussChannelName.trim() || !palplussShortcode.trim()) { setPalplussMessage("Enter a channel name and shortcode."); return; }
+    if (palplussChannelType === "PAYBILL" && !palplussAccountNumber.trim()) { setPalplussMessage("A Paybill requires its account number."); return; }
+    setPalplussBusy(true); setPalplussMessage("Creating the payment channel in PalPluss…");
+    try {
+      const data = await palplussAction("channel.create", {
+        name: palplussChannelName.trim(), type: palplussChannelType,
+        shortcode: palplussShortcode.trim(), accountNumber: palplussAccountNumber.trim(),
+        isDefault: palplussDefaultChannel,
+      });
+      setPalplussChannelName(""); setPalplussShortcode(""); setPalplussAccountNumber("");
+      setPalplussMessage(data?.channel ? "Payment channel created and linked to this business." : "Payment channel request completed.");
+      await refreshProviders();
+    } catch (e) { setPalplussMessage(e instanceof Error ? e.message : "Could not create the payment channel."); }
+    finally { setPalplussBusy(false); }
+  };
+
+  const sendPalplussStk = async () => {
+    const amount = Number(palplussStkAmount);
+    const phone = palplussStkPhone.trim();
+    if (!Number.isFinite(amount) || amount < 1 || !phone) { setPalplussMessage("Enter a valid KSh amount and Kenyan mobile number."); return; }
+    const confirmed = window.confirm("Send a LIVE M-Pesa payment prompt for KSh " + amount.toLocaleString() + " to " + phone + "? The customer may be asked to approve a real payment.");
+    if (!confirmed) return;
+    setPalplussBusy(true); setPalplussMessage("Sending the M-Pesa prompt…");
+    try {
+      const data = await palplussAction("stk", { amount, phone, transactionDesc: "TWIGA business payment" });
+      setPalplussMessage(data?.message || "M-Pesa prompt initiated. Wait for the PalPluss callback before treating it as paid.");
+      await refreshProviders();
+    } catch (e) { setPalplussMessage(e instanceof Error ? e.message : "Could not send the M-Pesa prompt."); }
+    finally { setPalplussBusy(false); }
+  };
+
   if (demo) return <section className="rounded-2xl border border-neutral-200 bg-white p-6"><h1 className="text-2xl font-semibold">Connections & permissions</h1><p className="mt-2 text-sm text-neutral-500">Sign in to connect Google services for your business.</p></section>;
 
   const googleOAuthReady = !!oauthConfig.serverConfigured;
@@ -244,6 +355,67 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
         </div>}
         {sautikitConfig.providerError && <p role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{sautikitConfig.providerError}</p>}
       </div>
+    </section>
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Payments · business workspace</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">PalPluss · M-Pesa & payment tools</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Connect this business's PalPluss account, manage its Paylink and collection channels, check transactions and send a customer payment prompt when authorised.</p></div>
+        <span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${palplussConfig.keyConfigured ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{palplussConfig.keyConfigured ? (palplussConfig.keySource === "business" ? "Business account connected" : "Platform account available") : "Credential needed"}</span>
+      </div>
+      <div className="mt-4 rounded-xl border border-orange-100 bg-orange-50 p-3 text-xs leading-5 text-orange-950">
+        <strong>Credential format:</strong> enter the PalPluss API key or a Base64 Basic Authorization value for API_KEY: (API key followed by a colon). PalPluss uses HTTP Basic authentication here, not a separate Safaricom Daraja OAuth token. TWIGA validates the credential on the server and stores the API key in encrypted Supabase Vault; it is never saved in browser storage.
+      </div>
+      {palplussConfig.keyConfigured && <p className="mt-3 text-xs text-neutral-500">Encrypted credential saved{palplussConfig.keyLast4 ? ` · ending ${palplussConfig.keyLast4}` : ""}{palplussConfig.keySource ? ` · ${palplussConfig.keySource} scope` : ""}. {palplussConfig.keyUpdatedAt ? "Updated " + new Date(palplussConfig.keyUpdatedAt).toLocaleString() + "." : ""}</p>}
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <label className="block text-sm font-medium text-neutral-800">PalPluss API key
+          <input type="password" autoComplete="new-password" value={palplussApiKey} onChange={e => setPalplussApiKey(e.target.value)} placeholder="Paste the API key from your PalPluss dashboard" className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" />
+        </label>
+        <label className="block text-sm font-medium text-neutral-800">Base64 Basic Authorization (optional)
+          <input type="password" autoComplete="new-password" value={palplussBasicAuthorization} onChange={e => setPalplussBasicAuthorization(e.target.value)} placeholder="Base64 value or Basic … header" className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" />
+        </label>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button onClick={() => void savePalplussCredential()} disabled={palplussBusy || !businessId || (!palplussApiKey.trim() && !palplussBasicAuthorization.trim()) || (Boolean(palplussApiKey.trim()) && Boolean(palplussBasicAuthorization.trim()))} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{palplussBusy ? "Please wait…" : palplussConfig.keyConfigured ? "Validate & replace credential" : "Validate & connect PalPluss"}</button>
+        <button onClick={() => void refreshProviders()} disabled={palplussBusy || !businessId} className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-neutral-700 disabled:opacity-40">Refresh PalPluss status</button>
+        <a href="https://app.palpluss.com" target="_blank" rel="noreferrer" className="rounded-xl border border-neutral-200 px-4 py-2.5 text-sm font-semibold text-orange-700">Open PalPluss dashboard ↗</a>
+      </div>
+      {palplussConfig.keyConfigured && <>
+        <div className="mt-5 grid gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-neutral-200 p-4">
+            <h3 className="font-semibold text-neutral-900">Paylink configuration</h3>
+            <p className="mt-1 text-xs leading-5 text-neutral-500">Save the public Paylink ID that belongs to this business. The private API credential is stored separately in Vault.</p>
+            <label className="mt-3 block text-xs font-semibold text-neutral-700">Paylink ID<input value={palplussPaylinkId} onChange={e => setPalplussPaylinkId(e.target.value)} placeholder="Public Paylink ID" className="mt-1.5 w-full rounded-lg border border-neutral-200 px-3 py-2.5 text-sm font-normal" /></label>
+            <button onClick={() => void savePalplussPaylink()} disabled={palplussBusy || !palplussPaylinkId.trim()} className="mt-3 rounded-lg bg-neutral-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">Save Paylink ID</button>
+          </div>
+          <div className="rounded-xl border border-neutral-200 p-4">
+            <h3 className="font-semibold text-neutral-900">M-Pesa STK prompt</h3>
+            <p className="mt-1 text-xs leading-5 text-neutral-500">This sends a live payment prompt. Only use it after the customer has agreed to pay this amount.</p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <label className="text-xs font-semibold text-neutral-700">Amount (KSh)<input type="number" min="1" step="1" value={palplussStkAmount} onChange={e => setPalplussStkAmount(e.target.value)} placeholder="e.g. 1500" className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2.5 text-sm font-normal" /></label>
+              <label className="text-xs font-semibold text-neutral-700">Customer phone<input value={palplussStkPhone} onChange={e => setPalplussStkPhone(e.target.value)} placeholder="07XXXXXXXX" className="mt-1 w-full rounded-lg border border-neutral-200 px-3 py-2.5 text-sm font-normal" /></label>
+            </div>
+            <button onClick={() => void sendPalplussStk()} disabled={palplussBusy || !palplussStkAmount || !palplussStkPhone.trim()} className="mt-3 rounded-lg bg-orange-500 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">Send M-Pesa prompt</button>
+          </div>
+        </div>
+        <div className="mt-5 rounded-xl border border-neutral-200 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-semibold text-neutral-900">Payment channels</h3><p className="mt-1 text-xs text-neutral-500">Add the channels registered on this PalPluss account.</p></div><span className="text-xs text-neutral-500">{palplussChannels.length} saved</span></div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <input value={palplussChannelName} onChange={e => setPalplussChannelName(e.target.value)} placeholder="Channel name" className="rounded-lg border border-neutral-200 px-3 py-2 text-sm" />
+            <select value={palplussChannelType} onChange={e => setPalplussChannelType(e.target.value)} className="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm"><option value="PAYBILL">Paybill</option><option value="TILL_NUMBER">Till number</option><option value="SEND_MONEY">Send money</option></select>
+            <input value={palplussShortcode} onChange={e => setPalplussShortcode(e.target.value)} placeholder="Shortcode" className="rounded-lg border border-neutral-200 px-3 py-2 text-sm" />
+            <input value={palplussAccountNumber} onChange={e => setPalplussAccountNumber(e.target.value)} disabled={palplussChannelType !== "PAYBILL"} placeholder={palplussChannelType === "PAYBILL" ? "Paybill account number" : "Account number (optional)"} className="rounded-lg border border-neutral-200 px-3 py-2 text-sm disabled:bg-neutral-50" />
+          </div>
+          <label className="mt-3 flex items-center gap-2 text-xs text-neutral-600"><input type="checkbox" checked={palplussDefaultChannel} onChange={e => setPalplussDefaultChannel(e.target.checked)} className="accent-orange-500" />Set as this business's default payment channel</label>
+          <button onClick={() => void createPalplussChannel()} disabled={palplussBusy || !palplussChannelName.trim() || !palplussShortcode.trim()} className="mt-3 rounded-lg border border-neutral-300 px-3 py-2 text-xs font-semibold text-neutral-800 disabled:opacity-40">Create payment channel</button>
+          {palplussChannels.length > 0 && <div className="mt-3 divide-y divide-neutral-100">{palplussChannels.map((channel: any) => <div key={channel.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"><span className="font-medium text-neutral-800">{channel.name} · {channel.type}</span><span className="text-xs text-neutral-500">{channel.shortcode}{channel.account_number ? " / " + channel.account_number : ""}{channel.is_default ? " · Default" : ""}</span></div>)}</div>}
+          {palplussChannels.length === 0 && <p className="mt-3 text-xs text-neutral-500">No channels are saved for this business yet.</p>}
+        </div>
+        <div className="mt-5 rounded-xl border border-neutral-200 p-4">
+          <div className="flex items-center justify-between gap-2"><h3 className="font-semibold text-neutral-900">Recent transactions</h3><span className="text-xs text-neutral-500">{palplussTransactions.length} shown</span></div>
+          {palplussTransactions.length > 0 ? <div className="mt-2 divide-y divide-neutral-100">{palplussTransactions.map((tx: any, index: number) => <div key={tx.id || tx.transactionId || index} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"><span className="font-medium text-neutral-800">{tx.accountReference || tx.external_reference || tx.transactionId || tx.id || "Payment"}</span><span className="text-xs text-neutral-500">{tx.status || "Unknown"}{tx.amount !== undefined ? " · KSh " + Number(tx.amount).toLocaleString() : ""}</span></div>)}</div> : <p className="mt-2 text-xs text-neutral-500">No PalPluss transactions returned yet.</p>}
+        </div>
+      </>}
+      {palplussConfig.error && <p role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{palplussConfig.error}</p>}
+      {palplussMessage && <p role="status" className="mt-3 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700">{palplussMessage}</p>}
     </section>
     {providerMessage && <p role="status" className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">{providerMessage}</p>}
     {message && <p role="status" className="rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-700">{message}</p>}
