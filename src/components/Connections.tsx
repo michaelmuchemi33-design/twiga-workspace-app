@@ -364,7 +364,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
         <p className="mt-2 text-sm leading-6 text-neutral-600">TWIGA manages the phone connection centrally for customer accounts. Each business has its own assigned phone number, dedicated receptionist agent, call history and operating instructions. Customers do not need a provider API key.</p>
         {sautikitConfig.phoneLine?.line_number && <p className="mt-2 text-sm font-semibold text-neutral-900">This business's AI line: {sautikitConfig.phoneLine.line_number}</p>}
         <p className="mt-2 text-xs text-neutral-500">{sautikitConfig.keyConfigured
-          ? "Phone service connected · managed by TWIGA" + (sautikitConfig.keyLast4 ? " · •••• " + sautikitConfig.keyLast4 : "")
+          ? "Phone service connected · managed by TWIGA"
           : "Phone service setup is pending. TWIGA support will complete the connection; business owners do not need API credentials."}</p>
         <p className="mt-2 text-xs text-neutral-500">Phone credentials are managed securely by TWIGA. Do not paste provider keys into this dashboard.</p>
         <div className="mt-3 flex flex-wrap gap-2">
