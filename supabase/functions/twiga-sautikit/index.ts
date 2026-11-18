@@ -804,9 +804,38 @@ Deno.serve(async (req: Request) => {
       const scripts = settings.sautikit_scripts && typeof settings.sautikit_scripts === "object" ? settings.sautikit_scripts : {};
       const outbound = String(scripts.outbound || "Identify the business, explain the reason for calling, ask if this is a convenient time, and respect requests not to be contacted again.");
       const business = await admin.from("businesses").select("name").eq("id", businessId).maybeSingle();
+      const requestedGender = String(body.voice || "").toLowerCase();
+      if (requestedGender === "woman" || requestedGender === "man") {
+        const [catalog, agentResponse] = await Promise.all([
+          skRequest(key, "/v1/models"),
+          skRequest(key, "/v1/agents/" + encodeURIComponent(agentId)),
+        ]);
+        const currentAgent = agentResponse?.agent || agentResponse?.data?.agent || agentResponse?.data || agentResponse;
+        const selectedModelId = String(body.model || currentAgent.model || "sautikit-flash");
+        const selectedModel = (Array.isArray(catalog?.data) ? catalog.data : []).find((item: any) => item.id === selectedModelId);
+        const selectedVoice = selectedModel && Array.isArray(selectedModel.voices)
+          ? resolveProviderVoice(selectedModel.voices, requestedGender === "man" ? "Man" : "Woman") : "";
+        if (!selectedVoice) return json({ error: "The selected SautiKit model does not offer that voice. Choose another voice and try again." }, 400);
+        if (String(currentAgent.voice || "") !== selectedVoice || String(currentAgent.model || "") !== selectedModelId) {
+          await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId), "PUT", {
+            name: String(currentAgent.name || "TWIGA AI Receptionist"),
+            base_prompt: String(currentAgent.base_prompt || ""),
+            accent: String(currentAgent.accent || "Kenyan English"),
+            speech_style: String(currentAgent.speech_style || "Warm, natural and clear."),
+            model: selectedModelId,
+            voice: selectedVoice,
+            max_call_minutes: Number(currentAgent.max_call_minutes || 8),
+          });
+          const published = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/publish", "POST");
+          await admin.from("twiga_phone_lines").update({
+            settings: { ...settings, inbound_model_id: selectedModelId, inbound_voice: selectedVoice, voice_gender: requestedGender === "man" ? "male" : "female", inbound_agent_revision: Number(published.revision || settings.inbound_agent_revision || 0), last_published_at: new Date().toISOString() },
+            updated_at: new Date().toISOString(),
+          }).eq("id", line.id);
+        }
+      }
       const call = await skRequest(key, "/v1/agents/" + encodeURIComponent(agentId) + "/send", "POST", {
         to,
-        prompt_template: "You are calling on behalf of {{business_name}}. Reason for calling: {{call_reason}}. " + outbound,
+        prompt_template: "You are calling on behalf of {{business_name}} to run a receptionist test. Identify yourself as the AI receptionist, explain that this is a short test, invite the person to ask about the business, and demonstrate how you handle a normal customer enquiry. Do not claim any booking or action has been completed. " + outbound,
         variables: { business_name: String(business.data?.name || "the business"), call_reason: reason },
       });
       const providerCallId = safe(call?.call_id || call?.id || call?.data?.call_id || call?.data?.id, 200);
