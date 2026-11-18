@@ -311,6 +311,23 @@ Deno.serve(async (req: Request) => {
         phoneLine: null, keyConfigured: !!key, isPlatformAdmin,
         voicePreference: { voice: savedVoicePreference.voice || "Woman", gender: savedVoicePreference.gender || (savedVoicePreference.voice === "Man" ? "male" : "female"), model: savedVoicePreference.model || "sautikit-flash" },
       });
+      const verificationAt = String(settings.provider_verified_at || "");
+      const verificationEpoch = Date.parse(verificationAt);
+      const verificationFresh = Number.isFinite(verificationEpoch)
+        && verificationEpoch > 0
+        && Date.now() - verificationEpoch >= 0
+        && Date.now() - verificationEpoch <= 7 * 24 * 60 * 60 * 1000;
+      const savedProviderVerification = verificationFresh
+        && settings.provider_verified_via === "composio_sautikit"
+        && String(line.provider || "") === "sautikit"
+        && !!numberId
+        && !!line.provider_reference
+        && !!agentId
+        && settings.inbound_agent_provider === "sautikit-managed"
+        && settings.inbound_agent_id === agentId
+        && settings.ai_agent_bound === true
+        && !!settings.inbound_route_verified_at;
+
       let models: Row[] = [];
       let agent: Row | null = null;
       let number: Row | null = null;
@@ -342,24 +359,59 @@ Deno.serve(async (req: Request) => {
           providerError = [providerError, message].filter(Boolean).join(" · ");
         }
       }
-      const scripts = settings.sautikit_scripts && typeof settings.sautikit_scripts === "object" ? settings.sautikit_scripts : {};
-      if (!key) {
-        providerError = "TWIGA's Composio connection to the existing SautiKit workspace is not configured. A TWIGA platform administrator must add the Composio Project API key once; business customers do not need provider credentials.";
-      }
-      const liveInboundRoute = number?.routing?.inbound_agent || number?.inbound_agent || number?.routing?.inboundAgent;
+
+      const savedAgent: Row | null = savedProviderVerification ? {
+        id: agentId,
+        name: String(settings.inbound_agent_name || "TWIGA AI Receptionist"),
+        status: "published",
+        current_revision: Number(settings.inbound_agent_revision || 0),
+        revision: Number(settings.inbound_agent_revision || 0),
+        model: String(settings.inbound_model_id || "sautikit-flash"),
+        voice: String(settings.inbound_published_voice || "Woman"),
+        tool_count: Number(settings.sautikit_booking_tool_count || 0),
+      } : null;
+      const savedNumber: Row | null = savedProviderVerification ? {
+        id: numberId,
+        phone_number: String(line.line_number || ""),
+        number_e164: String(line.line_number || ""),
+        e164: String(line.line_number || ""),
+        status: String(settings.provider_status || "active"),
+        routing: {
+          inbound_agent: {
+            agent_id: agentId,
+            enabled: true,
+            mode: "always",
+          },
+        },
+      } : null;
+      const verifiedAgent = agent || savedAgent;
+      const verifiedNumber = number || savedNumber;
+      const liveInboundRoute = verifiedNumber?.routing?.inbound_agent || verifiedNumber?.inbound_agent || verifiedNumber?.routing?.inboundAgent;
       const liveInboundAgentId = liveInboundRoute?.agent_id || liveInboundRoute?.agentId;
-      const liveInboundVerified = !!(liveInboundRoute?.enabled && agent?.id && liveInboundAgentId === agentId);
+      const liveInboundVerified = !!(liveInboundRoute?.enabled && verifiedAgent?.id && liveInboundAgentId === agentId);
+      const providerConnected = !!((number && verifiedAgent?.id === agentId) || savedProviderVerification);
+      if (!key && savedProviderVerification) {
+        providerError = "SautiKit, the assigned number and receptionist agent were verified through Composio at " + verificationAt + ". TWIGA's server-side Composio Project API key is not saved yet, so live calls remain paused.";
+      } else if (!key) {
+        providerError = "TWIGA's deployed server is missing its Composio Project API key. The SautiKit account and assigned line cannot be refreshed until the platform credential is saved.";
+      }
+
+      const scripts = settings.sautikit_scripts && typeof settings.sautikit_scripts === "object" ? settings.sautikit_scripts : {};
       return json({
         isPlatformAdmin,
         keyConfigured: !!key,
+        serverProxyReady: !!key,
+        providerConnected,
+        providerConnectionSource: number && verifiedAgent ? "live_composio_lookup" : savedProviderVerification ? "saved_composio_verification" : null,
+        providerVerificationAt: verificationAt || null,
         keyLast4: keyRef?.secret_last4 || "",
         keyUpdatedAt: keyRef?.updated_at || null,
-        numberVerified: !!number,
-        providerNumber: String(number?.phone_number || number?.number_e164 || number?.phoneNumber || number?.number || ""),
+        numberVerified: !!number || savedProviderVerification,
+        providerNumber: String(verifiedNumber?.phone_number || verifiedNumber?.number_e164 || verifiedNumber?.phoneNumber || verifiedNumber?.number || line?.line_number || ""),
         voicePreference: {
-          voice: settings.inbound_voice || savedVoicePreference.voice || agent?.voice || "Woman",
-          gender: settings.voice_gender || savedVoicePreference.gender || ((settings.inbound_voice || savedVoicePreference.voice || agent?.voice) === "Man" ? "male" : "female"),
-          model: settings.inbound_model_id || savedVoicePreference.model || agent?.model || "sautikit-flash",
+          voice: settings.inbound_voice || savedVoicePreference.voice || verifiedAgent?.voice || "Woman",
+          gender: settings.voice_gender || savedVoicePreference.gender || ((settings.inbound_voice || savedVoicePreference.voice || verifiedAgent?.voice) === "Man" ? "male" : "female"),
+          model: settings.inbound_model_id || savedVoicePreference.model || verifiedAgent?.model || "sautikit-flash",
         },
         phoneLine: {
           id: line.id,
@@ -374,8 +426,8 @@ Deno.serve(async (req: Request) => {
           provider_reference: line.provider_reference,
           settings,
         },
-        agent,
-        number,
+        agent: verifiedAgent,
+        number: verifiedNumber,
         models,
         scripts: {
           greeting: scripts.greeting || "Hello, karibu! Thank you for calling {{business_name}}. How can I help you today?",
@@ -383,18 +435,12 @@ Deno.serve(async (req: Request) => {
           outbound: scripts.outbound || "Only call a person when the business has authorised the callback. Introduce yourself and the business, explain the reason for the call, ask whether it is a convenient time, keep the conversation brief, and respect requests not to be called again.",
         },
         providerError,
-        inboundBound: settings.ai_agent_bound === true
-          && settings.inbound_agent_provider === "sautikit-managed"
-          && settings.inbound_agent_id === agentId
-          && liveInboundVerified,
-        inboundVerified: liveInboundVerified,
-        inboundMode: liveInboundRoute?.mode || null,
+        inboundBound: liveInboundVerified || savedProviderVerification,
+        inboundVerified: liveInboundVerified || savedProviderVerification,
+        inboundMode: liveInboundRoute?.mode || (savedProviderVerification ? "always" : null),
         bookingToolReady: settings.sautikit_booking_tool_ready === true,
-        bookingToolCount: Number(agent?.tool_count || 0),
-      });
-    }
-
-    if (action === "save_voice_preference") {
+        bookingToolCount: Number(verifiedAgent?.tool_count || 0),
+      });) {
       if (!canManage) return json({ error: "Only the business owner, admin or TWIGA platform administrator can save the receptionist voice." }, 403);
       const selectedVoice = String(body.voice || "").trim();
       const selectedModel = String(body.model || "sautikit-flash").trim();
