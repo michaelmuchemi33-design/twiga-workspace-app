@@ -5,6 +5,7 @@ type Model = { id: string; voices?: string[]; rate_per_minute_minor?: number; cu
 type SautiKitConfig = { keyConfigured?: boolean; serverDirectReady?: boolean; serverProxyReady?: boolean; keyScope?: string | null; providerConnected?: boolean; providerVerificationAt?: string | null; providerConnectionSource?: string | null; isPlatformAdmin?: boolean; voicePreference?: { voice?: string; model?: string; gender?: string }; phoneLine?: any; number?: any; numberVerified?: boolean; providerNumber?: string; agent?: any; models?: Model[]; scripts?: { greeting?: string; inbound?: string; outbound?: string }; inboundBound?: boolean; inboundVerified?: boolean; providerError?: string };
 type ScheduledCall = { id: string; customer_name: string; phone_number: string; reason: string; scheduled_at: string; trigger_type: string; status: string; last_error?: string | null };
 type CallRecord = { id: string; created_at: string; direction: string; from_number?: string | null; to_number?: string | null; status: string; duration_seconds?: number | null; summary?: string | null; provider?: string | null; metadata?: Record<string, any> | null };
+type OwnerNotification = { id: string; type: string; title: string; body: string; payload?: Record<string, any>; status: string; createdAt: string; readAt?: string | null };
 
 function toE164(value: string) {
   let number = String(value || "").replace(/[\s().-]/g, "");
@@ -35,6 +36,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const [config, setConfig] = useState<SautiKitConfig>({});
   const [scheduledCalls, setScheduledCalls] = useState<ScheduledCall[]>([]);
   const [callRecords, setCallRecords] = useState<CallRecord[]>([]);
+  const [notifications, setNotifications] = useState<OwnerNotification[]>([]);
   const [loading, setLoading] = useState(false);
   const [savingVoice, setSavingVoice] = useState(false);
   const [testingCall, setTestingCall] = useState(false);
@@ -90,6 +92,22 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
       if (calls.error) throw new Error(calls.error.message);
       setScheduledCalls((scheduled.data || []) as ScheduledCall[]);
       setCallRecords((calls.data || []) as CallRecord[]);
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token || "";
+      if (accessToken) {
+        try {
+          const inboxResponse = await fetch(`https://twiga-business-files.twiga-ke.workers.dev/v1/ai-notifications/${encodeURIComponent(businessId)}?limit=40`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          const inbox = await inboxResponse.json().catch(() => ({}));
+          if (inboxResponse.ok && Array.isArray(inbox.notifications)) setNotifications(inbox.notifications as OwnerNotification[]);
+          else setNotifications([]);
+        } catch {
+          setNotifications([]);
+        }
+      } else {
+        setNotifications([]);
+      }
     } catch (e) { setError(e instanceof Error ? e.message : "Phone desk could not load."); }
     finally { setLoading(false); }
   }, [businessId]);
@@ -228,6 +246,24 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     finally { setSavingSchedule(false); }
   };
 
+  const markNotificationRead = async (id: string) => {
+    if (!supabase || !businessId) return;
+    try {
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token || "";
+      if (!accessToken) throw new Error("Sign in again to update receptionist alerts.");
+      const response = await fetch(`https://twiga-business-files.twiga-ke.workers.dev/v1/ai-notifications/${encodeURIComponent(businessId)}/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Could not mark this receptionist alert as read.");
+      setNotifications((items) => items.map((item) => item.id === id ? { ...item, status: "read", readAt: new Date().toISOString() } : item));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not update the receptionist alert.");
+    }
+  };
+
   const cancelScheduledCall = async (id: string) => {
     if (!supabase) return;
     const { error: updateError } = await supabase.from("twiga_scheduled_calls").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", id).eq("business_id", businessId);
@@ -248,6 +284,25 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     </section>
 
     {settings.last_outbound_test_call_status && <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900"><strong>Latest voice test result:</strong> {String(settings.last_outbound_test_call_status).replace(/_/g, " ")}. The result for each real male/female voice is shown in the voice selector.</div>}
+
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div><h2 className="text-lg font-semibold text-neutral-950">Receptionist activity & owner inbox</h2><p className="mt-1 text-sm text-neutral-500">New leads, order requests, appointment requests and callback approvals saved by the AI for this business.</p></div>
+        <span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-semibold text-orange-800">{notifications.filter((item) => item.status === "unread").length} unread</span>
+      </div>
+      {notifications.length ? <div className="mt-4 space-y-3">
+        {notifications.map((item) => <article key={item.id} className={`rounded-xl border p-4 ${item.status === "unread" ? "border-orange-200 bg-orange-50/50" : "border-neutral-200 bg-white"}`}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-neutral-700">{item.type.replace(/_/g, " ")}</span><span className="text-xs text-neutral-500">{fmtDate(item.createdAt)}</span></div><h3 className="mt-2 text-sm font-semibold text-neutral-950">{item.title}</h3><p className="mt-1 text-sm leading-5 text-neutral-700">{item.body}</p>
+              {item.payload?.orderId && <p className="mt-2 text-xs font-medium text-neutral-600">Order {String(item.payload.orderId)} · {String(item.payload.currency || "KES")} {Number(item.payload.total || 0).toLocaleString()}</p>}
+              {item.payload?.service && <p className="mt-2 text-xs text-neutral-600">Service: {String(item.payload.service)} · {fmtDate(String(item.payload.scheduledAt || ""))}</p>}
+              {item.payload?.phone && <p className="mt-1 text-xs text-neutral-600">Customer: {String(item.payload.customerName || "Customer")} · {String(item.payload.phone)}</p>}
+            </div>
+            {item.status === "unread" && <button onClick={() => void markNotificationRead(item.id)} className="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50">Mark read</button>}
+          </div>
+        </article>)}
+      </div> : <p className="mt-4 rounded-xl bg-neutral-50 p-4 text-sm text-neutral-600">No receptionist activity yet. When the AI captures a lead, saves an order request or appointment, or requests a callback approval, it will appear here.</p>}
+    </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
