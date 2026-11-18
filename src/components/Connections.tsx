@@ -132,6 +132,11 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   if (demo) return <section className="rounded-2xl border border-neutral-200 bg-white p-6"><h1 className="text-2xl font-semibold">Connections & permissions</h1><p className="mt-2 text-sm text-neutral-500">Sign in to connect Google services for your business.</p></section>;
 
   const googleOAuthReady = !!oauthConfig.serverConfigured;
+  const sautikitProviderConnected = sautikitConfig.providerConnected === true;
+  const sautikitProxyReady = sautikitConfig.serverProxyReady === true || sautikitConfig.keyConfigured === true;
+  const sautikitBadge = sautikitProviderConnected
+    ? (sautikitProxyReady ? "Connected · ready" : "Linked · server key needed")
+    : (sautikitProxyReady ? "Checking provider" : "Platform setup needed");
   return <div className="mx-auto max-w-5xl space-y-5">
     <header className="rounded-2xl border border-neutral-200 bg-white p-6">
       <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Workspace integrations</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Connections & permissions</h1>
@@ -175,9 +180,9 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
         </> : <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">Only the TWIGA platform administrator can manage this shared API key.</p>}
       </div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">AI phone provider</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">SautiKit</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${sautikitConfig.keyConfigured ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{sautikitConfig.keyConfigured ? "Connected" : "API key needed"}</span></div>
-        <p className="mt-2 text-sm leading-6 text-neutral-600">TWIGA accesses the existing SautiKit account through your connected Composio workspace. The Composio Project API key is stored only in encrypted Supabase Vault; SautiKit credentials remain inside Composio.</p>
-        {sautikitConfig.phoneLine?.line_number && <p className="mt-2 text-sm font-semibold text-neutral-900">Assigned AI line: {sautikitConfig.phoneLine.line_number}</p>}
+        <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">AI phone provider</p><h2 className="mt-1 text-lg font-semibold text-neutral-950">SautiKit</h2></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${sautikitProviderConnected ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{sautikitBadge}</span></div>
+        <p className="mt-2 text-sm leading-6 text-neutral-600">{sautikitProviderConnected ? "The existing SautiKit workspace, assigned number and receptionist agent are verified through the connected Composio account." : "TWIGA accesses the existing SautiKit account through your connected Composio workspace. Its provider status is not yet confirmed for this business."} The Composio Project API key is stored only in encrypted Supabase Vault; SautiKit credentials remain inside Composio.</p>
+        {sautikitConfig.phoneLine?.line_number && <p className="mt-2 text-sm font-semibold text-neutral-900">Assigned AI line: {sautikitConfig.phoneLine.line_number}</p>}{sautikitConfig.providerConnected && <div className="mt-2 flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-orange-50 px-2.5 py-1 font-medium text-orange-800">SautiKit provider verified</span><span className={`rounded-full px-2.5 py-1 font-medium ${sautikitProxyReady ? "bg-orange-50 text-orange-800" : "bg-amber-50 text-amber-800"}`}>{sautikitProxyReady ? "TWIGA server proxy ready" : "TWIGA server proxy key still required"}</span></div>}
         {sautikitConfig.isPlatformAdmin ? <>
           {sautikitConfig.keyConfigured && <p className="mt-2 text-xs text-neutral-500">Encrypted API key saved{sautikitConfig.keyLast4 ? ` · ending ${sautikitConfig.keyLast4}` : ""}.</p>}
           <label className="mt-4 block text-sm font-medium text-neutral-800">{sautikitConfig.keyConfigured ? "Replace Composio Project API key" : "Composio Project API key"}<input type="password" autoComplete="new-password" value={sautikitKey} onChange={e => setSautikitKey(e.target.value)} placeholder="Paste Composio Project API key" className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm outline-none focus:border-orange-500" /></label>
