@@ -202,7 +202,7 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
             key={s.label}
             className={cn(
               "rounded-2xl shadow-sm",
-              s.accent ? "border-orange-200 bg-orange-50" : "border-neutral-200"
+              s.accent ? "border-orange-200 bg-orange-50" : "border-neutral-200 bg-white"
             )}
           >
             <CardContent className="flex items-center justify-between p-5">
@@ -222,7 +222,7 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
               <div
                 className={cn(
                   "flex h-11 w-11 items-center justify-center rounded-xl",
-                  s.accent ? "bg-orange-500 text-white" : "bg-neutral-950 text-white"
+                  s.accent ? "bg-orange-500 text-white" : "bg-orange-50 text-orange-600"
                 )}
               >
                 <s.icon className="h-5 w-5" />
@@ -249,7 +249,7 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="live-scroll max-h-64 space-y-3 overflow-y-auto pr-2">
-              {recentCalls.length === 0 && <p className="rounded-xl border border-dashed border-neutral-700 py-8 text-center text-sm text-neutral-500">No AI calls yet. Publish a receptionist in Phone & AI and complete a test call to see real activity here.</p>}
+              {recentCalls.length === 0 && <p className="rounded-xl border border-dashed border-neutral-200 bg-neutral-50 py-8 text-center text-sm text-neutral-600">No AI calls yet. Publish a receptionist in Phone & AI and complete a test call to see real activity here.</p>}
               {recentCalls.map((call) => {
                 const number = call.direction === "outbound" ? (call.to_number || call.from_number) : (call.from_number || call.to_number);
                 const callState = String(call.status || "unknown").toLowerCase();
@@ -291,7 +291,7 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
                       "flex h-8 w-8 items-center justify-center rounded-lg",
                       o.tone === "orange"
                         ? "bg-orange-50 text-orange-500"
-                        : "bg-neutral-950 text-white"
+                        : "bg-neutral-100 text-neutral-700"
                     )}
                   >
                     <o.icon className="h-4 w-4" />
@@ -314,7 +314,7 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
               </CardTitle>
               <CardDescription>Everything your AI receptionist did</CardDescription>
             </div>
-            <Badge className="border-neutral-900 bg-neutral-950 text-white">
+            <Badge className="border-neutral-200 bg-neutral-100 text-neutral-700">
               {tasks.length} events
             </Badge>
           </CardHeader>
@@ -361,7 +361,7 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
         </Card>
 
         <div className="space-y-6">
-          <Card className="rounded-2xl border-neutral-900 bg-neutral-950 text-white shadow-lg">
+          <Card className="rounded-2xl border-neutral-200 bg-white text-neutral-900 shadow-sm">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-lg font-semibold">
                 <IconSwap className="h-5 w-5 text-orange-500" /> What it handles
@@ -371,12 +371,12 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
               {capabilities.map((c) => (
                 <div
                   key={c.label}
-                  className="flex items-center gap-3 rounded-lg bg-white/5 px-3 py-2 transition-colors hover:bg-white/10"
+                  className="flex items-center gap-3 rounded-lg border border-neutral-100 bg-neutral-50 px-3 py-2 transition-colors hover:border-orange-200 hover:bg-orange-50"
                 >
                   <c.icon className="h-4 w-4 text-orange-500" />
                   <div className="flex-1">
                     <p className="text-sm font-medium">{c.label}</p>
-                    <p className="text-xs text-neutral-400">{c.detail}</p>
+                    <p className="text-xs text-neutral-500">{c.detail}</p>
                   </div>
                 </div>
               ))}
@@ -400,7 +400,7 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
 
           <Card className="rounded-2xl border-neutral-200 shadow-sm">
             <CardContent className="flex items-center gap-3 p-5">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-950 text-white">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-100 text-neutral-700">
                 <IconBell className="h-4 w-4" />
               </span>
               <div>
@@ -421,9 +421,9 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
 
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg bg-white/5 px-3 py-2">
-      <p className="text-xs text-neutral-400">{label}</p>
-      <p className="text-sm font-semibold text-white">{value}</p>
+    <div className="rounded-lg border border-neutral-200 bg-white px-3 py-2">
+      <p className="text-xs text-neutral-500">{label}</p>
+      <p className="text-sm font-semibold text-neutral-900">{value}</p>
     </div>
   );
 }
