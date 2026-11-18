@@ -10,6 +10,7 @@ const json = (body: unknown, status = 200) =>
 const API = "https://api.sautikit.com";
 
 type Row = Record<string, any>;
+const safe = (value: unknown, maxLength = 200) => String(value ?? "").trim().slice(0, maxLength);
 
 async function skRequest(key: string, path: string, method = "GET", body?: unknown) {
   const response = await fetch(API + path, {
