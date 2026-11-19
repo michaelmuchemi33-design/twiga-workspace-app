@@ -59,16 +59,27 @@ async function aiChat(req, env) {
     })).filter((m) => m.content);
     if (!messages.length) return json({ok: false, error: 'Write a message for TWIGA first.'}, 400);
 
-    const [itemsResult, summaryResult, ordersResult] = await Promise.all([
+    const [itemsResult, summaryResult, ordersResult, profileResponse] = await Promise.all([
       ACTIONS.listItems(env, ctx, {}),
       ACTIONS.summary(env, ctx, {}),
-      ACTIONS.listOrders(env, ctx, {limit: 8})
+      ACTIONS.listOrders(env, ctx, {limit: 8}),
+      fetch(env.SUPABASE_URL + '/rest/v1/twiga_business_profiles?select=business_summary,what_they_sell,what_they_do,products_and_services,target_customers,unique_selling_points,service_area,opening_hours,delivery_and_payment,returns_and_refunds,frequently_asked_questions,brand_voice,reply_language,assistant_instructions,setup_details&business_id=eq.' + encodeURIComponent(ctx.biz.id), {
+        headers: {apikey: env.SUPABASE_KEY, Authorization: 'Bearer ' + body.token}
+      })
     ]);
+    const profileRows = profileResponse.ok ? await profileResponse.json().catch(() => []) : [];
+    const uploadedFiles = Array.isArray(body.uploadedFiles) ? body.uploadedFiles.slice(0, 8).map((file) => ({
+      name: txt(file && file.name, 160),
+      content: txt(file && file.content, 4000),
+      note: txt(file && file.note, 300)
+    })) : [];
     const context = {
       business: {id: ctx.biz.id, name: ctx.biz.name, type: ctx.biz.business_type, role: ctx.role},
+      profile: Array.isArray(profileRows) ? (profileRows[0] || {}) : {},
       snapshot: summaryResult,
       products_and_services: (itemsResult.items || []).slice(0, 100),
-      recent_orders: (ordersResult.orders || []).slice(0, 8)
+      recent_orders: (ordersResult.orders || []).slice(0, 8),
+      uploaded_files: uploadedFiles
     };
     const system = [
       'You are TWIGA, the AI command-centre assistant for the currently authenticated business workspace.',
