@@ -118,7 +118,6 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
       setGoogleSetupMessage("We could not check your saved workspace. Refresh the page and try again.");
       return;
     }
-    if (!googleAuth?.isGoogleUser) { setTab("setup"); return; }
     if (autoProvisioned.current === userId || !supabase) return;
     autoProvisioned.current = userId;
     const createFirstWorkspace = async () => {
@@ -131,8 +130,8 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
             name: "My Business",
             businessType: "general",
             profile: {
-              owner_name: googleAuth.profile.fullName,
-              owner_email: googleAuth.profile.email,
+              owner_name: googleAuth?.profile.fullName || "",
+              owner_email: googleAuth?.profile.email || "",
             },
           },
         });
@@ -143,9 +142,9 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
         setBusinessId(created.id);
         setBusinessesLoaded(true);
         setTab("setup");
-        setGoogleSetupMessage(googleAuth.tokens?.accessToken
-          ? "Your dashboard is ready. Securing your Calendar, Contacts, Sheets and Drive connection…"
-          : "Your dashboard is ready. Connect Calendar, Contacts, Sheets and Drive from Connections when you are ready.");
+        setGoogleSetupMessage(googleAuth?.isGoogleUser && googleAuth.tokens?.accessToken
+          ? "Your private business workspace is ready. You can now complete setup and connect optional Google tools."
+          : "Your private business workspace is ready. Complete your business setup, then connect payments, phone and messaging when ready.");
       } catch (e) {
         setGoogleSetupMessage(e instanceof Error ? e.message : "Your Google account is signed in, but the workspace could not be created.");
         setTab("setup");
