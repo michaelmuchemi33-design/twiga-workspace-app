@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import ApprovalInbox from "@/components/ApprovalInbox";
 
 type Message = { id: string; role: "ai" | "user"; text: string };
 type Profile = Record<string, any>;
 type BusinessFile = { file_id: string; name: string; content_type: string; size_bytes: number; created_at: string };
 type UploadedFileContext = { name: string; contentType: string; content: string; note?: string };
 const BUSINESS_FILES_API = "https://twiga-business-files.twiga-ke.workers.dev/v1";
+const TWIGA_API_URL = import.meta.env.VITE_TWIGA_API_URL || "https://twiga-api.twiga-ke.workers.dev";
 const formatFileSize = (bytes: number) => bytes < 1024 ? bytes + " B" : bytes < 1024 * 1024 ? (bytes / 1024).toFixed(1) + " KB" : (bytes / (1024 * 1024)).toFixed(1) + " MB";
 
 const areas = [
@@ -213,16 +215,33 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       const next = [...messages, { id: String(Date.now()), role: "user" as const, text: userText + fileNames }];
       setMessages(next);
       setInput("");
-      const { data, error: invokeError } = await supabase.functions.invoke("twiga-setup-assistant", {
-        body: {
-          messages: next.map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text })),
-          ownerProfile: { name: ownerName.trim(), email: ownerEmail.trim() },
-          existingProfile: profile,
-          uploadedFiles,
-        },
-      });
-      if (invokeError) throw new Error(await edgeFunctionError(invokeError));
-      if (data?.error) throw new Error(String(data.error));
+      let data: any;
+      const conversation = next.map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text }));
+      if (businessId) {
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        if (sessionError || !token) throw new Error("Sign in again to use the Cloudflare AI command centre.");
+        const response = await fetch(TWIGA_API_URL.replace(/\\/$/, "") + "/ai/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+          body: JSON.stringify({ token, business_id: businessId, messages: conversation, uploadedFiles }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result?.ok !== true) throw new Error(String(result?.error || "The Cloudflare AI service could not complete this request."));
+        data = { reply: result.reply, modelUsed: result.model, businessProfile: profile, missingFields: missing, readyToBuild: ready, source: result.source };
+      } else {
+        const { data: setupData, error: invokeError } = await supabase.functions.invoke("twiga-setup-assistant", {
+          body: {
+            messages: conversation,
+            ownerProfile: { name: ownerName.trim(), email: ownerEmail.trim() },
+            existingProfile: profile,
+            uploadedFiles,
+          },
+        });
+        if (invokeError) throw new Error(await edgeFunctionError(invokeError));
+        if (setupData?.error) throw new Error(String(setupData.error));
+        data = setupData;
+      }
       setMessages((m) => [...m, { id: String(Date.now() + 1), role: "ai", text: String(data.reply || "Tell me a little more about the business.") }]);
       setProfile((old) => ({ ...old, ...(data.businessProfile || {}), setup_details: { ...(old.setup_details || {}), ...(data.businessProfile?.setup_details || {}) } }));
       setMissing(Array.isArray(data.missingFields) ? data.missingFields : []);
@@ -353,16 +372,18 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
     <header className="rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm">
       <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-500">TWIGA · AI Desk</p>
       <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-950">{isEditing ? "Manage your business with AI" : "Start with your AI business assistant"}</h1>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Use this as your business command centre: ask for setup changes, operational plans, service comparisons and customer workflows in normal language. TWIGA must show the provider, total price and renewal terms before any paid action, then wait for your approval. Real purchases and billing stay disabled until the required provider connections and server-side approval checks are verified.</p>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Use this as your business command centre: ask for setup changes, operational plans, service comparisons and customer workflows in normal language. Once a workspace is selected, operational chats run through the authenticated Cloudflare Worker with this business’s own profile, catalogue and recent activity. Paid actions must show verified provider, recipient, amount and terms, then wait for your approval.</p>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <label className="block text-sm font-medium text-neutral-700">Business owner name<input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} autoComplete="name" placeholder="Your full name" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
         <label className="block text-sm font-medium text-neutral-700">Business contact email<input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} autoComplete="email" placeholder="you@business.co.ke" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
       </div>
     </header>
 
+    <ApprovalInbox businessId={businessId} demo={demo} />
+
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
       <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between gap-3 border-b border-neutral-100 px-5 py-4"><div className="flex min-w-0 items-center gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-orange-500 text-white"><svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" /><path d="m19 16 .8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z" /></svg></span><div className="min-w-0"><h2 className="font-semibold text-neutral-950">TWIGA AI command centre</h2><p className="text-xs text-neutral-500">Plain-language tasks · English and Kiswahili</p></div></div><span className="shrink-0 rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{loadingProfile ? "Loading…" : thinking ? "Working…" : ready ? "Ready to save" : "Ready"}</span></div>
+        <div className="flex items-center justify-between gap-3 border-b border-neutral-100 px-5 py-4"><div className="flex min-w-0 items-center gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-orange-500 text-white"><svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" /><path d="m19 16 .8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z" /></svg></span><div className="min-w-0"><h2 className="font-semibold text-neutral-950">TWIGA AI command centre</h2><p className="text-xs text-neutral-500">Cloudflare AI · Business-scoped data · English and Kiswahili</p></div></div><span className="shrink-0 rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{loadingProfile ? "Loading…" : thinking ? "Working…" : ready ? "Ready to save" : "Ready"}</span></div>
         <div ref={scrollRef} className="max-h-[58vh] min-h-[360px] space-y-4 overflow-y-auto p-5">
           {messages.map((m) => <div key={m.id} className={m.role === "user" ? "ml-auto max-w-[90%] rounded-2xl rounded-br-md bg-neutral-950 px-4 py-3 text-sm leading-6 text-white shadow-sm" : "mr-auto max-w-[94%] rounded-2xl rounded-bl-md border border-neutral-200 bg-white px-4 py-3 text-sm leading-6 text-neutral-800 shadow-sm"}>
             <div className={"mb-1.5 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider " + (m.role === "user" ? "text-orange-200" : "text-orange-600")}><span className={"grid h-5 w-5 place-items-center rounded-md " + (m.role === "user" ? "bg-white/15 text-white" : "bg-orange-100 text-orange-700")}>{m.role === "user" ? "Y" : "T"}</span>{m.role === "user" ? "You" : "TWIGA AI"}</div>
@@ -406,7 +427,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
           <span><b className="block text-xs text-neutral-900">Allow routine AI callbacks after the customer explicitly agrees</b><span className="mt-1 block text-[11px] leading-5 text-neutral-500">This does not allow cold calling, bulk campaigns, marketing blasts or calls without a specific request, confirmed number and agreed time. If left off, callback requests wait for owner/admin approval in Organize.</span></span>
         </label>
       </div>
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><h3 className="text-sm font-semibold text-neutral-900">What TWIGA can configure</h3><p className="mt-2 text-xs leading-5 text-neutral-500">Business identity, catalogue, hours, booking rules, order handling, FAQs, language, greetings, inbound/outbound instructions and staff handover.</p><div className="mt-3 rounded-xl border border-orange-100 bg-orange-50 p-3 text-xs leading-5 text-orange-950"><b>Protected area:</b> subscriptions, payments, wallet top-ups, purchases and provider spending stay outside the AI assistant.</div></div>
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm"><h3 className="text-sm font-semibold text-neutral-900">What TWIGA can configure</h3><p className="mt-2 text-xs leading-5 text-neutral-500">Business identity, catalogue, hours, bookings, orders, customer activity, staff workflows and verified connected services. The Cloudflare Worker scopes each request to the selected business.</p><div className="mt-3 rounded-xl border border-orange-100 bg-orange-50 p-3 text-xs leading-5 text-orange-950"><b>Approval gate:</b> paid actions must appear in Waiting for your approval with the exact provider, recipient, price, billing interval and expiry. No provider connection means no execution.</div></div>
       </aside>
     </div>
     {notice && <p role="status" className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-xs text-orange-900">{notice}</p>}
