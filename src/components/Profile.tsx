@@ -386,7 +386,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const savePersonalPhone = async () => {
     if (!supabase) return;
     const value = personalPhone.trim();
-    if (value && !/^\\+?[0-9 ()-]{8,20}$/.test(value)) {
+    if (value && !/^\+?[0-9 ()-]{8,20}$/.test(value)) {
       setPersonalPhoneMessage("Enter a valid personal phone number, including country code where possible.");
       return;
     }
