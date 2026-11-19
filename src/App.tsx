@@ -41,6 +41,8 @@ import {
   IconUsers,
   IconChat,
   IconPhone,
+  IconMoon,
+  IconSun,
 } from "@/components/Icons";
 
 const footerTabs = [
@@ -257,7 +259,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
                 aria-pressed={theme === "dark"}
                 className="inline-flex h-10 items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
               >
-                <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-lg bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300">{theme === "light" ? <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 8.5 8.5 0 1 0 20.5 14.5Z" /></svg> : <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></svg>}</span>
+                <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-lg bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300">{theme === "light" ? <IconMoon className="h-4 w-4" /> : <IconSun className="h-4 w-4" />}</span>
                 <span>{theme === "light" ? "Dark mode" : "Light mode"}</span>
               </button>
               <InstallApp />{demo && <DemoInterest />}{!demo && onSignOut && <button onClick={onSignOut} className="h-10 rounded-xl border border-neutral-200 px-4 text-sm font-semibold text-neutral-600 hover:bg-neutral-50">Sign out</button>}
