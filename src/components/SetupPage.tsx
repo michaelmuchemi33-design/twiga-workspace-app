@@ -58,7 +58,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
   onBusinessCreated: (id: string) => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([
-    { id: "welcome", role: "ai", text: "Hi! I'm your TWIGA AI workspace assistant. Describe a task in plain language — configure your business, organise products and services, plan bookings and follow-ups, or ask how to connect a service. I can prepare plans and explain the next steps. Any phone-number purchase, paid service, customer charge, subscription, refund or provider-wallet spend must show its price and terms and wait for your explicit approval. Live purchases and billing are only available after the relevant provider connection and secure approval workflow are verified." },
+    { id: "welcome", role: "ai", text: "Hi! I'm TWIGA Business Setup AI. I help you configure the AI receptionist and operating system that will serve your customers — enquiries, products, bookings, orders, follow-ups and staff handover. Tell me how your business works, and I'll prepare a business-specific setup draft. Any paid service, phone-number purchase, customer charge, subscription, refund or provider-wallet spend must show its exact price and terms and wait for your explicit approval." },
   ]);
   const [input, setInput] = useState("");
   const [ownerName, setOwnerName] = useState("");
@@ -71,7 +71,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(false);
-  const [aiServiceStatus, setAiServiceStatus] = useState<"checking" | "ready" | "missing-key" | "offline" | "demo">("checking");
+  const [aiServiceStatus, setAiServiceStatus] = useState<"checking" | "ready" | "offline" | "demo">("checking");
   const [aiServiceModel, setAiServiceModel] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [pendingFileContext, setPendingFileContext] = useState<UploadedFileContext[]>([]);
@@ -406,10 +406,10 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
 
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3 shadow-sm">
       <div className="flex items-center gap-3">
-        <span className={"h-2.5 w-2.5 rounded-full " + (aiServiceStatus === "ready" ? "bg-emerald-500" : aiServiceStatus === "missing-key" ? "bg-amber-500" : aiServiceStatus === "offline" ? "bg-red-500" : "bg-neutral-400")} />
+        <span className={"h-2.5 w-2.5 rounded-full " + (aiServiceStatus === "ready" ? "bg-emerald-500" : aiServiceStatus === "offline" ? "bg-red-500" : "bg-neutral-400")} />
         <div>
           <p className="text-sm font-semibold text-neutral-900">Cloudflare AI service</p>
-          <p className="text-xs text-neutral-500">{aiServiceStatus === "ready" ? "Cloudflare Workers AI connected · no external model key required" : aiServiceStatus === "missing-key" ? "Cloudflare AI is not enabled for this Worker" : aiServiceStatus === "offline" ? "Worker could not be reached · AI may be unavailable" : aiServiceStatus === "demo" ? "Demo preview · no live AI requests" : "Checking Worker and model configuration…"}</p>
+          <p className="text-xs text-neutral-500">{aiServiceStatus === "ready" ? "Cloudflare Workers AI connected · no external model key required" : aiServiceStatus === "offline" ? "Worker could not be reached or AI binding is unavailable" : aiServiceStatus === "demo" ? "Demo preview · no live AI requests" : "Checking Worker and model configuration…"}</p>
         </div>
       </div>
       {aiServiceModel && aiServiceStatus === "ready" && <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-600">{aiServiceModel}</span>}
