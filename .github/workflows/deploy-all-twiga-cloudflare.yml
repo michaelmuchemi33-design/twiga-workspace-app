@@ -1,8 +1,8 @@
 name: Deploy all TWIGA apps to Cloudflare
 
 on:
-  # Deliberately manual-only: TWIGA dashboard and domains stay on Vercel.
-  # Cloudflare Workers deploy through their dedicated workflows below.
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
