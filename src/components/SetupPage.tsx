@@ -115,7 +115,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
     if (demo) { setAiServiceStatus("demo"); return; }
     let active = true;
     setAiServiceStatus("checking");
-    fetch(TWIGA_API_URL.replace(/\\/$/, "") + "/ai/status", { headers: { Accept: "application/json" } })
+    fetch(TWIGA_API_URL.replace(/\/$/, "") + "/ai/status", { headers: { Accept: "application/json" } })
       .then(async (response) => {
         const result = await response.json().catch(() => ({}));
         if (!response.ok || result?.ok !== true) throw new Error("Worker health check failed");
@@ -406,7 +406,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
         </div>
       </div>
       {aiServiceModel && aiServiceStatus === "ready" && <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-600">{aiServiceModel}</span>}
-      <button type="button" onClick={() => { setAiServiceStatus("checking"); fetch(TWIGA_API_URL.replace(/\\/$/, "") + "/ai/status", { headers: { Accept: "application/json" } }).then(async (response) => { const result = await response.json().catch(() => ({})); if (!response.ok || result?.ok !== true) throw new Error("Unavailable"); setAiServiceModel(String(result.model || "")); setAiServiceStatus(result.configured === true ? "ready" : "missing-key"); }).catch(() => setAiServiceStatus("offline")); }} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700 hover:border-orange-300">Check again</button>
+      <button type="button" onClick={() => { setAiServiceStatus("checking"); fetch(TWIGA_API_URL.replace(/\/$/, "") + "/ai/status", { headers: { Accept: "application/json" } }).then(async (response) => { const result = await response.json().catch(() => ({})); if (!response.ok || result?.ok !== true) throw new Error("Unavailable"); setAiServiceModel(String(result.model || "")); setAiServiceStatus(result.configured === true ? "ready" : "missing-key"); }).catch(() => setAiServiceStatus("offline")); }} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700 hover:border-orange-300">Check again</button>
     </div>
 
     <ApprovalInbox businessId={businessId} demo={demo} />
