@@ -70,6 +70,8 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(false);
+  const [aiServiceStatus, setAiServiceStatus] = useState<"checking" | "ready" | "missing-key" | "offline" | "demo">("checking");
+  const [aiServiceModel, setAiServiceModel] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [pendingFileContext, setPendingFileContext] = useState<UploadedFileContext[]>([]);
   const [businessFiles, setBusinessFiles] = useState<BusinessFile[]>([]);
@@ -108,6 +110,22 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
   useEffect(() => {
     void refreshBusinessFiles().catch((e) => setFileMessage(e instanceof Error ? e.message : "Business files could not be loaded."));
   }, [refreshBusinessFiles]);
+
+  useEffect(() => {
+    if (demo) { setAiServiceStatus("demo"); return; }
+    let active = true;
+    setAiServiceStatus("checking");
+    fetch(TWIGA_API_URL.replace(/\/$/, "") + "/ai/status", { headers: { Accept: "application/json" } })
+      .then(async (response) => {
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result?.ok !== true) throw new Error("Worker health check failed");
+        if (!active) return;
+        setAiServiceModel(String(result.model || ""));
+        setAiServiceStatus(result.configured === true ? "ready" : "missing-key");
+      })
+      .catch(() => { if (active) setAiServiceStatus("offline"); });
+    return () => { active = false; };
+  }, [demo]);
 
   useEffect(() => {
     if (demo || !supabase) return;
@@ -378,6 +396,18 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
         <label className="block text-sm font-medium text-neutral-700">Business contact email<input type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} autoComplete="email" placeholder="you@business.co.ke" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 outline-none focus:border-orange-400" /></label>
       </div>
     </header>
+
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3 shadow-sm">
+      <div className="flex items-center gap-3">
+        <span className={"h-2.5 w-2.5 rounded-full " + (aiServiceStatus === "ready" ? "bg-emerald-500" : aiServiceStatus === "missing-key" ? "bg-amber-500" : aiServiceStatus === "offline" ? "bg-red-500" : "bg-neutral-400")} />
+        <div>
+          <p className="text-sm font-semibold text-neutral-900">Cloudflare AI service</p>
+          <p className="text-xs text-neutral-500">{aiServiceStatus === "ready" ? "Worker reachable · model key configured" : aiServiceStatus === "missing-key" ? "Worker reachable · model key missing" : aiServiceStatus === "offline" ? "Worker could not be reached · chat may be unavailable" : aiServiceStatus === "demo" ? "Demo preview · no live AI requests" : "Checking Worker and model configuration…"}</p>
+        </div>
+      </div>
+      {aiServiceModel && aiServiceStatus === "ready" && <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-600">{aiServiceModel}</span>}
+      <button type="button" onClick={() => { setAiServiceStatus("checking"); fetch(TWIGA_API_URL.replace(/\/$/, "") + "/ai/status", { headers: { Accept: "application/json" } }).then(async (response) => { const result = await response.json().catch(() => ({})); if (!response.ok || result?.ok !== true) throw new Error("Unavailable"); setAiServiceModel(String(result.model || "")); setAiServiceStatus(result.configured === true ? "ready" : "missing-key"); }).catch(() => setAiServiceStatus("offline")); }} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700 hover:border-orange-300">Check again</button>
+    </div>
 
     <ApprovalInbox businessId={businessId} demo={demo} />
 
