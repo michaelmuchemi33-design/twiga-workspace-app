@@ -57,15 +57,12 @@ export default function Reports() {
       .slice(0, 5);
   }, [sales]);
 
-  const chartData = [
-    { day: "Mon", revenue: 3200, sales: 6 },
-    { day: "Tue", revenue: 4100, sales: 9 },
-    { day: "Wed", revenue: 2800, sales: 5 },
-    { day: "Thu", revenue: 5200, sales: 11 },
-    { day: "Fri", revenue: 6400, sales: 14 },
-    { day: "Sat", revenue: 4800, sales: 10 },
-    { day: "Sun", revenue, sales: sales.length },
-  ];
+  // Build the chart only from this workspace's recorded sale lines.
+  const chartData = topItems.map((item) => ({
+    day: item.name,
+    revenue: item.revenue,
+    sales: item.qty,
+  }));
 
   const kpis = [
     { label: "Revenue", value: revenue, icon: IconCoin, accent: true, money: true },
@@ -143,26 +140,25 @@ export default function Reports() {
         <Card className="rounded-2xl border-neutral-200 shadow-sm lg:col-span-2">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-xl font-semibold">
-              <IconChart className="h-5 w-5 text-orange-500" /> Weekly Sales
+              <IconChart className="h-5 w-5 text-orange-500" /> Sales by item
             </CardTitle>
-            <CardDescription>Revenue and number of sales this week</CardDescription>
+            <CardDescription>Revenue and units from recorded sales</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} barGap={6}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" vertical={false} />
-                  <XAxis dataKey="day" tickLine={false} axisLine={false} fontSize={12} stroke="#737373" />
-                  <YAxis tickLine={false} axisLine={false} fontSize={12} stroke="#737373" />
-                  <Tooltip
-                    cursor={{ fill: "#fafafa" }}
-                    contentStyle={{ borderRadius: 12, border: "1px solid #e5e5e5", fontSize: 12 }}
-                  />
-                  <Bar dataKey="revenue" fill="#f97316" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="sales" fill="#171717" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {chartData.length > 0 ? (
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} barGap={6}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" vertical={false} />
+                    <XAxis dataKey="day" tickLine={false} axisLine={false} fontSize={12} stroke="#737373" />
+                    <YAxis tickLine={false} axisLine={false} fontSize={12} stroke="#737373" />
+                    <Tooltip cursor={{ fill: "#fafafa" }} contentStyle={{ borderRadius: 12, border: "1px solid #e5e5e5", fontSize: 12 }} />
+                    <Bar dataKey="revenue" fill="#f97316" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="sales" fill="#171717" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : <div className="grid h-64 place-items-center rounded-xl border border-dashed border-neutral-200 text-sm text-neutral-500">Sales will appear here after your first recorded sale.</div>}
           </CardContent>
         </Card>
 

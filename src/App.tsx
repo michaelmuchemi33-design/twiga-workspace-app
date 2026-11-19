@@ -69,7 +69,7 @@ const moreTabs = [
   { id: "logout", label: "Log out", icon: IconLogout },
 ];
 
-export default function App({ demo = false, userId, googleAuth, onSignOut }: { demo?: boolean; userId?: string; googleAuth?: GoogleAuthContext; onSignOut?: () => void }) {
+export default function App({ demo = false, userId, googleAuth, onSignOut }: { demo?: boolean; userId?: string; googleAuth?: GoogleAuthContext; onSignOut?: () => Promise<void> }) {
   const [tab, setTab] = useState("setup");
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     try { return localStorage.getItem("twiga_theme") === "dark" ? "dark" : "light"; }
@@ -284,7 +284,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           {tab === "alerts" && <Alerts />}
           {tab === "profile" && <Profile userId={userId} businessId={businessId} businesses={businesses} onBusinessChange={setBusinessId} onRefreshBusinesses={refreshBusinesses} onCreateBusiness={() => go("setup")} />}
           {tab === "settings" && <Settings businessId={businessId} demo={demo} onOpenProfile={() => go("phone")} />}
-          {tab === "logout" && <Logout onCancel={() => setTab("dashboard")} />}
+          {tab === "logout" && <Logout onCancel={() => setTab("dashboard")} onConfirm={onSignOut || (async () => {})} />}
         </main>
 
         {!demo && userId && businessId && <CustomerSupport businessId={businessId} />}

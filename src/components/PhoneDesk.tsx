@@ -51,7 +51,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const [greeting, setGreeting] = useState("Hello, karibu! How can I help you today?");
   const [inboundPrompt, setInboundPrompt] = useState("");
   const [outboundPrompt, setOutboundPrompt] = useState("");
-  const [testPhone, setTestPhone] = useState("0793832286");
+  const [testPhone, setTestPhone] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [callReason, setCallReason] = useState("");
@@ -389,7 +389,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
           <button type="button" aria-pressed={voiceId === "Woman"} onClick={() => setVoiceId("Woman")} className={`rounded-xl border-2 p-3 text-left transition ${voiceId === "Woman" ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-neutral-400"}`}><span className="block text-base font-bold text-neutral-950">Female voice</span><span className="mt-1 block text-xs text-neutral-600">Warm and friendly</span></button>
           <button type="button" aria-pressed={voiceId === "Man"} onClick={() => setVoiceId("Man")} className={`rounded-xl border-2 p-3 text-left transition ${voiceId === "Man" ? "border-orange-500 bg-orange-50" : "border-neutral-200 bg-white hover:border-neutral-400"}`}><span className="block text-base font-bold text-neutral-950">Male voice</span><span className="mt-1 block text-xs text-neutral-600">Clear and confident</span></button>
         </div>
-        <label className="mt-4 block text-sm font-medium text-neutral-800">Phone number to call<input value={testPhone} onChange={e => setTestPhone(e.target.value)} placeholder="0793832286" inputMode="tel" className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-3 text-base text-neutral-950 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100" /></label>
+        <label className="mt-4 block text-sm font-medium text-neutral-800">Your phone number for this test call<input required value={testPhone} onChange={e => setTestPhone(e.target.value)} placeholder="Enter your own number (e.g. 07XX XXX XXX)" inputMode="tel" className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-3 text-base text-neutral-950 outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-100" /></label>
         <p className="mt-2 text-xs text-neutral-500">By pressing the test button, you confirm you can receive a call at this number. Test calls may incur calling charges.</p>
         <button type="button" onClick={() => void testVoice()} disabled={testingCall} title={canPlaceLiveTest ? "Place a live test call" : voiceReadinessMessage} className="mt-4 w-full rounded-xl bg-orange-500 px-5 py-3.5 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 active:scale-[.99] disabled:cursor-wait disabled:opacity-60">{testingCall ? "Calling you…" : canPlaceLiveTest ? "Call me and test AI" : "Check live-call setup"}</button>
         {!canPlaceLiveTest && <p className="mt-2 text-xs leading-5 text-neutral-500">{voiceReadinessMessage} Live calling remains safely paused until this business’s phone connection, number and receptionist are verified.</p>}
