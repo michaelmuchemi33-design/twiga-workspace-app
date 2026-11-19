@@ -30,15 +30,10 @@ function authContext(session: Session | null): GoogleAuthContext {
   };
 }
 
-const GOOGLE_SCOPES = [
-  "openid",
-  "email",
-  "profile",
-  "https://www.googleapis.com/auth/calendar.events.owned",
-  "https://www.googleapis.com/auth/contacts.readonly",
-  "https://www.googleapis.com/auth/spreadsheets",
-  "https://www.googleapis.com/auth/drive.file",
-].join(" ");
+// Authentication requests identity only. Business data permissions are requested
+// later, deliberately, from Connections so Google verification for those APIs
+// cannot block a new customer from creating a TWIGA account.
+const GOOGLE_SCOPES = "openid email profile";
 
 export default function AuthGate({ children }: {
   children: (session: Session, googleAuth: GoogleAuthContext) => ReactNode;
@@ -157,7 +152,7 @@ export default function AuthGate({ children }: {
           </div>
           <p className="text-[10px] font-bold uppercase tracking-[.2em] text-orange-400">ONE ACCOUNT · ONE WORKSPACE</p>
           <h1 style={{ color: "#ffffff" }} className="mt-3 text-[32px] font-bold leading-[1.12] tracking-tight !text-white sm:text-[38px]">Your business.<br/>One private workspace.</h1>
-          <p className="mt-3 max-w-md text-sm leading-6 text-neutral-300">Continue with Google to create your account or open your private TWIGA dashboard. New here? Your workspace is created automatically.</p>
+          <p className="mt-3 max-w-md text-sm leading-6 text-neutral-300">Sign in securely with Google. Calendar, Contacts, Sheets and Drive are optional connections you can approve later from your workspace.</p>
         </div>
         <div className="p-7 sm:p-10">
           {!hasSupabaseConfig ? (
@@ -176,8 +171,8 @@ export default function AuthGate({ children }: {
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-orange-600">◎</span><div><p className="text-xs font-semibold text-neutral-900">Name and email</p><p className="text-[11px] text-neutral-500">Your Google account identity</p></div></div>
                   <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-orange-600">◉</span><div><p className="text-xs font-semibold text-neutral-900">Profile picture</p><p className="text-[11px] text-neutral-500">Shown in your dashboard</p></div></div>
-                  <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-orange-600">▦</span><div><p className="text-xs font-semibold text-neutral-900">Google Calendar</p><p className="text-[11px] text-neutral-500">Read and manage your events</p></div></div>
-                  <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-orange-600">♧</span><div><p className="text-xs font-semibold text-neutral-900">Google Contacts</p><p className="text-[11px] text-neutral-500">Read contacts you approve</p></div></div>
+                  <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-orange-600">▦</span><div><p className="text-xs font-semibold text-neutral-900">Google Calendar</p><p className="text-[11px] text-neutral-500">Connect later from your workspace</p></div></div>
+                  <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-orange-600">♧</span><div><p className="text-xs font-semibold text-neutral-900">Google Contacts</p><p className="text-[11px] text-neutral-500">Connect later from your workspacerove</p></div></div>
                   <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-orange-600">▤</span><div><p className="text-xs font-semibold text-neutral-900">Google Sheets</p><p className="text-[11px] text-neutral-500">Create and update business records</p></div></div>
                   <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white text-orange-600">▣</span><div><p className="text-xs font-semibold text-neutral-900">Google Drive</p><p className="text-[11px] text-neutral-500">Access TWIGA files you choose</p></div></div>
                 </div>
