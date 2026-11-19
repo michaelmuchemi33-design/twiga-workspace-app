@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RetellWebClient } from "retell-client-js-sdk";
 import { supabase } from "@/lib/supabase";
+import PlatformAdminConsole from "@/components/PlatformAdminConsole";
 
 type Business = { id: string; name: string; business_type?: string; status?: string; role?: string };
 
@@ -757,6 +758,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
         <p className="mt-2 text-xs text-neutral-500">Browser call: {callStatus}. Microphone access is requested only when you start the test.</p>
       </>}
     </section>
+    <PlatformAdminConsole />
     {message && <p className="rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{message}</p>}
   </div>;
 }

@@ -52,6 +52,10 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const [inboundPrompt, setInboundPrompt] = useState("");
   const [outboundPrompt, setOutboundPrompt] = useState("");
   const [testPhone, setTestPhone] = useState("");
+  const [forwardingMode, setForwardingMode] = useState<"always" | "after_hours">("after_hours");
+  const [forwardingNumbers, setForwardingNumbers] = useState("");
+  const [forwardingRingTimeout, setForwardingRingTimeout] = useState(20);
+  const [savingForwarding, setSavingForwarding] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [callReason, setCallReason] = useState("");
@@ -85,6 +89,10 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
       setGreeting(next.scripts?.greeting || "Hello, karibu! How can I help you today?");
       setInboundPrompt(next.scripts?.inbound || "");
       setOutboundPrompt(next.scripts?.outbound || "");
+      const savedForwarding = settings.forwarding_config || {};
+      setForwardingMode(savedForwarding.mode === "always" ? "always" : "after_hours");
+      setForwardingNumbers((Array.isArray(savedForwarding.destinations) ? savedForwarding.destinations : savedForwarding.to ? [savedForwarding.to] : []).join("\\n"));
+      setForwardingRingTimeout(Number(savedForwarding.ringTimeout || 20));
       const [scheduled, calls] = await Promise.all([
         supabase.from("twiga_scheduled_calls").select("id,customer_name,phone_number,reason,scheduled_at,trigger_type,status,last_error").eq("business_id", businessId).order("scheduled_at", { ascending: true }).limit(50),
         supabase.from("twiga_call_records").select("id,created_at,direction,from_number,to_number,status,duration_seconds,summary,provider,metadata").eq("business_id", businessId).eq("provider", "sautikit").order("created_at", { ascending: false }).limit(20),
@@ -243,6 +251,26 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     finally { setTestingCall(false); }
   };
 
+  const saveForwarding = async () => {
+    if (!supabase || !businessId) return;
+    const destinations = forwardingNumbers.split(/[\\n,;]+/).map((value) => toE164(value.trim())).filter(Boolean);
+    if (!destinations.length) { setError("Add at least one staff forwarding number in international format, e.g. +2547XXXXXXXX."); return; }
+    if (destinations.length > 5) { setError("Add up to five staff numbers. Remove any extra destinations."); return; }
+    if (new Set(destinations).size !== destinations.length) { setError("Remove duplicate forwarding numbers."); return; }
+    setSavingForwarding(true); setError(""); setMessage("Saving staff call forwarding…");
+    try {
+      const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", {
+        body: { action: "configure_forwarding", businessId, mode: forwardingMode, destinations, sequential: true, ringTimeout: forwardingRingTimeout, openingTime: "08:00", closingTime: "18:00" },
+      });
+      if (invokeError) throw new Error(await functionErrorMessage(invokeError, "Could not configure staff forwarding."));
+      if (data?.error) throw new Error(String(data.error));
+      setMessage(data?.message || "SautiKit confirmed the staff forwarding configuration.");
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Staff forwarding could not be configured.");
+    } finally { setSavingForwarding(false); }
+  };
+
   const scheduleCall = async () => {
     if (!supabase || !businessId) return;
     const phone = toE164(customerPhone);
@@ -395,6 +423,18 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
         {!canPlaceLiveTest && <p className="mt-2 text-xs leading-5 text-neutral-500">{voiceReadinessMessage} Live calling remains safely paused until this business’s phone connection, number and receptionist are verified.</p>}
       </div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5"><h2 className="text-lg font-semibold text-neutral-950">Inbound routing check</h2><p className="mt-2 text-sm leading-6 text-neutral-600">{config.inboundVerified ? "The inbound provider route is verified." : config.inboundBound ? "The receptionist is bound to this line, but a real incoming call still needs to be tested." : "No verified inbound agent route is reported for this line yet."}</p><div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Inbound route</p><p className="mt-1 text-sm font-semibold text-neutral-900">{config.inboundBound ? "Agent bound" : "Not bound"}</p></div><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Live verification</p><p className="mt-1 text-sm font-semibold text-neutral-900">{config.inboundVerified ? "Verified" : "Pending"}</p></div></div></div>
+    </section>
+
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Staff handover & call forwarding</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-600">List the people who should receive calls when the business needs a human. Numbers are tried in order; the first person to answer gets the call.</p></div><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">{settings.forwarding_config?.providerConfirmed ? "Provider confirmed" : "Not configured"}</span></div>
+      <label className="mt-4 block text-sm font-medium text-neutral-800">Staff phone numbers (one per line, up to five)<textarea value={forwardingNumbers} onChange={(event) => setForwardingNumbers(event.target.value)} rows={4} placeholder={"+254712345678\\n+254723456789"} className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm font-normal"/></label>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <label className="block text-sm font-medium text-neutral-800">When to forward<select value={forwardingMode} onChange={(event) => setForwardingMode(event.target.value as "always" | "after_hours")} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm"><option value="after_hours">Outside business hours</option><option value="always">All calls (bypasses AI)</option></select></label>
+        <label className="block text-sm font-medium text-neutral-800">Ring each person for<select value={forwardingRingTimeout} onChange={(event) => setForwardingRingTimeout(Number(event.target.value))} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm"><option value={10}>10 seconds</option><option value={15}>15 seconds</option><option value={20}>20 seconds</option><option value={30}>30 seconds</option><option value={45}>45 seconds</option><option value={60}>60 seconds</option></select></label>
+      </div>
+      <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-600">After-hours uses Nairobi time and the current 08:00–18:00 Monday–Saturday schedule. Always forwarding sends every call directly to staff instead of the AI receptionist. Forwarding is only activated after SautiKit accepts the routing update.</p>
+      <button type="button" onClick={() => void saveForwarding()} disabled={savingForwarding || !line || !serverDirectReady || !displayedPhoneNumber} className="mt-4 rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{savingForwarding ? "Saving forwarding…" : "Save & verify call forwarding"}</button>
+      {(!line || !serverDirectReady || !displayedPhoneNumber) && <p className="mt-2 text-xs text-neutral-500">A verified SautiKit phone line and platform connection are required before forwarding can be enabled.</p>}
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">

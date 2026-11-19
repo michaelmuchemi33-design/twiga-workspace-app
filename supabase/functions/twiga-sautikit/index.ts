@@ -1295,16 +1295,21 @@ Deno.serve(async (req: Request) => {
 
     if (action === "configure_forwarding") {
       const mode = String(body.mode || "");
-      const to = String(body.to || "").trim();
-      if (!/^\+[1-9]\d{7,14}$/.test(to)) return json({ error: "Enter a forwarding destination in international format, such as +2547XXXXXXXX." }, 400);
+      const destinations = (Array.isArray(body.destinations) ? body.destinations : [body.to])
+        .map((value: unknown) => String(value || "").trim()).filter(Boolean);
+      if (!destinations.length || destinations.length > 5 || destinations.some((value: string) => !/^\\+[1-9]\\d{7,14}$/.test(value))) {
+        return json({ error: "Enter between one and five valid forwarding numbers in international format, such as +2547XXXXXXXX." }, 400);
+      }
+      if (new Set(destinations).size !== destinations.length) return json({ error: "Remove duplicate forwarding destinations." }, 400);
+      const to = destinations[0];
       const sequential = body.sequential !== false;
       const ringTimeout = Math.min(60, Math.max(10, Number(body.ringTimeout || 20)));
-      const forward = { destinations: [to], sequential, first_answer_wins: true, ring_timeout: ringTimeout };
+      const forward = { destinations, sequential, first_answer_wins: true, ring_timeout: ringTimeout };
       const payload: Row = {};
       let config: Row = {};
       if (mode === "always") {
         payload.forward = forward;
-        config = { mode: "always", to, ringTimeout, sequential, updatedAt: new Date().toISOString() };
+        config = { mode: "always", to, destinations, ringTimeout, sequential, updatedAt: new Date().toISOString() };
       } else if (mode === "after_hours") {
         const start = String(body.openingTime || "08:00");
         const end = String(body.closingTime || "18:00");
@@ -1317,7 +1322,7 @@ Deno.serve(async (req: Request) => {
           weekly: [{ days: [1,2,3,4,5,6], start, end }],
           closed: { mode: "forward", forward },
         };
-        config = { mode: "after_hours", to, openingTime: start, closingTime: end, ringTimeout, sequential, updatedAt: new Date().toISOString() };
+        config = { mode: "after_hours", to, destinations, openingTime: start, closingTime: end, ringTimeout, sequential, updatedAt: new Date().toISOString() };
       } else {
         return json({ error: "Choose direct forwarding or after-hours forwarding." }, 400);
       }
@@ -1329,7 +1334,7 @@ Deno.serve(async (req: Request) => {
         .update({ settings: updatedSettings, updated_at: new Date().toISOString() }).eq("id", line.id);
       if (saveError) throw saveError;
       return json({
-        configured: true, mode, destination: to, provider: "sautikit",
+        configured: true, mode, destination: to, destinations, provider: "sautikit",
         routing: result?.routing || result,
         message: mode === "always"
           ? "Direct forwarding was accepted by SautiKit. Calls to this number will be routed to the selected staff number."

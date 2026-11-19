@@ -20,7 +20,8 @@
     "zustand": "5.0.8",
     "retell-client-js-sdk": "3.0.4",
     "@capacitor/core": "8.6.2",
-    "@capacitor/android": "8.6.2"
+    "@capacitor/android": "8.6.2",
+    "pdfjs-dist": "4.10.38"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.17",
