@@ -58,7 +58,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
   onBusinessCreated: (id: string) => void;
 }) {
   const [messages, setMessages] = useState<Message[]>([
-    { id: "welcome", role: "ai", text: "Hi! I'm your TWIGA AI workspace assistant. Describe a task in plain language — configure your business, organise products and services, plan bookings and follow-ups, or ask how to connect a service. I can prepare plans and explain the next steps. Any phone-number purchase, paid service, customer charge, subscription, refund or provider-wallet spend must show its price and terms and wait for your explicit approval. Live purchases and billing are only available after the relevant provider connection and secure approval workflow are verified." },
+    { id: "welcome", role: "ai", text: "Hi! I'm TWIGA Business Setup AI. I help you configure the AI receptionist and operating system that will serve your customers — enquiries, products, bookings, orders, follow-ups and staff handover. Tell me how your business works, and I'll prepare a business-specific setup draft. Any paid service, phone-number purchase, customer charge, subscription, refund or provider-wallet spend must show its exact price and terms and wait for your explicit approval." },
   ]);
   const [input, setInput] = useState("");
   const [ownerName, setOwnerName] = useState("");
@@ -71,7 +71,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loadingProfile, setLoadingProfile] = useState(false);
-  const [aiServiceStatus, setAiServiceStatus] = useState<"checking" | "ready" | "missing-key" | "offline" | "demo">("checking");
+  const [aiServiceStatus, setAiServiceStatus] = useState<"checking" | "ready" | "offline" | "demo">("checking");
   const [aiServiceModel, setAiServiceModel] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [pendingFileContext, setPendingFileContext] = useState<UploadedFileContext[]>([]);
@@ -122,7 +122,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
         if (!response.ok || result?.ok !== true) throw new Error("Worker health check failed");
         if (!active) return;
         setAiServiceModel(String(result.model || ""));
-        setAiServiceStatus(result.configured === true ? "ready" : "missing-key");
+        setAiServiceStatus(result.configured === true ? "ready" : "offline");
       })
       .catch(() => { if (active) setAiServiceStatus("offline"); });
     return () => { active = false; };
@@ -249,16 +249,22 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
         if (!response.ok || result?.ok !== true) throw new Error(String(result?.error || "The Cloudflare AI service could not complete this request."));
         data = { reply: result.reply, modelUsed: result.model, businessProfile: profile, missingFields: missing, readyToBuild: ready, source: result.source };
       } else {
-        const { data: setupData, error: invokeError } = await supabase.functions.invoke("twiga-setup-assistant", {
-          body: {
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        if (sessionError || !token) throw new Error("Sign in again to configure your business AI.");
+        const response = await fetch(TWIGA_API_URL.replace(/\/$/, "") + "/ai/setup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+          body: JSON.stringify({
+            token,
             messages: conversation,
             ownerProfile: { name: ownerName.trim(), email: ownerEmail.trim() },
             existingProfile: profile,
             uploadedFiles,
-          },
+          }),
         });
-        if (invokeError) throw new Error(await edgeFunctionError(invokeError));
-        if (setupData?.error) throw new Error(String(setupData.error));
+        const setupData = await response.json().catch(() => ({}));
+        if (!response.ok || setupData?.ok !== true) throw new Error(String(setupData?.error || "Cloudflare Workers AI could not complete the setup draft."));
         data = setupData;
       }
       setMessages((m) => [...m, { id: String(Date.now() + 1), role: "ai", text: String(data.reply || "Tell me a little more about the business.") }]);
@@ -268,7 +274,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       if (uploadedFiles.length) {
         const readableCount = uploadedFiles.filter((file) => file.content).length;
         setNotice(uploadedFiles.length + " file(s) saved. The AI read " + readableCount + " text-based file(s); other formats are stored for download but are not yet parsed into the profile.");
-      } else if (data.modelUsed) setNotice("AI response received · " + String(data.modelUsed));
+      } else if (data.modelUsed || data.model) setNotice("AI response received · " + String(data.modelUsed || data.model));
       setPendingFileContext([]);
     } catch (e) {
       const message = e instanceof Error ? e.message : "The setup assistant could not reply.";
@@ -400,14 +406,14 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
 
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3 shadow-sm">
       <div className="flex items-center gap-3">
-        <span className={"h-2.5 w-2.5 rounded-full " + (aiServiceStatus === "ready" ? "bg-emerald-500" : aiServiceStatus === "missing-key" ? "bg-amber-500" : aiServiceStatus === "offline" ? "bg-red-500" : "bg-neutral-400")} />
+        <span className={"h-2.5 w-2.5 rounded-full " + (aiServiceStatus === "ready" ? "bg-emerald-500" : aiServiceStatus === "offline" ? "bg-red-500" : "bg-neutral-400")} />
         <div>
           <p className="text-sm font-semibold text-neutral-900">Cloudflare AI service</p>
-          <p className="text-xs text-neutral-500">{aiServiceStatus === "ready" ? "Worker reachable · model key configured" : aiServiceStatus === "missing-key" ? "Worker reachable · model key missing" : aiServiceStatus === "offline" ? "Worker could not be reached · chat may be unavailable" : aiServiceStatus === "demo" ? "Demo preview · no live AI requests" : "Checking Worker and model configuration…"}</p>
+          <p className="text-xs text-neutral-500">{aiServiceStatus === "ready" ? "Cloudflare Workers AI connected · no external model key required" : aiServiceStatus === "offline" ? "Worker could not be reached or AI binding is unavailable" : aiServiceStatus === "demo" ? "Demo preview · no live AI requests" : "Checking Worker and model configuration…"}</p>
         </div>
       </div>
       {aiServiceModel && aiServiceStatus === "ready" && <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-600">{aiServiceModel}</span>}
-      <button type="button" onClick={() => { setAiServiceStatus("checking"); fetch(TWIGA_API_URL.replace(/\/$/, "") + "/ai/status", { headers: { Accept: "application/json" } }).then(async (response) => { const result = await response.json().catch(() => ({})); if (!response.ok || result?.ok !== true) throw new Error("Unavailable"); setAiServiceModel(String(result.model || "")); setAiServiceStatus(result.configured === true ? "ready" : "missing-key"); }).catch(() => setAiServiceStatus("offline")); }} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700 hover:border-orange-300">Check again</button>
+      <button type="button" onClick={() => { setAiServiceStatus("checking"); fetch(TWIGA_API_URL.replace(/\/$/, "") + "/ai/status", { headers: { Accept: "application/json" } }).then(async (response) => { const result = await response.json().catch(() => ({})); if (!response.ok || result?.ok !== true) throw new Error("Unavailable"); setAiServiceModel(String(result.model || "")); setAiServiceStatus(result.configured === true ? "ready" : "offline"); }).catch(() => setAiServiceStatus("offline")); }} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700 hover:border-orange-300">Check again</button>
     </div>
 
     <ApprovalInbox businessId={businessId} demo={demo} />
