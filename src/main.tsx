@@ -9,7 +9,7 @@ const demo = window.location.hostname === "demo.twiga.co.ke" || import.meta.env.
 
 if (window.location.hostname === "demo.twiga.co.ke") {
   const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-  if (favicon) { favicon.href = "https://twiga.co.ke/favicon-192.png"; favicon.type = "image/png"; }
+  if (favicon) { favicon.href = "https://twiga.co.ke/favicon-demo.png"; favicon.type = "image/png"; }
 }
 
 function Root() {
