@@ -205,7 +205,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
     const attachments = [...selectedFiles];
     if ((!text && !attachments.length && !pendingFileContext.length) || thinking) return;
     if (!demo && (!supabase || !ownerName.trim() || !ownerEmail.trim())) { setError("Your account profile is still loading. Please try again in a moment."); return; }
-    if (attachments.length && !businessId) { setError("Save your business workspace first, then upload its documents."); return; }
+    if (!demo && attachments.length && !businessId) { setError("Save your business workspace first, then upload its documents."); return; }
     if (attachments.length + pendingFileContext.length > 8) { setError("Upload up to 8 files in one setup request."); return; }
     setThinking(true);
     setUploadingFiles(attachments.length > 0);
