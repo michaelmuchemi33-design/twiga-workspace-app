@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import ApprovalInbox from "@/components/ApprovalInbox";
+import { getDocument, GlobalWorkerOptions } from "pdfjs-dist/legacy/build/pdf.mjs";
+import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import { IconSparkle, IconPaperclip, IconSend, IconFile } from "@/components/Icons";
 
 type Message = { id: string; role: "ai" | "user"; text: string };
@@ -10,6 +12,31 @@ type UploadedFileContext = { name: string; contentType: string; content: string;
 const BUSINESS_FILES_API = "https://twiga-business-files.twiga-ke.workers.dev/v1";
 const TWIGA_API_URL = import.meta.env.VITE_TWIGA_API_URL || "https://twiga-api.twiga-ke.workers.dev";
 const formatFileSize = (bytes: number) => bytes < 1024 ? bytes + " B" : bytes < 1024 * 1024 ? (bytes / 1024).toFixed(1) + " KB" : (bytes / (1024 * 1024)).toFixed(1) + " MB";
+GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+
+async function extractPdfText(file: File, maxChars: number) {
+  const document = await getDocument({ data: await file.arrayBuffer(), isEvalSupported: false }).promise;
+  const pageCount = document.numPages;
+  const pagesToRead = Math.min(pageCount, 40);
+  const chunks: string[] = [];
+  let size = 0;
+  try {
+    for (let pageNumber = 1; pageNumber <= pagesToRead && size < maxChars; pageNumber++) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const text = content.items.map((item: any) => typeof item.str === "string" ? item.str : "").filter(Boolean).join(" ");
+      if (text) {
+        const chunk = text.slice(0, maxChars - size);
+        chunks.push("[PDF page " + pageNumber + "] " + chunk);
+        size += chunk.length;
+      }
+      page.cleanup();
+    }
+  } finally {
+    await document.destroy();
+  }
+  return { text: chunks.join("\\n"), pageCount, pagesRead: pagesToRead };
+}
 
 const areas = [
   { key: "identity", label: "Business identity", fields: ["business_name", "business_type"] },
@@ -218,6 +245,17 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
           if (readable && remainingText > 0) {
             content = (await file.text()).slice(0, Math.min(4000, remainingText));
             remainingText -= content.length;
+          } else if (extension === "pdf" && remainingText > 0) {
+            try {
+              const extracted = await extractPdfText(file, Math.min(6000, remainingText));
+              content = extracted.text;
+              remainingText -= content.length;
+              note = content
+                ? "PDF text extracted from " + extracted.pagesRead + " of " + extracted.pageCount + " pages. The original PDF is also stored privately."
+                : "PDF stored privately, but no selectable text was found. It may be a scanned document; do not infer its contents.";
+            } catch (pdfError) {
+              note = "PDF stored privately, but text extraction failed: " + (pdfError instanceof Error ? pdfError.message.slice(0, 220) : "unsupported or damaged PDF") + ".";
+            }
           } else {
             note = "Stored in the business workspace. Text extraction is not available for this format yet; do not infer its contents.";
           }
@@ -273,7 +311,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       setReady(data.readyToBuild === true);
       if (uploadedFiles.length) {
         const readableCount = uploadedFiles.filter((file) => file.content).length;
-        setNotice(uploadedFiles.length + " file(s) saved. The AI read " + readableCount + " text-based file(s); other formats are stored for download but are not yet parsed into the profile.");
+        setNotice(uploadedFiles.length + " file(s) saved. The AI read " + readableCount + " file(s), including selectable PDF text where available. Scanned PDFs and unsupported formats are stored privately but still need OCR or a compatible reader.");
       } else if (data.modelUsed || data.model) setNotice("AI response received · " + String(data.modelUsed || data.model));
       setPendingFileContext([]);
     } catch (e) {
@@ -436,7 +474,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
           <input ref={fileInputRef} type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,text/plain,text/csv,.txt,.csv,.md,.json,.pdf,.docx,.xlsx,.pptx" className="hidden" onChange={(e) => { const incoming = Array.from(e.target.files || []); setSelectedFiles((current) => [...current, ...incoming].slice(0, Math.max(0, 8 - pendingFileContext.length))); e.currentTarget.value = ""; }} />
           {selectedFiles.length > 0 && <div className="mb-3 flex flex-wrap gap-2">{selectedFiles.map((file, index) => <span key={file.name + index} className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700"><IconFile className="h-3.5 w-3.5 shrink-0 text-orange-600" /><span className="max-w-[220px] truncate">{file.name}</span> · {formatFileSize(file.size)}<button type="button" onClick={() => setSelectedFiles((current) => current.filter((_, i) => i !== index))} className="ml-2 font-bold text-neutral-500" aria-label={"Remove " + file.name}>×</button></span>)}</div>}
           <div className="grid grid-cols-1 items-stretch gap-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]"><button type="button" onClick={() => fileInputRef.current?.click()} disabled={thinking || building || !businessId} aria-label="Attach business files" title="Attach business files" className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 text-sm font-semibold text-neutral-700 shadow-sm transition hover:border-orange-300 hover:bg-orange-50 hover:text-orange-800 disabled:opacity-40"><IconPaperclip className="h-5 w-5" /><span>Attach files</span></button><textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} placeholder="Describe your business, ask for an update, or paste the setup brief…" rows={3} className="min-h-[112px] min-w-0 w-full resize-y rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-base leading-7 text-neutral-900 outline-none transition placeholder:text-neutral-400 focus:border-orange-400 focus:ring-4 focus:ring-orange-100" /><button onClick={() => void send()} disabled={thinking || (!input.trim() && !selectedFiles.length && !pendingFileContext.length) || loadingProfile} className="inline-flex h-12 items-center justify-center gap-2 self-end rounded-xl bg-orange-500 px-6 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-40 sm:self-end">{uploadingFiles ? "Uploading…" : thinking ? "Working…" : <>Send <IconSend className="h-4 w-4" /></>}</button></div>
-          <p className="mt-2 text-xs leading-5 text-neutral-500">Text, CSV, Markdown and JSON are read into the AI profile draft. PDF, Word, Excel, PowerPoint and images are stored privately but are not yet text-extracted.</p>
+          <p className="mt-2 text-xs leading-5 text-neutral-500">Text, CSV, Markdown, JSON and selectable PDF text are read into the AI profile draft. Original files stay in this business's private storage. Scanned PDFs and Office files are stored but need a compatible reader or OCR.</p>
         </div>
       </section>
 
