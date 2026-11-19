@@ -322,8 +322,11 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Workspace integrations</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Connections & permissions</h1>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Connect Google services for each business and manage the TWIGA AI providers. API keys are validated on the server and stored in encrypted Supabase Vault, never in browser storage.</p>
       <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{!oauthConfig.serverConfigured && !googleAuth?.tokens?.accessToken ? "Manual Google reconnection needs the Google OAuth web client ID and client secret in TWIGA server settings. If you sign in with Google, TWIGA can use the approved sign-in token to connect these services automatically." : "Google Workspace permissions can be connected using your approved Google sign-in or the separate consent screen."}</div>
-      <div className="mt-3 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-sm leading-6 text-neutral-700">
-        <strong>Google sign-in domain check:</strong> if Google shows <code>400 origin_mismatch</code>, add <code>https://live.twiga.co.ke</code> and <code>https://app.twiga.co.ke</code> as Authorized JavaScript origins on the same Google OAuth Web client. Add this Authorized redirect URI: <code>https://ztyxxikkposfpxsutnfr.supabase.co/auth/v1/callback</code>. Do not add a path or wildcard to the JavaScript origins. <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="ml-1 font-semibold text-orange-700 underline">Open Google Cloud credentials ↗</a>
+      <div className="mt-3">
+        <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800 shadow-sm transition hover:border-orange-300 hover:bg-orange-100">
+          Open Google OAuth settings
+          <span aria-hidden="true">↗</span>
+        </a>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <span className="rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs font-semibold text-neutral-800">{status.connected ? "Google connected" : "Google not connected"}</span>
