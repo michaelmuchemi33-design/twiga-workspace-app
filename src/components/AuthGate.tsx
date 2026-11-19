@@ -152,14 +152,12 @@ export default function AuthGate({ children }: {
       <section className="w-full max-w-[510px] overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-[0_24px_80px_-35px_rgba(0,0,0,.25)]">
         <div className="bg-[#171715] px-7 py-8 text-white sm:px-10 sm:py-10">
           <div className="mb-7 flex items-center gap-3">
-            <div className="grid h-14 w-14 place-items-center overflow-hidden rounded-2xl bg-white p-1.5">
-              <img src="https://app.twiga.co.ke/twiga-mark.webp" alt="TWIGA" className="h-full w-full object-contain" referrerPolicy="no-referrer" />
-            </div>
-            <div><p className="text-lg font-black tracking-[.16em]">TWIGA</p><p className="mt-0.5 text-[10px] font-semibold tracking-[.2em] text-neutral-400">BUSINESS WORKSPACE</p></div>
+            <div className="grid h-14 w-14 place-items-center rounded-2xl border border-white/15 bg-white/10 text-2xl font-black tracking-tight text-orange-400">T</div>
+            <div><p className="text-lg font-black tracking-[.16em] text-white">TWIGA</p><p className="mt-0.5 text-[10px] font-semibold tracking-[.2em] text-neutral-300">BUSINESS WORKSPACE</p></div>
           </div>
           <p className="text-[10px] font-bold uppercase tracking-[.2em] text-orange-400">ONE ACCOUNT · ONE WORKSPACE</p>
-          <h1 className="mt-3 text-[32px] font-bold leading-[1.12] tracking-tight sm:text-[38px]">Start with Google.<br/>Go straight to work.</h1>
-          <p className="mt-3 max-w-md text-sm leading-6 text-neutral-300">Use your Google account to create or open your private TWIGA dashboard. No separate registration form or new password.</p>
+          <h1 style={{ color: "#ffffff" }} className="mt-3 text-[32px] font-bold leading-[1.12] tracking-tight !text-white sm:text-[38px]">Your business.<br/>One private workspace.</h1>
+          <p className="mt-3 max-w-md text-sm leading-6 text-neutral-300">Continue with Google to create your account or open your private TWIGA dashboard. New here? Your workspace is created automatically.</p>
         </div>
         <div className="p-7 sm:p-10">
           {!hasSupabaseConfig ? (
@@ -187,10 +185,12 @@ export default function AuthGate({ children }: {
               <p className="mt-4 text-center text-[11px] leading-5 text-neutral-500">Calendar and Contacts are requested on Google's permission screen. TWIGA only receives the access you approve. You can disconnect Google later in Profile.</p>
               {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
               <div className="mt-6 border-t border-neutral-100 pt-5 text-center">
-                <button onClick={() => { setEmailMode((v) => !v); setError(""); }} className="text-xs font-semibold text-neutral-500 underline decoration-neutral-300 underline-offset-4 hover:text-orange-700">
-                  {emailMode ? "Back to Google sign-in" : "Use email or create an account"}
-                </button>
+                <p className="text-sm font-semibold text-neutral-800">New to TWIGA?</p>
+                <button onClick={() => { setEmailMode(true); setEmailAction("signup"); setError(""); setNotice(""); }} className="mt-1 text-sm font-bold text-orange-700 underline decoration-orange-300 underline-offset-4 hover:text-orange-800">Create your account</button>
+                <p className="mt-4 text-xs text-neutral-500">Already have an account? <button onClick={() => { setEmailMode(true); setEmailAction("signin"); setError(""); setNotice(""); }} className="font-bold text-neutral-900 underline underline-offset-4">Sign in with email</button></p>
+                {emailMode && <button onClick={() => { setEmailMode(false); setError(""); }} className="mt-3 text-xs font-semibold text-neutral-500 underline underline-offset-4">Back to Google sign-in</button>}
               </div>
+              {notice && <p role="status" className="mt-4 rounded-xl bg-green-50 p-3 text-sm text-green-800">{notice}</p>}
               {emailMode && (
                 <form onSubmit={emailSignIn} className="mt-5 space-y-3 rounded-2xl border border-neutral-200 p-4">
                   <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold text-neutral-700">{emailAction === "signup" ? "Create your TWIGA account" : "Sign in to your TWIGA account"}</p><button type="button" onClick={() => { setEmailAction((mode) => mode === "signin" ? "signup" : "signin"); setError(""); setNotice(""); }} className="text-xs font-semibold text-orange-700 underline underline-offset-2">{emailAction === "signup" ? "I already have an account" : "Create new account"}</button></div>
