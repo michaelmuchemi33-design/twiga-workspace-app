@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+import { useStore } from "@/lib/store";
 import {
   Card,
   CardContent,
@@ -14,7 +16,6 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from "recharts";
-import { useStore } from "@/lib/store";
 import {
   IconChart,
   IconTrend,
@@ -24,7 +25,7 @@ import {
 } from "@/components/Icons";
 
 export default function Analytics() {
-  const { sales, payments, tasks, customers } = useStore();
+  const { sales, payments, tasks, customers, callRecords, settings } = useStore();
 
   const revenue = sales.reduce((s, x) => s + x.total, 0);
   const collected = payments
@@ -35,20 +36,27 @@ export default function Analytics() {
     ? Math.round((doneTasks / tasks.length) * 100)
     : 0;
 
-  const data = [
-    { day: "Mon", revenue: 3200, calls: 18 },
-    { day: "Tue", revenue: 4100, calls: 22 },
-    { day: "Wed", revenue: 2800, calls: 15 },
-    { day: "Thu", revenue: 5200, calls: 27 },
-    { day: "Fri", revenue: 6400, calls: 31 },
-    { day: "Sat", revenue: 4800, calls: 24 },
-    { day: "Sun", revenue, calls: 12 },
-  ];
+  const data = useMemo(() => {
+    const days = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date();
+      date.setHours(0, 0, 0, 0);
+      date.setDate(date.getDate() - (6 - index));
+      const key = date.toLocaleDateString("en-CA");
+      return { day: date.toLocaleDateString("en-KE", { weekday: "short" }), key, calls: 0 };
+    });
+    for (const call of callRecords) {
+      if (!call.created_at) continue;
+      const key = new Date(call.created_at).toLocaleDateString("en-CA");
+      const match = days.find((day) => day.key === key);
+      if (match) match.calls += 1;
+    }
+    return days;
+  }, [callRecords]);
 
   const kpis = [
     { label: "Tasks completed", value: `${doneTasks}/${tasks.length}`, icon: IconTrend, accent: true },
-    { label: "Calls handled", value: "149", icon: IconPhone },
-    { label: "Payments collected", value: `KSh ${collected.toLocaleString()}`, icon: IconCard },
+    { label: "Calls recorded", value: String(callRecords.length), icon: IconPhone },
+    { label: "Payments collected", value: `${settings.business.currency} ${collected.toLocaleString()}`, icon: IconCard },
     { label: "Customers", value: `${customers.length}`, icon: IconUsers },
   ];
 
@@ -93,7 +101,7 @@ export default function Analytics() {
             <CardTitle className="flex items-center gap-2 text-xl font-semibold">
               <IconChart className="h-5 w-5 text-orange-500" /> Weekly Performance
             </CardTitle>
-            <CardDescription>Revenue (KSh) and calls handled this week</CardDescription>
+            <CardDescription>Calls recorded in the last 7 days</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="h-64 w-full">
@@ -110,8 +118,7 @@ export default function Analytics() {
                       fontSize: 12,
                     }}
                   />
-                  <Bar dataKey="revenue" fill="#f97316" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="calls" fill="#171717" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="calls" fill="#f97316" radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -141,9 +148,9 @@ export default function Analytics() {
               />
             </div>
             <div className="space-y-3 border-t border-white/10 pt-4 text-sm">
-              <Row label="Revenue today" value={`KSh ${revenue.toLocaleString()}`} />
-              <Row label="Collected" value={`KSh ${collected.toLocaleString()}`} />
-              <Row label="Avg. response" value="1.2s" />
+              <Row label="Recorded sales total" value={`${settings.business.currency} ${revenue.toLocaleString()}`} />
+              <Row label="Collected" value={`${settings.business.currency} ${collected.toLocaleString()}`} />
+              <Row label="Calls in last 7 days" value={String(data.reduce((sum, day) => sum + day.calls, 0))} />
             </div>
           </CardContent>
         </Card>
