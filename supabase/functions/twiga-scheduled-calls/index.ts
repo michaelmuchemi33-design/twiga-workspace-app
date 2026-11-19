@@ -200,16 +200,19 @@ Deno.serve(async (req: Request) => {
     const expected = await hmacHex(String(cronSecret), timestamp);
     if (!equalHex(signature, expected)) return json({ error: "Invalid scheduler signature." }, 401);
 
-    const { data: keyData, error: keyError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "sautikit_platform_api_key" });
-    const apiKey = String(keyData || "");
-    if (keyError || !apiKey) {
-      await admin.from("twiga_scheduled_calls").update({
-        status: "waiting_for_provider",
-        last_error: "Connect the shared SautiKit platform API key in TWIGA Platform Settings to enable scheduled calls.",
-        updated_at: new Date().toISOString(),
-      }).eq("status", "scheduled").lte("scheduled_at", new Date().toISOString());
-      return json({ ok: true, processed: 0, waitingForProvider: true });
-    }
+    const { data: platformKeyData, error: platformKeyError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "sautikit_platform_api_key" });
+    if (platformKeyError) throw platformKeyError;
+    const platformApiKey = String(platformKeyData || "");
+    // Match the receptionist's credential policy: use TWIGA's shared key first,
+    // then a business-owned SautiKit key only for that same business.
+    const getSautiKitKey = async (targetBusinessId: string) => {
+      if (platformApiKey) return platformApiKey;
+      const { data, error } = await admin.rpc("twiga_get_business_provider_secret", {
+        p_business_id: targetBusinessId, p_provider: "sautikit",
+      });
+      if (error) throw error;
+      return String(data || "");
+    };
     // Poll previously accepted calls so the queue and call history show their real outcome.
     const { data: submittedCalls } = await admin.from("twiga_scheduled_calls")
       .select("*")
@@ -218,6 +221,8 @@ Deno.serve(async (req: Request) => {
     let polledCalls = 0;
     for (const item of submittedCalls || []) {
       try {
+        const apiKey = await getSautiKitKey(String(item.business_id || ""));
+        if (!apiKey) continue;
         const callStatus = await skRequest(apiKey, "/v1/calls/" + encodeURIComponent(String(item.provider_call_id)), "GET", undefined, 12000);
         const callData = callStatus.call || callStatus.data?.call || (callStatus.data && typeof callStatus.data === "object" ? callStatus.data : callStatus);
         const rawProviderStatus = String(callData.status || callData.state || "").toLowerCase().replace(/-/g, "_");
@@ -359,6 +364,11 @@ Deno.serve(async (req: Request) => {
         if (businessError) throw businessError;
         const scripts = settings.sautikit_scripts && typeof settings.sautikit_scripts === "object" ? settings.sautikit_scripts : {};
         const outbound = safe(scripts.outbound || "Identify the business, explain the reason for calling, ask if this is a convenient time, keep the call brief, and respect requests not to be contacted again.", 5000);
+        const apiKey = await getSautiKitKey(String(job.business_id || ""));
+        if (!apiKey) {
+          await setJob(admin, job.id, { status: "waiting_for_provider", last_error: "Connect SautiKit for this business or ask TWIGA to connect the shared platform account." });
+          summary.deferred++; continue;
+        }
         const to = safe(job.phone_number, 24);
         if (!/^\+[1-9]\d{7,14}$/.test(to)) throw new Error("The destination number is not in international format.");
         const call: any = await skRequest(apiKey, "/v1/agents/" + encodeURIComponent(agentId) + "/send", "POST", {
