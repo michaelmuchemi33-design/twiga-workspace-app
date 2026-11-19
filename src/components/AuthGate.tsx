@@ -47,6 +47,8 @@ export default function AuthGate({ children }: {
   const [googleAuth, setGoogleAuth] = useState<GoogleAuthContext>(authContext(null));
   const [loading, setLoading] = useState(true);
   const [emailMode, setEmailMode] = useState(false);
+  const [emailAction, setEmailAction] = useState<"signin" | "signup">("signin");
+  const [notice, setNotice] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -84,6 +86,8 @@ export default function AuthGate({ children }: {
     if (!supabase) return;
     setBusy(true);
     setError("");
+    setNotice("");
+    try {
     const { error: authError } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
@@ -96,7 +100,11 @@ export default function AuthGate({ children }: {
         },
       },
     });
-    if (authError) { setError(authError.message); setBusy(false); }
+    if (authError) throw authError;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Google sign-in could not be started. Please try again.");
+      setBusy(false);
+    }
   };
 
   const emailSignIn = async (event: FormEvent) => {
@@ -104,11 +112,27 @@ export default function AuthGate({ children }: {
     if (!supabase) return;
     setBusy(true);
     setError("");
+    setNotice("");
     try {
-      const { data, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-      if (authError) throw authError;
-      setSession(data.session);
-      setGoogleAuth(authContext(data.session));
+      if (emailAction === "signup") {
+        const { data, error: authError } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: { emailRedirectTo: window.location.origin + "/auth/callback" },
+        });
+        if (authError) throw authError;
+        if (data.session) {
+          setSession(data.session);
+          setGoogleAuth(authContext(data.session));
+        } else {
+          setNotice("Your account has been created. Check your email and confirm your address before signing in.");
+        }
+      } else {
+        const { data, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        if (authError) throw authError;
+        setSession(data.session);
+        setGoogleAuth(authContext(data.session));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to sign in. Please try again.");
     } finally {
@@ -164,15 +188,15 @@ export default function AuthGate({ children }: {
               {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
               <div className="mt-6 border-t border-neutral-100 pt-5 text-center">
                 <button onClick={() => { setEmailMode((v) => !v); setError(""); }} className="text-xs font-semibold text-neutral-500 underline decoration-neutral-300 underline-offset-4 hover:text-orange-700">
-                  {emailMode ? "Back to Google sign-in" : "Use email instead (existing accounts)"}
+                  {emailMode ? "Back to Google sign-in" : "Use email or create an account"}
                 </button>
               </div>
               {emailMode && (
                 <form onSubmit={emailSignIn} className="mt-5 space-y-3 rounded-2xl border border-neutral-200 p-4">
-                  <p className="text-xs font-semibold text-neutral-700">Sign in to an existing TWIGA account</p>
+                  <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold text-neutral-700">{emailAction === "signup" ? "Create your TWIGA account" : "Sign in to your TWIGA account"}</p><button type="button" onClick={() => { setEmailAction((mode) => mode === "signin" ? "signup" : "signin"); setError(""); setNotice(""); }} className="text-xs font-semibold text-orange-700 underline underline-offset-2">{emailAction === "signup" ? "I already have an account" : "Create new account"}</button></div>
                   <label className="block text-xs font-semibold text-neutral-700">Email address<input type="email" required value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" placeholder="you@business.co.ke"/></label>
-                  <label className="block text-xs font-semibold text-neutral-700">Password<input type="password" required value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" placeholder="Your existing password"/></label>
-                  <button disabled={busy} className="h-11 w-full rounded-xl bg-neutral-950 text-sm font-bold text-white disabled:opacity-50">{busy ? "Signing in…" : "Sign in"}</button>
+                  <label className="block text-xs font-semibold text-neutral-700">Password<input type="password" required value={password} onChange={e=>setPassword(e.target.value)} autoComplete={emailAction === "signup" ? "new-password" : "current-password"} minLength={8} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" placeholder={emailAction === "signup" ? "At least 8 characters" : "Your password"}/></label>
+                  <button disabled={busy} className="h-11 w-full rounded-xl bg-neutral-950 text-sm font-bold text-white disabled:opacity-50">{busy ? (emailAction === "signup" ? "Creating account…" : "Signing in…") : (emailAction === "signup" ? "Create account" : "Sign in")}</button>
                 </form>
               )}
             </>
