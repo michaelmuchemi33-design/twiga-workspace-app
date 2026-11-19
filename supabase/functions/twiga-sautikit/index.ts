@@ -606,7 +606,7 @@ Deno.serve(async (req: Request) => {
       if (!selected) return json({ error: "That number does not belong to this business's connected SautiKit workspace." }, 404);
       if (String(selected.status || "").toLowerCase() !== "active") return json({ error: "Only active SautiKit numbers can be assigned." }, 409);
       const phone = String(selected.e164 || selected.phone_number || selected.number_e164 || "").trim();
-      if (!/^\\+[1-9]\\d{7,14}$/.test(phone)) return json({ error: "SautiKit returned an invalid E.164 phone number." }, 502);
+      if (!/^\+[1-9]\d{7,14}$/.test(phone)) return json({ error: "SautiKit returned an invalid E.164 phone number." }, 502);
       const { data: existingOwner, error: ownerError } = await admin.from("twiga_phone_lines")
         .select("business_id,line_number").eq("provider", "sautikit").eq("provider_reference", selectedNumberId).maybeSingle();
       if (ownerError) throw ownerError;
