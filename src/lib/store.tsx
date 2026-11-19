@@ -314,6 +314,7 @@ export function StoreProvider({
   const [sellMode, setSellMode] = useState<SellMode>("seller");
   const [palplusKey, setPalplusKey] = useState("");
   const [workspaceReady, setWorkspaceReady] = useState(demo || !businessId || !supabase);
+  const [workspaceError, setWorkspaceError] = useState("");
   const hydrated = useRef(demo || !businessId || !supabase);
 
   useEffect(() => {
@@ -360,6 +361,8 @@ export function StoreProvider({
     setCatalogSource("Manual entry");
     setSellMode("seller");
     const load = async () => {
+      try {
+      setWorkspaceError("");
       const session = await supabase.auth.getSession();
       const token = session.data.session?.access_token || "";
       if (!token) { setWorkspaceReady(true); return; }
@@ -369,7 +372,9 @@ export function StoreProvider({
       const cloudResult = await cloudResponse.json().catch(() => ({}));
       if (cancelled) return;
       if (!cloudResponse.ok) {
-        console.error("Unable to load Cloudflare business workspace", cloudResult.error);
+        const reason = String(cloudResult.error || "Cloudflare returned HTTP " + cloudResponse.status);
+        console.error("Unable to load Cloudflare business workspace", reason);
+        setWorkspaceError("Your saved business data could not be loaded. Your existing records have been protected from being overwritten. " + reason);
         setWorkspaceReady(true);
         return;
       }
@@ -459,6 +464,14 @@ export function StoreProvider({
       });
       hydrated.current = true;
       setWorkspaceReady(true);
+      } catch (cause) {
+        if (cancelled) return;
+        hydrated.current = false;
+        const reason = cause instanceof Error ? cause.message : "A network or authentication error occurred.";
+        console.error("TWIGA workspace hydration failed; automatic saving is paused to protect existing data.", cause);
+        setWorkspaceError("Your saved business data could not be loaded. Your existing records have been protected from being overwritten. " + reason);
+        setWorkspaceReady(true);
+      }
     };
     void load();
     return () => { cancelled = true; void supabase.removeChannel(callChannel); };
