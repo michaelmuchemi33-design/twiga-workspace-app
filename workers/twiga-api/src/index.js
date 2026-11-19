@@ -1,6 +1,6 @@
 
 const QUOTA = 524288000;
-const cors = {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization', 'Access-Control-Max-Age': '86400'};
+const cors = {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info', 'Access-Control-Max-Age': '86400'};
 const json = (o, s) => new Response(JSON.stringify(o), {status: s || 200, headers: Object.assign({'Content-Type': 'application/json'}, cors)});
 const cache = new Map();
 const today = () => new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
@@ -26,8 +26,11 @@ async function ensureUsageSchema(env) {
 export default {
   async fetch(req, env) {
     if (req.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
-    if (req.method === 'POST' && new URL(req.url).pathname === '/vapi') return vapiHook(req, env);
-    if (req.method === 'GET') return json({ok: true, app: 'twiga-api', features: ['vapi-tools', 'order-create', 'appointment-booking', 'google-calendar-sync', 'call-report-logging']});
+    const path = new URL(req.url).pathname;
+    if (req.method === 'POST' && path === '/ai/chat') return aiChat(req, env);
+    if (req.method === 'GET' && path === '/ai/status') return json({ok: true, configured: Boolean(env.OPENROUTER_API_KEY), model: txt(env.OPENROUTER_MODEL || 'openrouter/free', 100)});
+    if (req.method === 'POST' && path === '/vapi') return vapiHook(req, env);
+    if (req.method === 'GET') return json({ok: true, app: 'twiga-api', features: ['ai-command-centre-chat', 'vapi-tools', 'order-create', 'appointment-booking', 'google-calendar-sync', 'call-report-logging']});
     try {
       const b = await req.json();
       const ctx = await authorize(env, b.token, b.business_id);
@@ -40,6 +43,81 @@ export default {
     }
   }
 };
+
+
+async function aiChat(req, env) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const ctx = await authorize(env, body.token, body.business_id);
+    if (!env.OPENROUTER_API_KEY) {
+      return json({ok: false, error: 'The Cloudflare AI service is not configured yet. Add the OPENROUTER_API_KEY Worker secret; no customer API key is needed.'}, 503);
+    }
+    const incoming = Array.isArray(body.messages) ? body.messages.slice(-12) : [];
+    const messages = incoming.map((m) => ({
+      role: m && m.role === 'assistant' ? 'assistant' : 'user',
+      content: txt(m && (m.content || m.text), 2400)
+    })).filter((m) => m.content);
+    if (!messages.length) return json({ok: false, error: 'Write a message for TWIGA first.'}, 400);
+
+    const [itemsResult, summaryResult, ordersResult] = await Promise.all([
+      ACTIONS.listItems(env, ctx, {}),
+      ACTIONS.summary(env, ctx, {}),
+      ACTIONS.listOrders(env, ctx, {limit: 8})
+    ]);
+    const context = {
+      business: {id: ctx.biz.id, name: ctx.biz.name, type: ctx.biz.business_type, role: ctx.role},
+      snapshot: summaryResult,
+      products_and_services: (itemsResult.items || []).slice(0, 100),
+      recent_orders: (ordersResult.orders || []).slice(0, 8)
+    };
+    const system = [
+      'You are TWIGA, the AI command-centre assistant for the currently authenticated business workspace.',
+      'Be practical, concise and comfortable with Kenyan business language. Reply in English or Kiswahili to match the user.',
+      'The business context below is trusted data for this one business only. Never infer or reveal data from another business.',
+      'You may explain records, analyse sales, compare this business catalogue, draft messages, prepare workflows and recommend next steps.',
+      'You do not have live supplier inventory, a phone-number marketplace, a payment execution tool, or a verified recurring-payment mandate in this Worker yet.',
+      'Never claim that you searched live suppliers, bought a phone number, activated a service, charged a customer, sent an M-Pesa STK prompt, issued a refund, topped up a wallet, or changed a subscription.',
+      'For any purchase, phone-number order, paid add-on, wallet spend, customer charge, subscription or refund, explain what details and verified provider connection are missing. Show a proposal only as a draft; do not say it is approved or executed.',
+      'Never invent provider prices, taxes, availability, phone numbers, customer details, payment status, stock, or transaction references. If a price or availability is not present in trusted context, say it must be checked.',
+      'A 30-day subscription is not automatically recurring. Treat each M-Pesa STK Push as a one-time customer-authorised payment unless a verified recurring mandate is available.',
+      'Approval must be explicit, tied to the exact provider, recipient, amount, currency, billing interval, terms and expiry. A chat prompt is never approval. Approval alone does not prove execution or payment.',
+      'Do not ask for API keys, passwords, PINs, OTPs or Base64 credentials. Secrets belong only in secure server-side Worker settings.',
+      'If asked to perform an operation you cannot execute, state the limitation clearly and provide the next safe step.',
+      'Current business data (JSON): ' + JSON.stringify(context)
+    ].join('\n\n');
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + env.OPENROUTER_API_KEY,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://app.twiga.co.ke',
+        'X-OpenRouter-Title': 'TWIGA Cloudflare AI Command Centre'
+      },
+      body: JSON.stringify({
+        model: txt(env.OPENROUTER_MODEL || 'openrouter/free', 100),
+        messages: [{role: 'system', content: system}, ...messages],
+        temperature: 0.25,
+        max_tokens: 1400,
+        stream: false
+      })
+    });
+    const raw = await response.text();
+    let payload = {};
+    try { payload = raw ? JSON.parse(raw) : {}; } catch {}
+    if (!response.ok) {
+      console.error('TWIGA Cloudflare AI provider error', response.status, txt(payload.error && payload.error.message, 300));
+      return json({ok: false, error: 'TWIGA AI is temporarily unavailable. Your business data has not been changed. Please retry shortly.'}, 502);
+    }
+    const reply = txt(payload.choices && payload.choices[0] && payload.choices[0].message && payload.choices[0].message.content, 7000);
+    if (!reply) return json({ok: false, error: 'The AI provider returned an empty response. Please retry.'}, 502);
+    return json({ok: true, reply, model: txt(payload.model || env.OPENROUTER_MODEL || 'openrouter/free', 100), source: 'cloudflare-worker'});
+  } catch (error) {
+    const message = String(error && error.message || error);
+    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : message.startsWith('INACTIVE|') ? 403 : 500;
+    return json({ok: false, error: message.startsWith('INACTIVE|') ? message.slice(9) : (status === 401 ? 'Sign in again to use TWIGA AI.' : status === 403 ? 'You do not have access to this business workspace.' : 'TWIGA could not complete that AI request.')}, status);
+  }
+}
 
 async function authorize(env, token, biz) {
   if (!token || !/^[0-9a-f-]{36}$/i.test(String(biz || ''))) throw new Error('LOGIN_REQUIRED');
