@@ -56,6 +56,7 @@ export default function PlatformAdminConsole() {
   const clients: Row[] = overview.clients || [];
   const tickets: Row[] = overview.tickets || [];
   const payments: Row[] = overview.payments || [];
+  const subscriptionIntents: Row[] = overview.subscriptionIntents || [];
   const phoneLines: Row[] = overview.phoneLines || [];
   const recentCalls: Row[] = overview.recentCalls || [];
   const providerConnections: Row[] = overview.providerConnections || [];
@@ -155,6 +156,21 @@ export default function PlatformAdminConsole() {
     finally { setBusy(false); }
   };
 
+  const verifySubscriptionIntent = async (businessId: string, intentId: string) => {
+    setBusy(true); setError(""); setNotice("");
+    try {
+      if (!supabase) throw new Error("TWIGA is not connected to Supabase.");
+      const { data, error: invokeError } = await supabase.functions.invoke("twiga-subscription-billing", {
+        body: { action: "admin_refresh", businessId, intentId }
+      });
+      if (invokeError) throw new Error(invokeError.message);
+      if (data?.error) throw new Error(String(data.error));
+      setNotice(String(data?.message || (data?.paid ? "Subscription payment verified." : "Payment is not confirmed yet.")));
+      setOverview(await callAdmin("overview"));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not verify the subscription payment."); }
+    finally { setBusy(false); }
+  };
+
   if (loading) return <section className="rounded-2xl border border-neutral-200 bg-white p-5 text-sm text-neutral-500">Checking platform administrator access…</section>;
   if (!allowed) return null;
 
@@ -236,6 +252,11 @@ export default function PlatformAdminConsole() {
     <div className="grid gap-5 xl:grid-cols-2">
       <div className="rounded-xl border border-neutral-200 p-4"><h3 className="font-semibold text-neutral-950">Phone and provider health</h3><div className="mt-3 max-h-64 overflow-auto"><table className="w-full text-left text-xs"><thead><tr className="text-neutral-500"><th className="p-2">Business / line</th><th className="p-2">Inbound</th><th className="p-2">Outbound</th><th className="p-2">Provider</th></tr></thead><tbody>{phoneLines.map((line) => <tr key={line.id} className="border-t border-neutral-100"><td className="p-2"><p className="font-semibold text-neutral-800">{clients.find((client) => client.id === line.business_id)?.name || "Business"}</p><p className="text-neutral-500">{line.line_number}</p></td><td className="p-2">{line.inbound_status || (line.inbound_enabled ? "Enabled" : "Off")}</td><td className="p-2">{line.outbound_status || (line.outbound_enabled ? "Enabled" : "Off")}</td><td className="p-2">{line.provider || "—"}</td></tr>)}</tbody></table>{!phoneLines.length && <p className="p-2 text-sm text-neutral-500">No phone lines registered.</p>}</div></div>
       <div className="rounded-xl border border-neutral-200 p-4"><h3 className="font-semibold text-neutral-950">Recent calls & technical activity</h3><div className="mt-3 max-h-64 space-y-2 overflow-auto">{recentCalls.slice(0,25).map((call) => <div key={call.id} className="flex items-center justify-between gap-3 border-b border-neutral-100 pb-2"><div className="min-w-0"><p className="text-xs font-semibold text-neutral-800">{clients.find((client) => client.id === call.business_id)?.name || "Business"} · {call.direction || "call"}</p><p className="text-[11px] text-neutral-500">{call.provider} · {date(call.created_at)}</p></div><span className="rounded-full bg-neutral-100 px-2 py-1 text-[10px] font-semibold">{call.status || "unknown"}</span></div>)}{!recentCalls.length && <p className="text-sm text-neutral-500">No calls logged yet.</p>}</div><h4 className="mt-4 text-xs font-bold uppercase tracking-wide text-neutral-600">Latest admin audit events</h4><div className="mt-2 max-h-32 space-y-2 overflow-auto">{auditLogs.slice(0,15).map((log) => <p key={log.id} className="border-b border-neutral-100 pb-1 text-[11px] text-neutral-600"><strong>{log.action}</strong> · {log.resource_type} · {date(log.created_at)}</p>)}</div></div>
+    </div>
+
+    <div className="rounded-xl border border-neutral-200 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold text-neutral-950">Subscription payment requests</h3><span className="text-xs text-neutral-500">{subscriptionIntents.length} recent</span></div>
+      <div className="mt-3 overflow-auto"><table className="w-full min-w-[760px] text-left text-xs"><thead className="bg-neutral-100 text-neutral-600"><tr><th className="p-2">Client</th><th className="p-2">Plan</th><th className="p-2">Amount</th><th className="p-2">Phone</th><th className="p-2">Status</th><th className="p-2">Transaction</th><th className="p-2">Action</th></tr></thead><tbody>{subscriptionIntents.slice(0,50).map((intent) => <tr key={intent.id} className="border-t border-neutral-100"><td className="p-2">{intent.businesses?.name || clients.find((client) => client.id === intent.business_id)?.name || "Business"}</td><td className="p-2">{intent.plan_code}</td><td className="p-2 font-semibold">{money(intent.amount)}</td><td className="p-2">{intent.phone}</td><td className="p-2"><span className="rounded-full bg-neutral-100 px-2 py-1">{intent.status}</span></td><td className="p-2">{intent.provider_transaction_id || "Awaiting provider"}</td><td className="p-2">{intent.status !== "paid" && <button onClick={() => void verifySubscriptionIntent(intent.business_id, intent.id)} disabled={busy} className="rounded-lg border border-neutral-200 px-2.5 py-1.5 font-semibold">Verify</button>}</td></tr>)}</tbody></table>{!subscriptionIntents.length && <p className="p-2 text-sm text-neutral-500">No subscription payment requests yet.</p>}</div>
     </div>
 
     <div className="rounded-xl border border-neutral-200 p-4"><h3 className="font-semibold text-neutral-950">Recent payment ledger</h3><div className="mt-3 overflow-auto"><table className="w-full min-w-[600px] text-left text-xs"><thead className="bg-neutral-100 text-neutral-600"><tr><th className="p-2">Client</th><th className="p-2">Amount</th><th className="p-2">Method</th><th className="p-2">Reference</th><th className="p-2">Paid at</th></tr></thead><tbody>{payments.slice(0,30).map((payment) => <tr key={payment.id} className="border-t border-neutral-100"><td className="p-2">{payment.businesses?.name || clients.find((client) => client.id === payment.business_id)?.name || "Business"}</td><td className="p-2 font-semibold">{money(payment.amount)}</td><td className="p-2">{payment.method}</td><td className="p-2">{payment.provider_reference || "—"}</td><td className="p-2">{date(payment.paid_at)}</td></tr>)}</tbody></table>{!payments.length && <p className="p-2 text-sm text-neutral-500">No platform payments recorded.</p>}</div></div>
