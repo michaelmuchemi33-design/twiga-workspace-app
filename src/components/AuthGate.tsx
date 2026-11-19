@@ -61,12 +61,22 @@ export default function AuthGate({ children }: {
       setGoogleAuth(authContext(nextSession));
       setLoading(false);
     };
+    // Subscribe before reading persisted state so a fast OAuth callback or
+    // sign-out event cannot be overwritten by a late getSession() response.
+    let authEventReceived = false;
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      authEventReceived = true;
+      applySession(nextSession);
+    });
     supabase.auth.getSession().then(({ data, error: sessionError }) => {
-      if (!mounted) return;
+      if (!mounted || authEventReceived) return;
       if (sessionError) setError(sessionError.message);
       applySession(data.session);
+    }).catch((cause) => {
+      if (!mounted) return;
+      setError(cause instanceof Error ? cause.message : "Could not restore your TWIGA session.");
+      setLoading(false);
     });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => applySession(nextSession));
     return () => { mounted = false; listener.subscription.unsubscribe(); };
   }, []);
 
