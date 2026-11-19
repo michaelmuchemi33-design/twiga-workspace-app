@@ -86,6 +86,11 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
   const [aisensyProjectKey, setAisensyProjectKey] = useState("");
   const [aisensyProjectId, setAisensyProjectId] = useState("");
   const [aisensyMessage, setAisensyMessage] = useState("");
+  const [telerivetConfig, setTelerivetConfig] = useState<any>({ keyConfigured: false });
+  const [telerivetApiKey, setTelerivetApiKey] = useState("");
+  const [telerivetMessage, setTelerivetMessage] = useState("");
+  const [telerivetProjectId, setTelerivetProjectId] = useState("");
+  const [telerivetProjectStatus, setTelerivetProjectStatus] = useState<any>({ projectConfigured: false });
   const [adminBusinessPrompt, setAdminBusinessPrompt] = useState("");
   const [adminPromptBusy, setAdminPromptBusy] = useState(false);
   const [adminPromptMessage, setAdminPromptMessage] = useState("");
@@ -137,6 +142,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
         supabase.functions.invoke("twiga-platform-secrets", { body: { action: "palpluss.platform.status" } }),
         supabase.functions.invoke("twiga-platform-secrets", { body: { action: "sautikit.platform.status" } }),
         supabase.functions.invoke("twiga-platform-secrets", { body: { action: "aisensy.platform.status" } }),
+        supabase.functions.invoke("twiga-platform-secrets", { body: { action: "telerivet.platform.status" } }),
         supabase.functions.invoke("twiga-platform-admin", { body: { action: "overview" } }),
       ]);
       if (!googleResult.error && googleResult.data?.isAdmin) {
@@ -147,6 +153,8 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       if (!palResult.error && palResult.data?.isAdmin) setPalPlatformConfig(palResult.data);
       if (!sautiResult.error && sautiResult.data?.isAdmin) setSautikitPlatformConfig(sautiResult.data);
       if (!aisensyResult.error && aisensyResult.data?.isAdmin) setAisensyConfig(aisensyResult.data);
+      const telerivetResult = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "telerivet.platform.status" } });
+      if (!telerivetResult.error && telerivetResult.data?.isAdmin) setTelerivetConfig(telerivetResult.data);
       if (!overviewResult.error && Array.isArray(overviewResult.data?.clients)) {
         setPlatformClients(overviewResult.data.clients);
         setProvisionBusinessId((current: string) => current || overviewResult.data.clients[0]?.id || "");
@@ -237,6 +245,35 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       if (!statusError && status?.isAdmin) setAisensyConfig(status);
       setAisensyMessage(data.message || "AiSensy credentials saved. They have not been tested by sending a message.");
     } catch (e) { setAisensyMessage(e instanceof Error ? e.message : "Could not save AiSensy credentials."); }
+    finally { setBusy(false); }
+  };
+
+  const saveTelerivetPlatformKey = async () => {
+    if (!supabase || telerivetApiKey.trim().length < 20) return;
+    setBusy(true); setTelerivetMessage("Validating Telerivet API access…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "telerivet.platform.save", apiKey: telerivetApiKey.trim() } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setTelerivetApiKey("");
+      setTelerivetConfig((current: any) => ({ ...current, ...data, keyConfigured: true }));
+      setTelerivetMessage(data.message || "Telerivet API key validated and saved.");
+    } catch (e) { setTelerivetMessage(e instanceof Error ? e.message : "Could not connect Telerivet."); }
+    finally { setBusy(false); }
+  };
+
+  const assignTelerivetProject = async () => {
+    if (!supabase || !provisionBusinessId || !telerivetProjectId.trim()) return;
+    setBusy(true); setTelerivetMessage("Verifying and assigning the business SMS project…");
+    try {
+      const { data, error } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "telerivet.business.assign", businessId: provisionBusinessId, projectId: telerivetProjectId.trim() } });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(String(data.error));
+      setTelerivetProjectId("");
+      const status = await supabase.functions.invoke("twiga-platform-secrets", { body: { action: "telerivet.business.status", businessId: provisionBusinessId } });
+      if (!status.error && status.data?.isAdmin) setTelerivetProjectStatus(status.data);
+      setTelerivetMessage(data.message || "Telerivet project assigned to the selected business.");
+    } catch (e) { setTelerivetMessage(e instanceof Error ? e.message : "Could not assign the Telerivet project."); }
     finally { setBusy(false); }
   };
 
@@ -655,6 +692,14 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       {adminPromptSummary && <p className="mt-3 rounded-xl border border-orange-100 bg-orange-50 p-3 text-sm text-orange-950">{adminPromptSummary}</p>}
     </section>}
 
+    {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform administrator</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Telerivet · SMS delivery</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-500">Connect TWIGA's central Telerivet API client, then assign a separate Telerivet Project ID to each customer workspace. API credentials stay server-side in encrypted Vault; business projects are verified before assignment.</p></div><span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{telerivetConfig.keyConfigured ? "Connected · •••• " + telerivetConfig.keyLast4 : "Needs API key"}</span></div>
+      <div className="mt-4 flex flex-wrap gap-3"><input type="password" autoComplete="new-password" value={telerivetApiKey} onChange={(e) => setTelerivetApiKey(e.target.value)} placeholder={telerivetConfig.keyConfigured ? "Enter rotated Telerivet API key" : "Telerivet API key"} className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-200 px-3 text-sm" /><button onClick={() => void saveTelerivetPlatformKey()} disabled={busy || telerivetApiKey.trim().length < 20} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Validate & save Telerivet</button><a href="https://telerivet.com/api/rest" target="_blank" rel="noreferrer" className="self-center text-sm font-semibold text-orange-700 underline">Telerivet API docs ↗</a></div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2"><label className="block text-xs font-semibold uppercase tracking-wide text-neutral-600">Customer workspace<select value={provisionBusinessId} onChange={async (e) => { const id=e.target.value; setProvisionBusinessId(id); setTelerivetProjectStatus({projectConfigured:false}); if(supabase&&id){const result=await supabase.functions.invoke("twiga-platform-secrets",{body:{action:"telerivet.business.status",businessId:id}});if(!result.error&&result.data?.isAdmin)setTelerivetProjectStatus(result.data);} }} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-normal normal-case">{platformClients.map((client:any)=><option key={client.id} value={client.id}>{client.name} · {client.ownerEmail||"No owner email"}</option>)}</select></label>
+      <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-600">Telerivet Project ID for this business<input value={telerivetProjectId} onChange={(e)=>setTelerivetProjectId(e.target.value)} placeholder={telerivetProjectStatus.projectConfigured?"Enter replacement project ID":"Customer's Telerivet Project ID"} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm font-normal normal-case"/><span className="mt-1 block text-[11px] font-normal text-neutral-400">{telerivetProjectStatus.projectConfigured?"Assigned project saved · •••• "+(telerivetProjectStatus.projectLast4||"saved"):"Create/choose a separate project in Telerivet for this business."}</span></label></div>
+      <div className="mt-3 flex flex-wrap items-center gap-3"><button onClick={()=>void assignTelerivetProject()} disabled={busy||!telerivetConfig.keyConfigured||!provisionBusinessId||telerivetProjectId.trim().length<4} className="rounded-xl bg-orange-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Verify & assign SMS project</button><span className="text-xs text-neutral-500">Each business gets its own Telerivet project ID.</span></div>
+      {telerivetMessage&&<p role="status" className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{telerivetMessage}</p>}
+    </section>}
     {xaiConfig.isAdmin && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Platform provisioning</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Business accounts & number allocation</h2><p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-500">Review customer workspaces and allocate active numbers from the shared SautiKit pool. Every number can belong to only one business. Assigning a number does not publish an agent or enable calls automatically.</p></div>
