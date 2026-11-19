@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import Dashboard from "@/components/Dashboard";
 import PointOfSale from "@/components/PointOfSale";
 import Payments from "@/components/Payments";
+import SubscriptionBilling from "@/components/SubscriptionBilling";
 import Customers from "@/components/Customers";
 import WhatsAppOutbox from "@/components/WhatsAppOutbox";
 import Organizer from "@/components/Organizer";
@@ -53,7 +54,8 @@ const footerTabs = [
 ];
 
 const moreTabs = [
-  { id: "payments", label: "Payments", icon: IconCard },
+  { id: "billing", label: "Plan & billing", icon: IconCard },
+  { id: "payments", label: "Customer payments", icon: IconCard },
   { id: "outreach", label: "Outreach", icon: IconPhone },
   { id: "connections", label: "Connections", icon: IconUsers },
   { id: "organizer", label: "Organize", icon: IconSwap },
@@ -89,7 +91,6 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
   const [googleSetupMessage, setGoogleSetupMessage] = useState("");
   const [autoProvisioning, setAutoProvisioning] = useState(false);
   const autoProvisioned = useRef<string | null>(null);
-  const googleConnectAttempted = useRef<string | null>(null);
   const [isCompactPwaLayout, setIsCompactPwaLayout] = useState(() => window.matchMedia("(max-width: 767px)").matches);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
@@ -156,46 +157,8 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
     void createFirstWorkspace();
   }, [demo, userId, businessesLoaded, businesses.length, businessesError, googleAuth]);
 
-  useEffect(() => {
-    if (demo || !userId || !googleAuth?.isGoogleUser || !googleAuth.tokens?.accessToken || !businessId || !supabase) return;
-    if (googleConnectAttempted.current === businessId) return;
-    googleConnectAttempted.current = businessId;
-    const connect = async () => {
-      try {
-        const { data: status, error: statusError } = await supabase.functions.invoke("google-workspace", {
-          body: { action: "status", businessId },
-        });
-        if (statusError) throw statusError;
-        const scopes = Array.isArray(status?.scopes) ? status.scopes as string[] : [];
-        const hasCalendar = scopes.some((scope) => scope.includes("calendar.events.owned") || scope.includes("calendar.events"));
-        const hasContacts = scopes.some((scope) => scope.includes("contacts.readonly") || scope.endsWith("/auth/contacts"));
-        const hasSheets = scopes.includes("https://www.googleapis.com/auth/spreadsheets");
-        const hasDrive = scopes.includes("https://www.googleapis.com/auth/drive.file");
-        if (status?.connected && hasCalendar && hasContacts && hasSheets && hasDrive) {
-          setGoogleSetupMessage("");
-          return;
-        }
-        const { data, error } = await supabase.functions.invoke("google-workspace", {
-          body: {
-            action: "connect",
-            businessId,
-            accessToken: googleAuth.tokens.accessToken,
-            refreshToken: googleAuth.tokens.refreshToken,
-            googleEmail: googleAuth.profile.email,
-          },
-        });
-        if (error) throw error;
-        if (!data?.connected) throw new Error(data?.message || "Google did not grant all requested Google Workspace permissions.");
-        setGoogleSetupMessage(data.refreshReady
-          ? ""
-          : "Calendar and Contacts are connected. Reconnect Google from Connections if its access expires.");
-      } catch (e) {
-        setGoogleSetupMessage("Your dashboard is ready. Google connection needs attention: " + (e instanceof Error ? e.message : "Reconnect Google from Connections."));
-      }
-    };
-    void connect();
-  }, [demo, userId, googleAuth, businessId]);
-
+  // Google sign-in is identity-only. Optional Calendar, Contacts, Sheets and
+  // Drive permissions are granted explicitly from the Connections screen.
   useEffect(() => {
     if (!supabase) return;
     void supabase.auth.getSession().then(({ data }) => {
@@ -246,7 +209,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
               {demo && <span className="rounded-full bg-orange-50 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-700">Demo</span>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {!isCompactPwaLayout && <select aria-label="Navigate workspace" value={tab} onChange={(e) => go(e.target.value)} className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 outline-none focus:border-orange-400 lg:hidden"><option value="setup">AI Desk</option><option value="phone">Calls</option><option value="dashboard">Home</option><option value="pos">POS</option><option value="payments">Payments</option><option value="outreach">Outreach</option><option value="connections">Connections</option><option value="organizer">Organize</option><option value="functions">Functions</option><option value="customers">People</option><option value="whatsapp">Inbox</option><option value="analytics">Stats</option><option value="products">Products</option><option value="reports">Reports</option><option value="alerts">Alerts</option><option value="profile">Profile</option><option value="settings">Settings</option></select>}
+              {!isCompactPwaLayout && <select aria-label="Navigate workspace" value={tab} onChange={(e) => go(e.target.value)} className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 outline-none focus:border-orange-400 lg:hidden"><option value="setup">AI Desk</option><option value="billing">Plan & billing</option><option value="phone">Calls</option><option value="dashboard">Home</option><option value="pos">POS</option><option value="payments">Payments</option><option value="outreach">Outreach</option><option value="connections">Connections</option><option value="organizer">Organize</option><option value="functions">Functions</option><option value="customers">People</option><option value="whatsapp">Inbox</option><option value="analytics">Stats</option><option value="products">Products</option><option value="reports">Reports</option><option value="alerts">Alerts</option><option value="profile">Profile</option><option value="settings">Settings</option></select>}
               {!demo && googleAuth?.profile && <div className="mr-1 flex items-center gap-2 rounded-xl bg-neutral-50 py-1.5 pl-1.5 pr-2.5">
                 {googleAuth.profile.avatarUrl ? <img src={googleAuth.profile.avatarUrl} alt="" referrerPolicy="no-referrer" className="h-8 w-8 rounded-full border border-neutral-200 object-cover" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-orange-100 text-xs font-bold text-orange-800">{(googleAuth.profile.fullName || googleAuth.profile.email || "T").slice(0,1).toUpperCase()}</span>}
                 <span className="hidden max-w-[180px] sm:block"><span className="block truncate text-xs font-semibold text-neutral-800">{googleAuth.profile.fullName || "Your account"}</span><span className="block truncate text-[10px] text-neutral-500">{googleAuth.profile.email}</span></span>
@@ -261,7 +224,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
                 <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-lg bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300">{theme === "light" ? <IconMoon className="h-4 w-4" /> : <IconSun className="h-4 w-4" />}</span>
                 <span>{theme === "light" ? "Dark mode" : "Light mode"}</span>
               </button>
-              <InstallApp />{demo && <DemoInterest />}{!demo && onSignOut && <button onClick={onSignOut} className="h-10 rounded-xl border border-neutral-200 px-4 text-sm font-semibold text-neutral-600 hover:bg-neutral-50">Sign out</button>}
+              {!demo && <button type="button" onClick={() => go("billing")} className="h-10 rounded-xl border border-orange-200 bg-orange-50 px-3 text-sm font-semibold text-orange-800 hover:bg-orange-100">Plan &amp; billing</button>}<InstallApp />{demo && <DemoInterest />}{!demo && onSignOut && <button onClick={onSignOut} className="h-10 rounded-xl border border-neutral-200 px-4 text-sm font-semibold text-neutral-600 hover:bg-neutral-50">Sign out</button>}
             </div>
           </div>
           {googleSetupMessage && !demo && <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-950"><span>{autoProvisioning && <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-orange-500" />}{googleSetupMessage}</span>{googleSetupMessage.includes("Google connection needs attention") && <button onClick={() => go("connections")} className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-bold">Open Google connections</button>}{googleSetupMessage.includes("could not be created") && <button onClick={() => { autoProvisioned.current = null; void refreshBusinesses(); }} className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-bold">Retry</button>}</div>}
@@ -274,6 +237,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           {tab === "organizer" && <Organizer />}
           {tab === "functions" && <Functions />}
           {tab === "pos" && <PointOfSale onManageProducts={() => go("products")} />}
+          {tab === "billing" && <SubscriptionBilling businessId={businessId} demo={demo} />}
           {tab === "payments" && <Payments />}
           {tab === "customers" && <Customers />}
           {tab === "whatsapp" && <WhatsAppOutbox />}
