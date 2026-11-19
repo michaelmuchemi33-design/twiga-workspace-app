@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import ApprovalInbox from "@/components/ApprovalInbox";
-import { IconSparkle, IconPaperclip, IconSend, IconFile, IconCheck } from "@/components/Icons";
+import { IconSparkle, IconPaperclip, IconSend, IconFile } from "@/components/Icons";
 
 type Message = { id: string; role: "ai" | "user"; text: string };
 type Profile = Record<string, any>;
