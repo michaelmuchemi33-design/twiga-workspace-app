@@ -326,3 +326,18 @@ export function IconShield(props: IconProps) {
     </svg>
   );
 }
+export function IconMoon(props: IconProps) {
+  return <svg {...base} {...props}><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 8.5 8.5 0 1 0 20.5 14.5Z" /></svg>;
+}
+
+export function IconSun(props: IconProps) {
+  return <svg {...base} {...props}><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></svg>;
+}
+
+export function IconDownload(props: IconProps) {
+  return <svg {...base} {...props}><path d="M12 3v12m-5-5 5 5 5-5" /><path d="M5 17v3h14v-3" /></svg>;
+}
+
+export function IconPaperclip(props: IconProps) {
+  return <svg {...base} {...props}><path d="m21.4 11.1-8.5 8.5a5 5 0 0 1-7.1-7.1l9.2-9.2a3.5 3.5 0 0 1 5 5l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" /></svg>;
+}
