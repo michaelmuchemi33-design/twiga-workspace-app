@@ -204,8 +204,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
     const text = (value ?? input).trim();
     const attachments = [...selectedFiles];
     if ((!text && !attachments.length && !pendingFileContext.length) || thinking) return;
-    if (demo) { setError("Sign in to configure a real business workspace. Sample business data is disabled."); return; }
-    if (!supabase || !ownerName.trim() || !ownerEmail.trim()) { setError("Your Google account profile is still loading. Please try again in a moment."); return; }
+    if (!demo && (!supabase || !ownerName.trim() || !ownerEmail.trim())) { setError("Your account profile is still loading. Please try again in a moment."); return; }
     if (attachments.length && !businessId) { setError("Save your business workspace first, then upload its documents."); return; }
     if (attachments.length + pendingFileContext.length > 8) { setError("Upload up to 8 files in one setup request."); return; }
     setThinking(true);
@@ -215,7 +214,30 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
     setFileMessage("");
     let uploadedFiles = [...pendingFileContext];
     try {
-      if (attachments.length) {
+      if (demo && attachments.length) {
+        let remainingDemoText = 10000;
+        for (const file of attachments) {
+          if (!file.size || file.size > 25 * 1024 * 1024) throw new Error(file.name + " must be between 1 byte and 25 MB.");
+          const extension = file.name.split(".").pop()?.toLowerCase() || "";
+          let content = "";
+          let note = "This file is available only for this demo conversation; it is not saved to a customer workspace.";
+          if (extension === "pdf" && remainingDemoText > 0) {
+            try {
+              const extracted = await extractPdfText(file, Math.min(6000, remainingDemoText));
+              content = extracted.text;
+              remainingDemoText -= content.length;
+              note = content ? "Selectable PDF text extracted for this demo conversation." : "No selectable text found; this may be a scanned PDF and OCR is not available in this demo.";
+            } catch (e) { note = "PDF could not be read in this browser: " + (e instanceof Error ? e.message : "unsupported PDF"); }
+          } else if (["txt", "csv", "md", "json"].includes(extension) && remainingDemoText > 0) {
+            content = (await file.text()).slice(0, Math.min(4000, remainingDemoText));
+            remainingDemoText -= content.length;
+          }
+          uploadedFiles.push({ name: file.name, contentType: file.type || (extension === "pdf" ? "application/pdf" : "text/plain"), content, note });
+        }
+        setSelectedFiles([]);
+        setPendingFileContext([...uploadedFiles]);
+        setFileMessage("Demo files were read locally for this conversation only. Sign in to save files to a private business workspace.");
+      } else if (attachments.length) {
         const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
         const token = sessionData.session?.access_token;
         if (sessionError || !token) throw new Error("Sign in again before uploading business files.");
@@ -274,7 +296,16 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       setInput("");
       let data: any;
       const conversation = next.map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text }));
-      if (businessId) {
+      if (demo) {
+        const response = await fetch(TWIGA_API_URL.replace(/\\/$/, "") + "/ai/demo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: conversation, uploadedFiles }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result?.ok !== true) throw new Error(String(result?.error || "The live TWIGA demo assistant is temporarily unavailable."));
+        data = { reply: result.reply, model: result.model, source: result.source };
+      } else if (businessId) {
         const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
         const token = sessionData.session?.access_token;
         if (sessionError || !token) throw new Error("Sign in again to use the Cloudflare AI command centre.");
@@ -306,12 +337,12 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
         data = setupData;
       }
       setMessages((m) => [...m, { id: String(Date.now() + 1), role: "ai", text: String(data.reply || "Tell me a little more about the business.") }]);
-      setProfile((old) => ({ ...old, ...(data.businessProfile || {}), setup_details: { ...(old.setup_details || {}), ...(data.businessProfile?.setup_details || {}) } }));
+      if (!demo) setProfile((old) => ({ ...old, ...(data.businessProfile || {}), setup_details: { ...(old.setup_details || {}), ...(data.businessProfile?.setup_details || {}) } }));
       setMissing(Array.isArray(data.missingFields) ? data.missingFields : []);
-      setReady(data.readyToBuild === true);
+      if (!demo) setReady(data.readyToBuild === true);
       if (uploadedFiles.length) {
         const readableCount = uploadedFiles.filter((file) => file.content).length;
-        setNotice(uploadedFiles.length + " file(s) saved. The AI read " + readableCount + " file(s), including selectable PDF text where available. Scanned PDFs and unsupported formats are stored privately but still need OCR or a compatible reader.");
+        setNotice(demo ? "The live demo AI read " + readableCount + " uploaded file(s) for this conversation. Demo uploads are not retained." : uploadedFiles.length + " file(s) saved. The AI read " + readableCount + " file(s), including selectable PDF text where available. Scanned PDFs and unsupported formats are stored privately but still need OCR or a compatible reader.");
       } else if (data.modelUsed || data.model) setNotice("AI response received · " + String(data.modelUsed || data.model));
       setPendingFileContext([]);
     } catch (e) {
