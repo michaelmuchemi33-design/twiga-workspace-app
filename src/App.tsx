@@ -91,7 +91,6 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
   const [googleSetupMessage, setGoogleSetupMessage] = useState("");
   const [autoProvisioning, setAutoProvisioning] = useState(false);
   const autoProvisioned = useRef<string | null>(null);
-  const googleConnectAttempted = useRef<string | null>(null);
   const [isCompactPwaLayout, setIsCompactPwaLayout] = useState(() => window.matchMedia("(max-width: 767px)").matches);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
@@ -158,46 +157,8 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
     void createFirstWorkspace();
   }, [demo, userId, businessesLoaded, businesses.length, businessesError, googleAuth]);
 
-  useEffect(() => {
-    if (demo || !userId || !googleAuth?.isGoogleUser || !googleAuth.tokens?.accessToken || !businessId || !supabase) return;
-    if (googleConnectAttempted.current === businessId) return;
-    googleConnectAttempted.current = businessId;
-    const connect = async () => {
-      try {
-        const { data: status, error: statusError } = await supabase.functions.invoke("google-workspace", {
-          body: { action: "status", businessId },
-        });
-        if (statusError) throw statusError;
-        const scopes = Array.isArray(status?.scopes) ? status.scopes as string[] : [];
-        const hasCalendar = scopes.some((scope) => scope.includes("calendar.events.owned") || scope.includes("calendar.events"));
-        const hasContacts = scopes.some((scope) => scope.includes("contacts.readonly") || scope.endsWith("/auth/contacts"));
-        const hasSheets = scopes.includes("https://www.googleapis.com/auth/spreadsheets");
-        const hasDrive = scopes.includes("https://www.googleapis.com/auth/drive.file");
-        if (status?.connected && hasCalendar && hasContacts && hasSheets && hasDrive) {
-          setGoogleSetupMessage("");
-          return;
-        }
-        const { data, error } = await supabase.functions.invoke("google-workspace", {
-          body: {
-            action: "connect",
-            businessId,
-            accessToken: googleAuth.tokens.accessToken,
-            refreshToken: googleAuth.tokens.refreshToken,
-            googleEmail: googleAuth.profile.email,
-          },
-        });
-        if (error) throw error;
-        if (!data?.connected) throw new Error(data?.message || "Google did not grant all requested Google Workspace permissions.");
-        setGoogleSetupMessage(data.refreshReady
-          ? ""
-          : "Calendar and Contacts are connected. Reconnect Google from Connections if its access expires.");
-      } catch (e) {
-        setGoogleSetupMessage("Your dashboard is ready. Google connection needs attention: " + (e instanceof Error ? e.message : "Reconnect Google from Connections."));
-      }
-    };
-    void connect();
-  }, [demo, userId, googleAuth, businessId]);
-
+  // Google sign-in is identity-only. Optional Calendar, Contacts, Sheets and
+  // Drive permissions are granted explicitly from the Connections screen.
   useEffect(() => {
     if (!supabase) return;
     void supabase.auth.getSession().then(({ data }) => {
