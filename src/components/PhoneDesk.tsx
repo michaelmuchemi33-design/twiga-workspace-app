@@ -91,7 +91,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
       setOutboundPrompt(next.scripts?.outbound || "");
       const savedForwarding = settings.forwarding_config || {};
       setForwardingMode(savedForwarding.mode === "always" ? "always" : "after_hours");
-      setForwardingNumbers((Array.isArray(savedForwarding.destinations) ? savedForwarding.destinations : savedForwarding.to ? [savedForwarding.to] : []).join("\\n"));
+      setForwardingNumbers((Array.isArray(savedForwarding.destinations) ? savedForwarding.destinations : savedForwarding.to ? [savedForwarding.to] : []).join("\n"));
       setForwardingRingTimeout(Number(savedForwarding.ringTimeout || 20));
       const [scheduled, calls] = await Promise.all([
         supabase.from("twiga_scheduled_calls").select("id,customer_name,phone_number,reason,scheduled_at,trigger_type,status,last_error").eq("business_id", businessId).order("scheduled_at", { ascending: true }).limit(50),
@@ -253,7 +253,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
 
   const saveForwarding = async () => {
     if (!supabase || !businessId) return;
-    const destinations = forwardingNumbers.split(/[\\n,;]+/).map((value) => toE164(value.trim())).filter(Boolean);
+    const destinations = forwardingNumbers.split(/[\n,;]+/).map((value) => toE164(value.trim())).filter(Boolean);
     if (!destinations.length) { setError("Add at least one staff forwarding number in international format, e.g. +2547XXXXXXXX."); return; }
     if (destinations.length > 5) { setError("Add up to five staff numbers. Remove any extra destinations."); return; }
     if (new Set(destinations).size !== destinations.length) { setError("Remove duplicate forwarding numbers."); return; }
@@ -427,7 +427,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold text-neutral-950">Staff handover & call forwarding</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-600">List the people who should receive calls when the business needs a human. Numbers are tried in order; the first person to answer gets the call.</p></div><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">{settings.forwarding_config?.providerConfirmed ? "Provider confirmed" : "Not configured"}</span></div>
-      <label className="mt-4 block text-sm font-medium text-neutral-800">Staff phone numbers (one per line, up to five)<textarea value={forwardingNumbers} onChange={(event) => setForwardingNumbers(event.target.value)} rows={4} placeholder={"+254712345678\\n+254723456789"} className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm font-normal"/></label>
+      <label className="mt-4 block text-sm font-medium text-neutral-800">Staff phone numbers (one per line, up to five)<textarea value={forwardingNumbers} onChange={(event) => setForwardingNumbers(event.target.value)} rows={4} placeholder="+254712345678, +254723456789" className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-sm font-normal"/></label>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <label className="block text-sm font-medium text-neutral-800">When to forward<select value={forwardingMode} onChange={(event) => setForwardingMode(event.target.value as "always" | "after_hours")} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm"><option value="after_hours">Outside business hours</option><option value="always">All calls (bypasses AI)</option></select></label>
         <label className="block text-sm font-medium text-neutral-800">Ring each person for<select value={forwardingRingTimeout} onChange={(event) => setForwardingRingTimeout(Number(event.target.value))} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm"><option value={10}>10 seconds</option><option value={15}>15 seconds</option><option value={20}>20 seconds</option><option value={30}>30 seconds</option><option value={45}>45 seconds</option><option value={60}>60 seconds</option></select></label>
