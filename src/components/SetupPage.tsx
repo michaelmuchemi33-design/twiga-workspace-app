@@ -297,7 +297,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       let data: any;
       const conversation = next.map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text }));
       if (demo) {
-        const response = await fetch(TWIGA_API_URL.replace(/\\/$/, "") + "/ai/demo", {
+        const response = await fetch(TWIGA_API_URL.replace(/\/$/, "") + "/ai/demo", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ messages: conversation, uploadedFiles }),
