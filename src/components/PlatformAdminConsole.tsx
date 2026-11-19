@@ -15,7 +15,9 @@ export default function PlatformAdminConsole() {
   const [accessStatus, setAccessStatus] = useState("TRIAL");
   const [paidThrough, setPaidThrough] = useState("");
   const [extendDays, setExtendDays] = useState("30");
-  const [paymentAmount, setPaymentAmount] = useState("1500");
+  const [paymentAmount, setPaymentAmount] = useState("1650");
+  const [subscriptionPlan, setSubscriptionPlan] = useState("starter");
+  const [subscriptionPhone, setSubscriptionPhone] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("mpesa");
   const [paymentReference, setPaymentReference] = useState("");
   const [paymentNotes, setPaymentNotes] = useState("");
@@ -135,6 +137,24 @@ export default function PlatformAdminConsole() {
     finally { setBusy(false); }
   };
 
+  const requestSubscriptionPayment = async () => {
+    if (!selectedBusinessId || !subscriptionPhone.trim()) { setError("Select a client and enter the customer's Kenyan M-Pesa phone number."); return; }
+    const price = subscriptionPlan === "starter" ? 1650 : subscriptionPlan === "professional" ? 3000 : 5000;
+    if (!window.confirm("Send an M-Pesa prompt for KSh " + price.toLocaleString("en-KE") + " to " + subscriptionPhone + " for " + (selectedClient?.name || "this business") + "? Access changes only after PalPluss verifies SUCCESS.")) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      if (!supabase) throw new Error("TWIGA is not connected to Supabase.");
+      const { data, error: invokeError } = await supabase.functions.invoke("twiga-subscription-billing", {
+        body: { action: "admin_create_stk", businessId: selectedBusinessId, planCode: subscriptionPlan, phone: subscriptionPhone.trim() }
+      });
+      if (invokeError) throw new Error(invokeError.message);
+      if (data?.error) throw new Error(String(data.error));
+      setNotice(String(data?.message || "Subscription M-Pesa request was created. Waiting for provider confirmation."));
+      setOverview(await callAdmin("overview"));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not request the subscription payment."); }
+    finally { setBusy(false); }
+  };
+
   if (loading) return <section className="rounded-2xl border border-neutral-200 bg-white p-5 text-sm text-neutral-500">Checking platform administrator access…</section>;
   if (!allowed) return null;
 
@@ -189,7 +209,14 @@ export default function PlatformAdminConsole() {
         <label className="mt-3 block text-xs font-semibold text-neutral-600">Paid through<input type="date" value={paidThrough} onChange={(event) => setPaidThrough(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label>
         <button onClick={() => void saveAccess()} disabled={busy || !selectedBusinessId} className="mt-3 w-full rounded-lg bg-neutral-950 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Save access status</button>
         <div className="mt-4 border-t border-neutral-100 pt-3"><p className="text-xs font-semibold text-neutral-700">Extend access</p><div className="mt-2 flex gap-2"><input type="number" min="1" max="1000" value={extendDays} onChange={(event) => setExtendDays(event.target.value)} className="h-10 min-w-0 flex-1 rounded-lg border border-neutral-200 px-2 text-sm"/><button onClick={() => void addDays()} disabled={busy || !selectedBusinessId} className="rounded-lg border border-neutral-200 px-3 text-xs font-semibold disabled:opacity-40">Add days</button></div></div>
-        <div className="mt-4 border-t border-neutral-100 pt-3"><p className="text-xs font-semibold text-neutral-700">Record a verified payment</p><label className="mt-2 block text-xs text-neutral-600">Amount (KES)<input type="number" min="1" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label><label className="mt-2 block text-xs text-neutral-600">Method<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-2 text-sm"><option value="mpesa">M-Pesa</option><option value="bank">Bank</option><option value="cash">Cash</option><option value="card">Card</option><option value="other">Other</option></select></label><label className="mt-2 block text-xs text-neutral-600">Verified payment reference<input value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} placeholder="M-Pesa / bank reference" className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label><label className="mt-2 block text-xs text-neutral-600">Notes<input value={paymentNotes} onChange={(event) => setPaymentNotes(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label><button onClick={() => void recordPayment()} disabled={busy || !selectedBusinessId || !paymentReference.trim()} className="mt-3 w-full rounded-lg bg-orange-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Record payment & update access</button></div>
+        <div className="mt-4 border-t border-neutral-100 pt-3">
+          <p className="text-xs font-semibold text-neutral-700">Request subscription M-Pesa payment</p>
+          <p className="mt-1 text-xs leading-5 text-neutral-500">Send the selected client an M-Pesa STK prompt from TWIGA's central PalPluss account. Access is updated only after transaction verification.</p>
+          <label className="mt-2 block text-xs text-neutral-600">Subscription plan<select value={subscriptionPlan} onChange={(event) => setSubscriptionPlan(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-2 text-sm"><option value="starter">Starter · KSh 1,650/month</option><option value="professional">Professional · KSh 3,000/month</option><option value="business_pro">Business Pro · KSh 5,000/month</option></select></label>
+          <label className="mt-2 block text-xs text-neutral-600">Customer M-Pesa number<input type="tel" value={subscriptionPhone} onChange={(event) => setSubscriptionPhone(event.target.value)} placeholder="0712 345 678" className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label>
+          <button onClick={() => void requestSubscriptionPayment()} disabled={busy || !selectedBusinessId || !subscriptionPhone.trim()} className="mt-3 w-full rounded-lg bg-orange-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Send subscription M-Pesa prompt</button>
+        </div>
+        <div className="mt-4 border-t border-neutral-100 pt-3"><p className="text-xs font-semibold text-neutral-700">Record an already verified offline payment</p><label className="mt-2 block text-xs text-neutral-600">Amount (KES)<input type="number" min="1" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label><label className="mt-2 block text-xs text-neutral-600">Method<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-2 text-sm"><option value="mpesa">M-Pesa</option><option value="bank">Bank</option><option value="cash">Cash</option><option value="card">Card</option><option value="other">Other</option></select></label><label className="mt-2 block text-xs text-neutral-600">Verified payment reference<input value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} placeholder="M-Pesa / bank reference" className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label><label className="mt-2 block text-xs text-neutral-600">Notes<input value={paymentNotes} onChange={(event) => setPaymentNotes(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label><button onClick={() => void recordPayment()} disabled={busy || !selectedBusinessId || !paymentReference.trim()} className="mt-3 w-full rounded-lg bg-orange-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Record verified payment & update access</button></div>
       </div>
     </div>
 
