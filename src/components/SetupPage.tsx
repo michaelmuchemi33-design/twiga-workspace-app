@@ -140,7 +140,6 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
   }, [refreshBusinessFiles]);
 
   useEffect(() => {
-    if (demo) { setAiServiceStatus("demo"); return; }
     let active = true;
     setAiServiceStatus("checking");
     fetch(TWIGA_API_URL.replace(/\/$/, "") + "/ai/status", { headers: { Accept: "application/json" } })
@@ -478,7 +477,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
         <span className={"h-2.5 w-2.5 rounded-full " + (aiServiceStatus === "ready" ? "bg-emerald-500" : aiServiceStatus === "offline" ? "bg-red-500" : "bg-neutral-400")} />
         <div>
           <p className="text-sm font-semibold text-neutral-900">Cloudflare AI service</p>
-          <p className="text-xs text-neutral-500">{aiServiceStatus === "ready" ? "Cloudflare Workers AI connected · no external model key required" : aiServiceStatus === "offline" ? "Worker could not be reached or AI binding is unavailable" : aiServiceStatus === "demo" ? "Demo preview · no live AI requests" : "Checking Worker and model configuration…"}</p>
+          <p className="text-xs text-neutral-500">{aiServiceStatus === "ready" ? (demo ? "Live demo connected · sample data only · no external model key required" : "Cloudflare Workers AI connected · no external model key required") : aiServiceStatus === "offline" ? "Worker could not be reached or AI binding is unavailable" : "Checking Worker and model configuration…"}</p>
         </div>
       </div>
       {aiServiceModel && aiServiceStatus === "ready" && <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-600">{aiServiceModel}</span>}
