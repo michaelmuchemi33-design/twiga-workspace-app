@@ -51,7 +51,7 @@ export default {
 async function runCloudflareAI(env, messages, options) {
   if (!env.AI || typeof env.AI.run !== 'function') throw new Error('CLOUDFLARE_AI_BINDING_MISSING');
   const result = await env.AI.run(AI_MODEL, Object.assign({messages, temperature: 0.25, max_tokens: 1800}, options || {}));
-  const content = txt(result && (result.response || (result.choices && result.choices[0] && result.choices[0].message && result.choices[0]..message.content)), 12000);
+  const content = txt(result && (result.response || (result.choices && result.choices[0] && result.choices[0].message && result.choices[0].message.content)), 12000);
   if (!content) throw new Error('CLOUDFLARE_AI_EMPTY_RESPONSE');
   return content;
 }
