@@ -145,21 +145,20 @@ export default function Reports() {
             <CardDescription>Revenue and units from recorded sales</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                {chartData.length > 0 ? <BarChart data={chartData} barGap={6}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" vertical={false} />
-                  <XAxis dataKey="day" tickLine={false} axisLine={false} fontSize={12} stroke="#737373" />
-                  <YAxis tickLine={false} axisLine={false} fontSize={12} stroke="#737373" />
-                  <Tooltip
-                    cursor={{ fill: "#fafafa" }}
-                    contentStyle={{ borderRadius: 12, border: "1px solid #e5e5e5", fontSize: 12 }}
-                  />
-                  <Bar dataKey="revenue" fill="#f97316" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="sales" fill="#171717" radius={[6, 6, 0, 0]} />
-                </BarChart> : <div className="grid h-64 place-items-center rounded-xl border border-dashed border-neutral-200 text-sm text-neutral-500">Sales will appear here after your first recorded sale.</div>}
-              </ResponsiveContainer>
-            </div>
+            {chartData.length > 0 ? (
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} barGap={6}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e5e5" vertical={false} />
+                    <XAxis dataKey="day" tickLine={false} axisLine={false} fontSize={12} stroke="#737373" />
+                    <YAxis tickLine={false} axisLine={false} fontSize={12} stroke="#737373" />
+                    <Tooltip cursor={{ fill: "#fafafa" }} contentStyle={{ borderRadius: 12, border: "1px solid #e5e5e5", fontSize: 12 }} />
+                    <Bar dataKey="revenue" fill="#f97316" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="sales" fill="#171717" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : <div className="grid h-64 place-items-center rounded-xl border border-dashed border-neutral-200 text-sm text-neutral-500">Sales will appear here after your first recorded sale.</div>}
           </CardContent>
         </Card>
 
