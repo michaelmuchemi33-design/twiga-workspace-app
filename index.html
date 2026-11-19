@@ -8,6 +8,16 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/twiga-mark.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/twiga-192.png" />
+    <script>
+      // The giraffe emblem belongs to the public marketing site and the demo only.
+      // Keep the signed-in live app on its own TWIGA workspace icon.
+      if (window.location.hostname === "demo.twiga.co.ke") {
+        const favicon = document.querySelector('link[rel="icon"]');
+        const appleIcon = document.querySelector('link[rel="apple-touch-icon"]');
+        if (favicon) favicon.href = "https://twiga.co.ke/favicon-48.png?v=twiga-brand-2";
+        if (appleIcon) appleIcon.href = "https://twiga.co.ke/favicon-180.png?v=twiga-brand-2";
+      }
+    </script>
     <title>TWIGA — Business Workspace</title>
   </head>
   <body>
