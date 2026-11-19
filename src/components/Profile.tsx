@@ -33,6 +33,9 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
 }) {
   const [user, setUser] = useState<any>(null);
   const [name, setName] = useState("");
+  const [personalPhone, setPersonalPhone] = useState("");
+  const [personalPhoneSaving, setPersonalPhoneSaving] = useState(false);
+  const [personalPhoneMessage, setPersonalPhoneMessage] = useState("");
   const [ownerName, setOwnerName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerSaving, setOwnerSaving] = useState(false);
@@ -357,6 +360,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       if (!active) return;
       setUser(data.user);
       setName(String(data.user?.user_metadata?.full_name || data.user?.user_metadata?.name || ""));
+      setPersonalPhone(String(data.user?.user_metadata?.personal_phone || ""));
       setAvatar(String(data.user?.user_metadata?.avatar_url || data.user?.user_metadata?.picture || data.user?.user_metadata?.photo_url || ""));
       setSessionStart(localStorage.getItem("twiga_session_started_at") || "");
     };
@@ -378,6 +382,25 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     });
     return () => { active = false; };
   }, [businessId, user?.email, name]);
+
+  const savePersonalPhone = async () => {
+    if (!supabase) return;
+    const value = personalPhone.trim();
+    if (value && !/^\\+?[0-9 ()-]{8,20}$/.test(value)) {
+      setPersonalPhoneMessage("Enter a valid personal phone number, including country code where possible.");
+      return;
+    }
+    setPersonalPhoneSaving(true);
+    setPersonalPhoneMessage("");
+    try {
+      const { data, error } = await supabase.auth.updateUser({ data: { personal_phone: value } });
+      if (error) throw error;
+      setUser(data.user);
+      setPersonalPhoneMessage(value ? "Your personal profile number is saved. It is not used as a business forwarding number." : "Your personal profile number has been cleared.");
+    } catch (e) {
+      setPersonalPhoneMessage(e instanceof Error ? e.message : "Your personal number could not be saved.");
+    } finally { setPersonalPhoneSaving(false); }
+  };
 
   const saveOwnerProfile = async () => {
     if (!supabase || !businessId || !ownerName.trim() || !ownerEmail.trim()) {
