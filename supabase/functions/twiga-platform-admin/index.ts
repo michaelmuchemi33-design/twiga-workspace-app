@@ -71,6 +71,12 @@ Deno.serve(async (req) => {
         .order("paid_at", { ascending: false }).limit(100);
       if (payError) throw payError;
 
+      const { data: subscriptionIntents, error: subscriptionIntentError } = await admin
+        .from("twiga_subscription_payment_intents")
+        .select("id,business_id,plan_code,amount,phone,status,provider_transaction_id,created_at,expires_at,verified_at,businesses(name)")
+        .order("created_at", { ascending: false }).limit(100);
+      if (subscriptionIntentError) throw subscriptionIntentError;
+
       const { data: tickets, error: ticketError } = await admin
         .from("twiga_support_tickets")
         .select("id,user_id,business_id,channel,subject,message,contact,status,created_at,updated_at,businesses(name)")
@@ -98,7 +104,7 @@ Deno.serve(async (req) => {
       const paidTotal = (payments || []).reduce((n: number, payment: any) => n + Number(payment.amount || 0), 0);
       return reply({
         isAdmin: true, clients, totalClientCount: totalClientCount || clients.length,
-        clientsLimit: 500, payments: payments || [], tickets: tickets || [], vapiAccounts: vapiAccounts || [],
+        clientsLimit: 500, payments: payments || [], subscriptionIntents: subscriptionIntents || [], tickets: tickets || [], vapiAccounts: vapiAccounts || [],
         phoneLines: phoneLines || [], recentCalls: recentCalls || [], auditLogs: auditLogs || [],
         providerConnections: providerConnections || [],
         metrics: { clientCount: totalClientCount || clients.length, paymentCount: (payments || []).length,
