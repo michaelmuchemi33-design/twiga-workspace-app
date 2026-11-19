@@ -142,7 +142,6 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
         supabase.functions.invoke("twiga-platform-secrets", { body: { action: "palpluss.platform.status" } }),
         supabase.functions.invoke("twiga-platform-secrets", { body: { action: "sautikit.platform.status" } }),
         supabase.functions.invoke("twiga-platform-secrets", { body: { action: "aisensy.platform.status" } }),
-        supabase.functions.invoke("twiga-platform-secrets", { body: { action: "telerivet.platform.status" } }),
         supabase.functions.invoke("twiga-platform-admin", { body: { action: "overview" } }),
       ]);
       if (!googleResult.error && googleResult.data?.isAdmin) {
