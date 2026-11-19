@@ -33,6 +33,9 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
 }) {
   const [user, setUser] = useState<any>(null);
   const [name, setName] = useState("");
+  const [personalPhone, setPersonalPhone] = useState("");
+  const [personalPhoneSaving, setPersonalPhoneSaving] = useState(false);
+  const [personalPhoneMessage, setPersonalPhoneMessage] = useState("");
   const [ownerName, setOwnerName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerSaving, setOwnerSaving] = useState(false);
@@ -357,6 +360,7 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       if (!active) return;
       setUser(data.user);
       setName(String(data.user?.user_metadata?.full_name || data.user?.user_metadata?.name || ""));
+      setPersonalPhone(String(data.user?.user_metadata?.personal_phone || ""));
       setAvatar(String(data.user?.user_metadata?.avatar_url || data.user?.user_metadata?.picture || data.user?.user_metadata?.photo_url || ""));
       setSessionStart(localStorage.getItem("twiga_session_started_at") || "");
     };
@@ -378,6 +382,25 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
     });
     return () => { active = false; };
   }, [businessId, user?.email, name]);
+
+  const savePersonalPhone = async () => {
+    if (!supabase) return;
+    const value = personalPhone.trim();
+    if (value && !/^\+?[0-9 ()-]{8,20}$/.test(value)) {
+      setPersonalPhoneMessage("Enter a valid personal phone number, including country code where possible.");
+      return;
+    }
+    setPersonalPhoneSaving(true);
+    setPersonalPhoneMessage("");
+    try {
+      const { data, error } = await supabase.auth.updateUser({ data: { personal_phone: value } });
+      if (error) throw error;
+      setUser(data.user);
+      setPersonalPhoneMessage(value ? "Your personal profile number is saved. It is not used as a business forwarding number." : "Your personal profile number has been cleared.");
+    } catch (e) {
+      setPersonalPhoneMessage(e instanceof Error ? e.message : "Your personal number could not be saved.");
+    } finally { setPersonalPhoneSaving(false); }
+  };
 
   const saveOwnerProfile = async () => {
     if (!supabase || !businessId || !ownerName.trim() || !ownerEmail.trim()) {
@@ -706,6 +729,12 @@ export default function Profile({ userId, businessId, businesses, onBusinessChan
       </>}
       {palResult && <p className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm text-neutral-600">{palResult}</p>}
       <p className="mt-3 text-[11px] leading-5 text-neutral-400">PalPluss uses HTTP Basic authentication with your API key as the username and an empty password. TWIGA derives this server-side; the separate Base64 token is not needed here. STK prompts are sent only when you press the button and confirm.</p>
+    </section>
+
+    <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+      <div><p className="text-xs font-bold uppercase tracking-widest text-orange-500">Your personal profile</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">Personal contact number</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">This number belongs to your TWIGA user account only. It is separate from each business phone line, public contact number and staff call-forwarding list.</p></div>
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row"><input value={personalPhone} onChange={(e) => setPersonalPhone(e.target.value)} type="tel" autoComplete="tel" placeholder="+254 7XX XXX XXX" className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-200 px-3 text-sm" /><button onClick={savePersonalPhone} disabled={personalPhoneSaving} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{personalPhoneSaving ? "Saving…" : "Save personal number"}</button></div>
+      {personalPhoneMessage && <p role="status" className="mt-3 text-sm text-neutral-600">{personalPhoneMessage}</p>}
     </section>
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">

@@ -241,8 +241,8 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
         <main className={cn("mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8", !isCompactPwaLayout && "lg:pl-24")}>
           <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500 text-lg font-black text-white">T</div>
-              <div><p className="font-bold tracking-tight text-neutral-950">TWIGA</p><p className="text-xs text-neutral-500">{demo ? "Interactive product preview · sample data" : "Your private business workspace"}</p></div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white"><img src="https://twiga.co.ke/favicon-192.png" alt="TWIGA" className="h-9 w-9 object-contain" /></div>
+              <div><p className="font-bold tracking-tight text-neutral-950">TWIGA</p><p className="text-xs text-neutral-500">{demo ? "Interactive product preview · live AI · sample data" : "Your private business workspace"}</p></div>
               {demo && <span className="rounded-full bg-orange-50 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-700">Demo</span>}
             </div>
             <div className="flex flex-wrap items-center gap-2">

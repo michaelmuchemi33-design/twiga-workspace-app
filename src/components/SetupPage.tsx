@@ -140,7 +140,6 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
   }, [refreshBusinessFiles]);
 
   useEffect(() => {
-    if (demo) { setAiServiceStatus("demo"); return; }
     let active = true;
     setAiServiceStatus("checking");
     fetch(TWIGA_API_URL.replace(/\/$/, "") + "/ai/status", { headers: { Accept: "application/json" } })
@@ -204,9 +203,8 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
     const text = (value ?? input).trim();
     const attachments = [...selectedFiles];
     if ((!text && !attachments.length && !pendingFileContext.length) || thinking) return;
-    if (demo) { setError("Sign in to configure a real business workspace. Sample business data is disabled."); return; }
-    if (!supabase || !ownerName.trim() || !ownerEmail.trim()) { setError("Your Google account profile is still loading. Please try again in a moment."); return; }
-    if (attachments.length && !businessId) { setError("Save your business workspace first, then upload its documents."); return; }
+    if (!demo && (!supabase || !ownerName.trim() || !ownerEmail.trim())) { setError("Your account profile is still loading. Please try again in a moment."); return; }
+    if (!demo && attachments.length && !businessId) { setError("Save your business workspace first, then upload its documents."); return; }
     if (attachments.length + pendingFileContext.length > 8) { setError("Upload up to 8 files in one setup request."); return; }
     setThinking(true);
     setUploadingFiles(attachments.length > 0);
@@ -215,7 +213,30 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
     setFileMessage("");
     let uploadedFiles = [...pendingFileContext];
     try {
-      if (attachments.length) {
+      if (demo && attachments.length) {
+        let remainingDemoText = 10000;
+        for (const file of attachments) {
+          if (!file.size || file.size > 25 * 1024 * 1024) throw new Error(file.name + " must be between 1 byte and 25 MB.");
+          const extension = file.name.split(".").pop()?.toLowerCase() || "";
+          let content = "";
+          let note = "This file is available only for this demo conversation; it is not saved to a customer workspace.";
+          if (extension === "pdf" && remainingDemoText > 0) {
+            try {
+              const extracted = await extractPdfText(file, Math.min(6000, remainingDemoText));
+              content = extracted.text;
+              remainingDemoText -= content.length;
+              note = content ? "Selectable PDF text extracted for this demo conversation." : "No selectable text found; this may be a scanned PDF and OCR is not available in this demo.";
+            } catch (e) { note = "PDF could not be read in this browser: " + (e instanceof Error ? e.message : "unsupported PDF"); }
+          } else if (["txt", "csv", "md", "json"].includes(extension) && remainingDemoText > 0) {
+            content = (await file.text()).slice(0, Math.min(4000, remainingDemoText));
+            remainingDemoText -= content.length;
+          }
+          uploadedFiles.push({ name: file.name, contentType: file.type || (extension === "pdf" ? "application/pdf" : "text/plain"), content, note });
+        }
+        setSelectedFiles([]);
+        setPendingFileContext([...uploadedFiles]);
+        setFileMessage("Demo files were read locally for this conversation only. Sign in to save files to a private business workspace.");
+      } else if (attachments.length) {
         const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
         const token = sessionData.session?.access_token;
         if (sessionError || !token) throw new Error("Sign in again before uploading business files.");
@@ -274,7 +295,16 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       setInput("");
       let data: any;
       const conversation = next.map((m) => ({ role: m.role === "ai" ? "assistant" : "user", content: m.text }));
-      if (businessId) {
+      if (demo) {
+        const response = await fetch(TWIGA_API_URL.replace(/\/$/, "") + "/ai/demo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: conversation, uploadedFiles }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result?.ok !== true) throw new Error(String(result?.error || "The live TWIGA demo assistant is temporarily unavailable."));
+        data = { reply: result.reply, model: result.model, source: result.source };
+      } else if (businessId) {
         const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
         const token = sessionData.session?.access_token;
         if (sessionError || !token) throw new Error("Sign in again to use the Cloudflare AI command centre.");
@@ -306,12 +336,12 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
         data = setupData;
       }
       setMessages((m) => [...m, { id: String(Date.now() + 1), role: "ai", text: String(data.reply || "Tell me a little more about the business.") }]);
-      setProfile((old) => ({ ...old, ...(data.businessProfile || {}), setup_details: { ...(old.setup_details || {}), ...(data.businessProfile?.setup_details || {}) } }));
+      if (!demo) setProfile((old) => ({ ...old, ...(data.businessProfile || {}), setup_details: { ...(old.setup_details || {}), ...(data.businessProfile?.setup_details || {}) } }));
       setMissing(Array.isArray(data.missingFields) ? data.missingFields : []);
-      setReady(data.readyToBuild === true);
+      if (!demo) setReady(data.readyToBuild === true);
       if (uploadedFiles.length) {
         const readableCount = uploadedFiles.filter((file) => file.content).length;
-        setNotice(uploadedFiles.length + " file(s) saved. The AI read " + readableCount + " file(s), including selectable PDF text where available. Scanned PDFs and unsupported formats are stored privately but still need OCR or a compatible reader.");
+        setNotice(demo ? "The live demo AI read " + readableCount + " uploaded file(s) for this conversation. Demo uploads are not retained." : uploadedFiles.length + " file(s) saved. The AI read " + readableCount + " file(s), including selectable PDF text where available. Scanned PDFs and unsupported formats are stored privately but still need OCR or a compatible reader.");
       } else if (data.modelUsed || data.model) setNotice("AI response received · " + String(data.modelUsed || data.model));
       setPendingFileContext([]);
     } catch (e) {
@@ -447,7 +477,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
         <span className={"h-2.5 w-2.5 rounded-full " + (aiServiceStatus === "ready" ? "bg-emerald-500" : aiServiceStatus === "offline" ? "bg-red-500" : "bg-neutral-400")} />
         <div>
           <p className="text-sm font-semibold text-neutral-900">Cloudflare AI service</p>
-          <p className="text-xs text-neutral-500">{aiServiceStatus === "ready" ? "Cloudflare Workers AI connected · no external model key required" : aiServiceStatus === "offline" ? "Worker could not be reached or AI binding is unavailable" : aiServiceStatus === "demo" ? "Demo preview · no live AI requests" : "Checking Worker and model configuration…"}</p>
+          <p className="text-xs text-neutral-500">{aiServiceStatus === "ready" ? (demo ? "Live demo connected · sample data only · no external model key required" : "Cloudflare Workers AI connected · no external model key required") : aiServiceStatus === "offline" ? "Worker could not be reached or AI binding is unavailable" : "Checking Worker and model configuration…"}</p>
         </div>
       </div>
       {aiServiceModel && aiServiceStatus === "ready" && <span className="rounded-full bg-neutral-100 px-3 py-1 text-xs font-medium text-neutral-600">{aiServiceModel}</span>}
@@ -458,7 +488,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
 
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
       <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 px-5 py-4"><div className="flex min-w-0 items-center gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-orange-500 text-white"><IconSparkle className="h-5 w-5" /></span><div className="min-w-0"><h2 className="font-semibold text-neutral-950">TWIGA AI command centre</h2><p className="text-xs text-neutral-500">Cloudflare AI · Business-scoped data · English and Kiswahili</p></div></div><span className="shrink-0 rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{loadingProfile ? "Loading…" : thinking ? "Working…" : ready ? "Ready to save" : "Ready"}</span></div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 px-5 py-4"><div className="flex min-w-0 items-center gap-3"><span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-orange-500 text-white"><IconSparkle className="h-5 w-5" /></span><div className="min-w-0"><h2 className="font-semibold text-neutral-950">TWIGA AI command centre</h2><p className="text-xs text-neutral-500">{demo ? "Live Cloudflare AI · Sample workspace · English and Kiswahili" : "Cloudflare AI · Business-scoped data · English and Kiswahili"}</p></div></div><span className="shrink-0 rounded-full bg-neutral-100 px-3 py-1 text-xs font-semibold">{loadingProfile ? "Loading…" : thinking ? "Working…" : ready ? "Ready to save" : "Ready"}</span></div>
         <div ref={scrollRef} className="max-h-[62vh] min-h-[380px] space-y-4 overflow-y-auto bg-neutral-50/50 p-5 sm:p-6">
           {messages.map((m) => <div key={m.id} className={m.role === "user" ? "ml-auto max-w-[90%] rounded-2xl rounded-br-md border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-neutral-900 shadow-sm dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100" : "mr-auto max-w-[94%] rounded-2xl rounded-bl-md border border-neutral-200 bg-white px-4 py-3 text-sm leading-6 text-neutral-800 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"}>
             <div className={"mb-1.5 flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider " + (m.role === "user" ? "text-orange-800 dark:text-orange-200" : "text-orange-600 dark:text-orange-400")}><span className={"grid h-5 w-5 place-items-center rounded-md " + (m.role === "user" ? "bg-orange-200 text-orange-900 dark:bg-white/15 dark:text-white" : "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300")}>{m.role === "user" ? "Y" : "T"}</span>{m.role === "user" ? "You" : "TWIGA AI"}</div>
@@ -467,13 +497,13 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
           {thinking && <div className="mr-auto flex items-center gap-2 rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-500 shadow-sm"><span className="h-2 w-2 animate-pulse rounded-full bg-orange-500" /> TWIGA is thinking through your request…</div>}
         </div>
         <div className="border-t border-neutral-100 bg-white p-4 sm:p-5">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-semibold text-neutral-900">Tell TWIGA what to configure or update</p><p className="mt-0.5 text-xs text-neutral-500">Set up your customer-facing AI, business workflows and provider APIs such as PalPluss. Add credentials only in secure Connections or Payments forms. Attach up to 8 business files.</p></div><button type="button" onClick={() => setInput(fullSetupBrief)} disabled={thinking || building} className="inline-flex items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm font-semibold text-orange-800 shadow-sm transition hover:border-orange-300 hover:bg-orange-100 disabled:opacity-40"><IconSparkle className="h-4 w-4" /> Insert complete setup prompt</button></div>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-semibold text-neutral-900">{demo ? "Try the live TWIGA AI assistant" : "Tell TWIGA what to configure or update"}</p><p className="mt-0.5 text-xs text-neutral-500">Set up your customer-facing AI, business workflows and provider APIs such as PalPluss. Add credentials only in secure Connections or Payments forms. Attach up to 8 business files. In this demo, files are read for this conversation only.</p></div><button type="button" onClick={() => setInput(fullSetupBrief)} disabled={thinking || building} className="inline-flex items-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm font-semibold text-orange-800 shadow-sm transition hover:border-orange-300 hover:bg-orange-100 disabled:opacity-40"><IconSparkle className="h-4 w-4" /> Insert complete setup prompt</button></div>
           {messages.length <= 1 && <div className="mb-3 flex flex-wrap gap-2">
             {["Set up my business and AI receptionist","Plan a 30-day customer subscription","Compare phone-number and business-service options","Create a payment collection workflow"].map((suggestion) => <button key={suggestion} type="button" onClick={() => void send(suggestion)} disabled={thinking || building} className="rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-left text-xs font-medium text-neutral-700 shadow-sm transition hover:border-orange-300 hover:bg-orange-50 hover:text-orange-800 disabled:opacity-40">{suggestion}</button>)}
           </div>}
           <input ref={fileInputRef} type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,text/plain,text/csv,.txt,.csv,.md,.json,.pdf,.docx,.xlsx,.pptx" className="hidden" onChange={(e) => { const incoming = Array.from(e.target.files || []); setSelectedFiles((current) => [...current, ...incoming].slice(0, Math.max(0, 8 - pendingFileContext.length))); e.currentTarget.value = ""; }} />
           {selectedFiles.length > 0 && <div className="mb-3 flex flex-wrap gap-2">{selectedFiles.map((file, index) => <span key={file.name + index} className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-700"><IconFile className="h-3.5 w-3.5 shrink-0 text-orange-600" /><span className="max-w-[220px] truncate">{file.name}</span> · {formatFileSize(file.size)}<button type="button" onClick={() => setSelectedFiles((current) => current.filter((_, i) => i !== index))} className="ml-2 font-bold text-neutral-500" aria-label={"Remove " + file.name}>×</button></span>)}</div>}
-          <div className="grid grid-cols-1 items-stretch gap-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]"><button type="button" onClick={() => fileInputRef.current?.click()} disabled={thinking || building || !businessId} aria-label="Attach business files" title="Attach business files" className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 text-sm font-semibold text-neutral-700 shadow-sm transition hover:border-orange-300 hover:bg-orange-50 hover:text-orange-800 disabled:opacity-40"><IconPaperclip className="h-5 w-5" /><span>Attach files</span></button><textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} placeholder="Describe your business, ask for an update, or paste the setup brief…" rows={3} className="min-h-[112px] min-w-0 w-full resize-y rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-base leading-7 text-neutral-900 outline-none transition placeholder:text-neutral-400 focus:border-orange-400 focus:ring-4 focus:ring-orange-100" /><button onClick={() => void send()} disabled={thinking || (!input.trim() && !selectedFiles.length && !pendingFileContext.length) || loadingProfile} className="inline-flex h-12 items-center justify-center gap-2 self-end rounded-xl bg-orange-500 px-6 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-40 sm:self-end">{uploadingFiles ? "Uploading…" : thinking ? "Working…" : <>Send <IconSend className="h-4 w-4" /></>}</button></div>
+          <div className="grid grid-cols-1 items-stretch gap-2 sm:grid-cols-[auto_minmax(0,1fr)_auto]"><button type="button" onClick={() => fileInputRef.current?.click()} disabled={thinking || building || (!demo && !businessId)} aria-label="Attach business files" title="Attach business files" className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 text-sm font-semibold text-neutral-700 shadow-sm transition hover:border-orange-300 hover:bg-orange-50 hover:text-orange-800 disabled:opacity-40"><IconPaperclip className="h-5 w-5" /><span>Attach files</span></button><textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} placeholder="Describe your business, ask for an update, or paste the setup brief…" rows={3} className="min-h-[112px] min-w-0 w-full resize-y rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-base leading-7 text-neutral-900 outline-none transition placeholder:text-neutral-400 focus:border-orange-400 focus:ring-4 focus:ring-orange-100" /><button onClick={() => void send()} disabled={thinking || (!input.trim() && !selectedFiles.length && !pendingFileContext.length) || loadingProfile} className="inline-flex h-12 items-center justify-center gap-2 self-end rounded-xl bg-orange-500 px-6 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-40 sm:self-end">{uploadingFiles ? "Uploading…" : thinking ? "Working…" : <>Send <IconSend className="h-4 w-4" /></>}</button></div>
           <p className="mt-2 text-xs leading-5 text-neutral-500">Text, CSV, Markdown, JSON and selectable PDF text are read into the AI profile draft. Original files stay in this business's private storage. Scanned PDFs and Office files are stored but need a compatible reader or OCR.</p>
         </div>
       </section>
