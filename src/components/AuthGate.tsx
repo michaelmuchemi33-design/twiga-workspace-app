@@ -45,6 +45,7 @@ export default function AuthGate({ children }: {
   const [emailAction, setEmailAction] = useState<"signin" | "signup">("signin");
   const [notice, setNotice] = useState("");
   const [email, setEmail] = useState("");
+  const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -113,7 +114,10 @@ export default function AuthGate({ children }: {
         const { data, error: authError } = await supabase.auth.signUp({
           email: email.trim(),
           password,
-          options: { emailRedirectTo: window.location.origin + "/auth/callback" },
+          options: {
+            emailRedirectTo: window.location.origin + "/auth/callback",
+            data: { full_name: fullName.trim(), name: fullName.trim() },
+          },
         });
         if (authError) throw authError;
         if (data.session) {
@@ -189,6 +193,7 @@ export default function AuthGate({ children }: {
               {emailMode && (
                 <form onSubmit={emailSignIn} className="mt-5 space-y-3 rounded-2xl border border-neutral-200 p-4">
                   <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold text-neutral-700">{emailAction === "signup" ? "Create your TWIGA account" : "Sign in to your TWIGA account"}</p><button type="button" onClick={() => { setEmailAction((mode) => mode === "signin" ? "signup" : "signin"); setError(""); setNotice(""); }} className="text-xs font-semibold text-orange-700 underline underline-offset-2">{emailAction === "signup" ? "I already have an account" : "Create new account"}</button></div>
+                  {emailAction === "signup" && <label className="block text-xs font-semibold text-neutral-700">Your name<input type="text" required value={fullName} onChange={e=>setFullName(e.target.value)} autoComplete="name" maxLength={100} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" placeholder="Your full name"/></label>}
                   <label className="block text-xs font-semibold text-neutral-700">Email address<input type="email" required value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" placeholder="you@business.co.ke"/></label>
                   <label className="block text-xs font-semibold text-neutral-700">Password<input type="password" required value={password} onChange={e=>setPassword(e.target.value)} autoComplete={emailAction === "signup" ? "new-password" : "current-password"} minLength={8} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" placeholder={emailAction === "signup" ? "At least 8 characters" : "Your password"}/></label>
                   <button disabled={busy} className="h-11 w-full rounded-xl bg-neutral-950 text-sm font-bold text-white disabled:opacity-50">{busy ? (emailAction === "signup" ? "Creating account…" : "Signing in…") : (emailAction === "signup" ? "Create account" : "Sign in")}</button>
