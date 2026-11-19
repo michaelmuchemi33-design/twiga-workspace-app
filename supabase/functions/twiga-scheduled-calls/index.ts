@@ -16,31 +16,23 @@ function normalizePhone(value: unknown) {
 const enc = new TextEncoder();
 const safe = (v: unknown, max = 2000) => String(v ?? "").trim().slice(0, max);
 
-const COMPOSIO_PROXY_API = "https://backend.composio.dev/api/v3.1/tools/execute/proxy";
-const COMPOSIO_SAUTIKIT_CONNECTED_ACCOUNT_ID = "custom_sauti_kit_primly-telyn";
+const SAUTIKIT_API = "https://api.sautikit.com";
 async function skRequest(key: string, path: string, method = "GET", body?: unknown, timeoutMs = 20000) {
-  const response = await fetch(COMPOSIO_PROXY_API, {
-    method: "POST",
-    headers: { "x-api-key": key, "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({
-      connected_account_id: COMPOSIO_SAUTIKIT_CONNECTED_ACCOUNT_ID,
-      endpoint: path,
-      method,
-      ...(body === undefined ? {} : { body }),
-    }),
+  const response = await fetch(SAUTIKIT_API + path, {
+    method,
+    headers: { Authorization: "Bearer " + key, "Content-Type": "application/json", Accept: "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(timeoutMs),
   });
   const raw = await response.text();
-  let envelope: any = {};
-  try { envelope = raw ? JSON.parse(raw) : {}; } catch { envelope = { message: raw.slice(0, 500) }; }
-  const upstreamStatus = Number(envelope.status ?? response.status);
-  const data = envelope.data ?? envelope;
-  if (!response.ok || (Number.isFinite(upstreamStatus) && upstreamStatus >= 400)) {
-    const details = data?.error || envelope?.error || data;
-    const message = String(details?.message || details?.detail || (typeof details === "string" ? details : "") || envelope?.message || "Composio could not proxy the SautiKit request.");
-    throw new Error("SautiKit via Composio failed (HTTP " + (response.status >= 400 ? response.status : upstreamStatus || 502) + "). " + message);
+  let payload: any = {};
+  try { payload = raw ? JSON.parse(raw) : {}; } catch { payload = { message: raw.slice(0, 500) }; }
+  if (!response.ok) {
+    const details = payload?.error || payload;
+    const message = String(details?.message || details?.detail || details?.resolution || (typeof details === "string" ? details : "") || payload?.message || ("SautiKit returned HTTP " + response.status));
+    throw Object.assign(new Error(message), { status: response.status, details });
   }
-  return data;
+  return payload;
 }
 
 function equalHex(a: string, b: string) {
@@ -208,12 +200,12 @@ Deno.serve(async (req: Request) => {
     const expected = await hmacHex(String(cronSecret), timestamp);
     if (!equalHex(signature, expected)) return json({ error: "Invalid scheduler signature." }, 401);
 
-    const { data: keyData, error: keyError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "composio_sautikit_api_key" });
+    const { data: keyData, error: keyError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "sautikit_platform_api_key" });
     const apiKey = String(keyData || "");
     if (keyError || !apiKey) {
       await admin.from("twiga_scheduled_calls").update({
         status: "waiting_for_provider",
-        last_error: "Connect the SautiKit API key in Connections to enable scheduled calls.",
+        last_error: "Connect the shared SautiKit platform API key in TWIGA Platform Settings to enable scheduled calls.",
         updated_at: new Date().toISOString(),
       }).eq("status", "scheduled").lte("scheduled_at", new Date().toISOString());
       return json({ ok: true, processed: 0, waitingForProvider: true });
