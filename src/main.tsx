@@ -9,7 +9,7 @@ const demo = window.location.hostname === "demo.twiga.co.ke" || import.meta.env.
 
 function Root() {
   if (demo) return <App demo />;
-  return <AuthGate>{(session, googleAuth) => <App userId={session.user.id} googleAuth={googleAuth} onSignOut={async () => { await supabase?.auth.signOut(); }} />}</AuthGate>;
+  return <AuthGate>{(session, googleAuth) => <App userId={session.user.id} googleAuth={googleAuth} onSignOut={async () => { if (!supabase) throw new Error("Authentication is not configured."); const { error } = await supabase.auth.signOut(); if (error) throw error; try { localStorage.removeItem("twiga_session_started_at"); } catch { /* storage may be unavailable */ } }} />}</AuthGate>;
 }
 
 if ("serviceWorker" in navigator && import.meta.env.PROD) {
