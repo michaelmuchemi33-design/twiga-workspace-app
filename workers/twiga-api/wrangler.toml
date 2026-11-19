@@ -8,3 +8,6 @@ keep_vars = true
 binding = "DB"
 database_name = "twiga-db"
 database_id = "77f5a69f-a2e7-4de6-a164-8e98beaedfd8"
+
+[ai]
+binding = "AI"
