@@ -274,7 +274,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       if (uploadedFiles.length) {
         const readableCount = uploadedFiles.filter((file) => file.content).length;
         setNotice(uploadedFiles.length + " file(s) saved. The AI read " + readableCount + " text-based file(s); other formats are stored for download but are not yet parsed into the profile.");
-      } else if (data.modelUsed) setNotice("AI response received · " + String(data.modelUsed));
+      } else if (data.modelUsed || data.model) setNotice("AI response received · " + String(data.modelUsed || data.model));
       setPendingFileContext([]);
     } catch (e) {
       const message = e instanceof Error ? e.message : "The setup assistant could not reply.";
