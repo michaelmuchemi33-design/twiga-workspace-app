@@ -221,7 +221,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
         const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
         const token = sessionData.session?.access_token;
         if (sessionError || !token) throw new Error("Sign in again to use the Cloudflare AI command centre.");
-        const response = await fetch(TWIGA_API_URL.replace(/\\/$/, "") + "/ai/chat", {
+        const response = await fetch(TWIGA_API_URL.replace(/\/$/, "") + "/ai/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
           body: JSON.stringify({ token, business_id: businessId, messages: conversation, uploadedFiles }),
