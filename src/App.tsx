@@ -52,7 +52,7 @@ const footerTabs = [
   { id: "phone", label: "Calls", icon: IconChat },
   { id: "dashboard", label: "Home", icon: IconHome },
   { id: "pos", label: "POS", icon: IconCart },
-  { id: "functions", label: "Social", icon: IconSparkle },
+  { id: "functions", label: "Core", icon: IconSparkle },
 ];
 
 const moreTabs = [
@@ -73,8 +73,30 @@ const moreTabs = [
   { id: "logout", label: "Log out", icon: IconLogout },
 ];
 
+const routeFromHash = () => {
+  const raw = window.location.hash.replace(/^#\/?/, "").split(/[?&]/)[0].toLowerCase();
+  const aliases: Record<string, string> = {
+    "core-functions": "functions",
+    corefunctions: "functions",
+    social: "functions",
+    people: "customers",
+    contacts: "customers",
+    inbox: "whatsapp",
+    "social-inbox": "whatsapp",
+  };
+  const route = aliases[raw] || raw;
+  const allowed = new Set([...footerTabs, ...moreTabs].map((item) => item.id));
+  return allowed.has(route) ? route : "dashboard";
+};
+
+const workspaceShortcuts = [
+  { id: "functions", label: "The 10 core functions", description: "Chat33 social gateway · up to 3 API accounts", icon: IconSparkle },
+  { id: "customers", label: "People & contacts", description: "Social, WhatsApp, calls and saved contacts", icon: IconUsers },
+  { id: "whatsapp", label: "Unified Inbox", description: "Conversations from connected channels", icon: IconChat },
+];
+
 export default function App({ demo = false, userId, googleAuth, onSignOut }: { demo?: boolean; userId?: string; googleAuth?: GoogleAuthContext; onSignOut?: () => Promise<void> }) {
-  const [tab, setTab] = useState("dashboard");
+  const [tab, setTab] = useState(routeFromHash);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     try { return localStorage.getItem("twiga_theme") === "dark" ? "dark" : "light"; }
     catch { return "light"; }
@@ -84,6 +106,12 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
     document.documentElement.style.colorScheme = theme;
     try { localStorage.setItem("twiga_theme", theme); } catch { /* storage may be unavailable */ }
   }, [theme]);
+
+  useEffect(() => {
+    const syncRoute = () => setTab(routeFromHash());
+    window.addEventListener("hashchange", syncRoute);
+    return () => window.removeEventListener("hashchange", syncRoute);
+  }, []);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [businesses, setBusinesses] = useState<any[]>([]);
@@ -187,6 +215,10 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
 
   const go = (id: string) => {
     setTab(id);
+    const nextHash = "#" + id;
+    if (window.location.hash !== nextHash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search + nextHash);
+    }
     setMenuOpen(false);
   };
 
@@ -229,6 +261,34 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
               {!demo && <button type="button" onClick={() => go("billing")} className="h-10 rounded-xl border border-orange-200 bg-orange-50 px-3 text-sm font-semibold text-orange-800 hover:bg-orange-100">Plan &amp; billing</button>}<InstallApp />{demo && <DemoInterest />}{!demo && onSignOut && <button onClick={onSignOut} className="h-10 rounded-xl border border-neutral-200 px-4 text-sm font-semibold text-neutral-600 hover:bg-neutral-50">Sign out</button>}
             </div>
           </div>
+          <nav aria-label="Business channels" className="mb-6 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            {workspaceShortcuts.map((item) => {
+              const Icon = item.icon;
+              const active = tab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => go(item.id)}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "flex min-h-[76px] items-center gap-3 rounded-2xl border px-4 py-3 text-left shadow-sm transition-all",
+                    active
+                      ? "border-orange-500 bg-neutral-950 text-white shadow-orange-500/10 dark:bg-neutral-900"
+                      : "border-neutral-200 bg-white text-neutral-900 hover:border-orange-300 hover:bg-orange-50/40 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:border-orange-500/50"
+                  )}
+                >
+                  <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", active ? "bg-orange-500 text-white" : "bg-orange-50 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300")}>
+                    <Icon className="h-5 w-5" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-bold">{item.label}</span>
+                    <span className={cn("mt-0.5 block text-xs leading-5", active ? "text-neutral-300" : "text-neutral-500")}>{item.description}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
           {googleSetupMessage && !demo && <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-950"><span>{autoProvisioning && <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-orange-500" />}{googleSetupMessage}</span>{googleSetupMessage.includes("Google connection needs attention") && <button onClick={() => go("connections")} className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-bold">Open Google connections</button>}{googleSetupMessage.includes("could not be created") && <button onClick={() => { autoProvisioned.current = null; void refreshBusinesses(); }} className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-bold">Retry</button>}</div>}
           {demo && <div className="mb-6 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-900"><strong>This is a sample workspace.</strong> Explore the screens and test the controls. Demo changes are temporary and are not connected to a real customer's business account.</div>}
           {tab === "dashboard" && <Dashboard onSetup={() => go("setup")} onPayments={() => go("payments")} />}
