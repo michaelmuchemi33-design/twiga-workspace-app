@@ -31,7 +31,7 @@ const stageMeta: Record<
   New: { chip: "border-neutral-200 bg-white text-neutral-600", icon: IconUsers },
 };
 
-export default function Customers() {
+export default function Customers({ onOpenCoreFunctions }: { onOpenCoreFunctions?: () => void }) {
   const { customers, advanceCustomer, businessId, demoMode, callRecords } = useStore();
   const [draftCustomerId, setDraftCustomerId] = useState("");
   const [draftCustomerName, setDraftCustomerName] = useState("");
@@ -69,14 +69,22 @@ export default function Customers() {
     setCloudContacts(Array.isArray(result.contacts) ? result.contacts : []);
   }, [businessId, cloudflareContacts, contactSearch, demoMode]);
 
-  const loadSocialContacts = useCallback(async () => {
+  const loadSocialContacts = useCallback(async (discoverConversations = false) => {
     if (demoMode || !businessId || !supabase) { setSocialContacts([]); return; }
     const session = await supabase.auth.getSession();
     const token = session.data.session?.access_token || "";
     if (!token) throw new Error("Your sign-in has expired. Sign in again.");
-    const response = await fetch("https://twiga-api.twiga-ke.workers.dev/chat33/people?business_id=" + encodeURIComponent(businessId), {
-      headers: { Authorization: "Bearer " + token }
-    });
+    const headers = { Authorization: "Bearer " + token };
+    // Discover conversations from every connected Chat33 slot first. The Worker
+    // also upserts those senders into the tenant-scoped People directory.
+    if (discoverConversations) {
+      const inboxResponse = await fetch("https://twiga-api.twiga-ke.workers.dev/chat33/inbox?business_id=" + encodeURIComponent(businessId), { headers });
+      const inboxResult = await inboxResponse.json().catch(() => ({}));
+      if (!inboxResponse.ok || inboxResult?.ok !== true) {
+        throw new Error(String(inboxResult?.error || "Chat33 conversations could not be synchronised."));
+      }
+    }
+    const response = await fetch("https://twiga-api.twiga-ke.workers.dev/chat33/people?business_id=" + encodeURIComponent(businessId), { headers });
     const result = await response.json().catch(() => ({}));
     if (!response.ok || result?.ok !== true) throw new Error(String(result?.error || "Social contacts could not be loaded."));
     setSocialContacts(Array.isArray(result.contacts) ? result.contacts : []);
@@ -85,7 +93,7 @@ export default function Customers() {
   const refreshAllContacts = async () => {
     setContactsBusy(true);
     try {
-      await Promise.all([loadCloudContacts(), loadSocialContacts()]);
+      await Promise.all([loadCloudContacts(), loadSocialContacts(true)]);
       setContactsMessage("Business and Chat33 social contacts refreshed.");
     } catch (error) {
       setContactsMessage(error instanceof Error ? error.message : "Could not refresh all contacts.");
@@ -93,7 +101,12 @@ export default function Customers() {
   };
 
   useEffect(() => {
-    void Promise.all([loadCloudContacts(), loadSocialContacts()]).catch((error) => setContactsMessage(error instanceof Error ? error.message : "Could not load business contacts."));
+    void Promise.all([loadCloudContacts(), loadSocialContacts(true)]).catch((error) => setContactsMessage(error instanceof Error ? error.message : "Could not load business contacts."));
+    // Keep webhook-arriving Chat33 and Meta WhatsApp senders visible while People is open.
+    const timer = window.setInterval(() => {
+      void loadSocialContacts(false).catch((error) => setContactsMessage(error instanceof Error ? error.message : "Social contacts could not refresh."));
+    }, 30000);
+    return () => window.clearInterval(timer);
   }, [loadCloudContacts, loadSocialContacts]);
 
   const importGoogleContacts = async () => {
@@ -211,10 +224,10 @@ export default function Customers() {
             Relationships
           </p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-900">
-            Customers
+            People & contacts
           </h1>
           <p className="mt-1 text-sm text-neutral-500">
-            Rows ready for follow-ups and outreach
+            One business directory for social, WhatsApp, calls, Google and saved contacts
           </p>
         </div>
         <div className="flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3">
@@ -230,9 +243,9 @@ export default function Customers() {
 
       <Card className="rounded-2xl border-neutral-200 shadow-sm">
         <CardHeader className="flex flex-wrap items-center justify-between gap-3">
-          <div><CardTitle className="flex items-center gap-2 text-xl font-semibold"><IconUsers className="h-5 w-5 text-orange-500" /> People & contacts</CardTitle>
-            <CardDescription>Phone, Google, call-history, WhatsApp and supported Chat33 social contacts are shown together for this business. Records remain tenant-scoped.</CardDescription></div>
-          <Badge className="border-neutral-200 bg-neutral-50 text-neutral-700">{cloudContacts.length + socialContacts.length + callContacts.length} contacts</Badge>
+          <div><CardTitle className="flex items-center gap-2 text-xl font-semibold"><IconUsers className="h-5 w-5 text-orange-500" /> All customer channels</CardTitle>
+            <CardDescription>Contacts from every connected Chat33 workspace, official Meta WhatsApp, calls, Google and imported or manually saved records are gathered here.</CardDescription></div>
+          <div className="flex flex-wrap items-center gap-2"><Badge className="border-neutral-200 bg-neutral-50 text-neutral-700">{cloudContacts.length + socialContacts.length + callContacts.length} records</Badge>{onOpenCoreFunctions && <Button variant="outline" onClick={onOpenCoreFunctions}>Manage social accounts</Button>}</div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap gap-2">
