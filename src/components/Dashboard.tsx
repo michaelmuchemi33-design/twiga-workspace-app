@@ -181,7 +181,7 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
             className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 text-neutral-900 transition-all duration-200 hover:bg-neutral-50 active:scale-95"
           >
             <span className="h-2.5 w-2.5 rounded-full bg-orange-500" />
-            <span className="text-sm font-medium">Set up with AI</span>
+            <span className="text-sm font-medium">Edit business details</span>
           </button>
         </div>
       </div>
