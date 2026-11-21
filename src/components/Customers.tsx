@@ -185,7 +185,7 @@ export default function Customers() {
     } finally { setDraftBusy(false); }
   };
 
-  const normalizedPhone = (value: unknown) => String(value || "").replace(/\\D/g, "");
+  const normalizedPhone = (value: unknown) => String(value || "").replace(/[^0-9]/g, "");
   const knownPhones = new Set([
     ...cloudContacts.map((person: any) => normalizedPhone(person.Phone || person.phone)),
     ...socialContacts.map((person: any) => normalizedPhone(person.phone || (person.platform === "whatsapp" ? person.id : ""))),
