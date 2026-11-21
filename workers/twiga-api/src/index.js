@@ -228,7 +228,7 @@ async function runBusinessReview(env, businessId, taskId) {
     'Return one JSON object only: {"headline":"short status","summary":"2-4 concise sentences","actions":[{"title":"short, specific owner task","detail":"what the owner/staff should check and the evidence behind it","priority":"high|medium|low"}]}. Maximum 10 actions. Return fewer rather than inventing work.',
     'Business facts (JSON): ' + JSON.stringify(data)
   ].join('\n\n');
-  const raw = await runCloudflareAI(env, [{role: 'system', content: system}, {role: 'user', content: 'Review the real business records and prepare the owner action list.'}], {max_tokens: 1600});
+  const raw = await runBusinessAI(env, businessId, [{role: 'system', content: system}, {role: 'user', content: 'Review the real business records and prepare the owner action list.'}], {max_tokens: 1600});
   let parsed = null;
   try {
     let candidate = String(raw).trim();
@@ -615,7 +615,7 @@ async function processWhatsAppMessage(env, businessId, detail) {
       'If the customer wants a person, say you have passed the request to the team.',
       'Business facts (JSON): ' + JSON.stringify(profile)
     ].join('\n\n');
-    const raw = await runCloudflareAI(env,[{role:'system',content:system},...previous],{max_tokens:420});
+    const raw = await runBusinessAI(env,businessId,[{role:'system',content:system},...previous],{max_tokens:420});
     reply = txt(raw,1500);
   }
   const sent = await sendWhatsAppText(env,account,token,from,reply);
@@ -751,6 +751,82 @@ async function runCloudflareAI(env, messages, options) {
   return content;
 }
 
+const BUSINESS_AI_ENDPOINTS = {
+  openai: 'https://api.openai.com/v1',
+  openrouter: 'https://openrouter.ai/api/v1',
+  xai: 'https://api.x.ai/v1',
+  groq: 'https://api.groq.com/openai/v1',
+  deepseek: 'https://api.deepseek.com'
+};
+
+async function runBusinessAI(env, businessId, messages, options) {
+  // Read business-owned credentials only on the server through a service-role-only RPC.
+  // No credential value is ever returned to the browser or included in model messages.
+  let response;
+  try {
+    response = await fetch(env.SUPABASE_URL + '/rest/v1/rpc/twiga_get_primary_business_ai_integration', {
+      method: 'POST',
+      headers: {
+        apikey: env.SUPABASE_KEY,
+        Authorization: 'Bearer ' + env.SUPABASE_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({p_business_id: businessId})
+    });
+  } catch (error) {
+    console.error('TWIGA business AI configuration lookup failed', txt(error && error.message ? error.message : error, 180));
+    return runCloudflareAI(env, messages, options);
+  }
+  if (!response.ok) {
+    console.error('TWIGA business AI configuration lookup returned HTTP', response.status);
+    return runCloudflareAI(env, messages, options);
+  }
+  const integration = await response.json().catch(() => null);
+  if (!integration || !integration.provider_slug || !integration.credentials) {
+    return runCloudflareAI(env, messages, options);
+  }
+
+  const provider = String(integration.provider_slug);
+  const expectedBase = BUSINESS_AI_ENDPOINTS[provider];
+  const configuredBase = String(integration.config && integration.config.base_url || '').replace(/\/+$/, '');
+  const apiKey = txt(integration.credentials && integration.credentials.api_key, 500);
+  const model = txt(integration.config && integration.config.model, 160);
+  if (!expectedBase || configuredBase !== expectedBase || !apiKey || !model) {
+    throw new Error('BUSINESS_AI_CONFIGURATION_INVALID|Open the Connections screen and repair this AI provider setup.');
+  }
+
+  const headers = {
+    Authorization: 'Bearer ' + apiKey,
+    'Content-Type': 'application/json',
+    Accept: 'application/json'
+  };
+  if (provider === 'openrouter') {
+    headers['HTTP-Referer'] = 'https://app.twiga.co.ke';
+    headers['X-Title'] = 'TWIGA Business AI';
+  }
+  const requestOptions = Object.assign({temperature: 0.25, max_tokens: 1800}, options || {});
+  const providerResponse = await fetch(expectedBase + '/chat/completions', {
+    method: 'POST',
+    headers: headers,
+    body: JSON.stringify(Object.assign({
+      model: model,
+      messages: messages
+    }, requestOptions))
+  });
+  if (!providerResponse.ok) {
+    console.error('TWIGA business AI provider request failed', provider, providerResponse.status);
+    throw new Error('BUSINESS_AI_PROVIDER_FAILED|The connected ' + provider + ' account could not complete this AI request (HTTP ' + providerResponse.status + '). Check its key, model access and billing in Connections.');
+  }
+  const result = await providerResponse.json().catch(() => ({}));
+  const content = aiReplyText(
+    result && (result.choices && result.choices[0] && result.choices[0].message && result.choices[0].message.content || result.output_text || result.response),
+    '',
+    12000
+  );
+  if (!content) throw new Error('BUSINESS_AI_EMPTY_RESPONSE|The connected AI provider returned no readable text.');
+  return content;
+}
+
 
 async function aiDemo(req, env) {
   try {
@@ -838,7 +914,7 @@ async function aiChat(req, env) {
       'If asked to perform an operation you cannot execute, state the limitation clearly and provide the next safe step.',
       'Current business data (JSON): ' + JSON.stringify(context)
     ].join('\\n\\n');
-    const reply = await runCloudflareAI(env, [{role: 'system', content: system}, ...messages], {max_tokens: 1400});
+    const reply = await runBusinessAI(env, ctx.biz.id, [{role: 'system', content: system}, ...messages], {max_tokens: 1400});
     return json({ok: true, reply, model: AI_MODEL, source: 'cloudflare-workers-ai'});
   } catch (error) {
     const message = String(error && error.message || error);
@@ -1185,7 +1261,7 @@ async function processWahaWhatsAppMessage(env,businessId,detail) {
       'If a person is requested, say the team has been notified.',
       'Verified business facts: ' + JSON.stringify(profile)
     ].join('\n\n');
-    reply = txt(await runCloudflareAI(env,[{role:'system',content:system},...previous],{max_tokens:420}),1500);
+    reply = txt(await runBusinessAI(env,businessId,[{role:'system',content:system},...previous],{max_tokens:420}),1500);
   }
   await wahaRequest(env,'/api/sendSeen','POST',{session:row.session_name,chatId:from}).catch(() => null);
   const sent = await wahaRequest(env,'/api/sendText','POST',{session:row.session_name,chatId:from,text:reply});
@@ -1237,7 +1313,7 @@ async function aiSetup(req,env) {
       'Business name: ' + String(ctx.biz.name || '') + '; type: ' + String(ctx.biz.business_type || 'general') + '.',
       'Requested operation: ' + (action === 'build_profile' ? 'Create a complete draft from the conversation now.' : 'Continue the setup conversation and ask the next most useful question.')
     ].join('\n\n');
-    const raw = await runCloudflareAI(env,[{role:'system',content:system},...messages],{max_tokens:1500,temperature:0.2});
+    const raw = await runBusinessAI(env,ctx.biz.id,[{role:'system',content:system},...messages],{max_tokens:1500,temperature:0.2});
     const parsed = parseAIJson(raw);
     if (action === 'build_profile') {
       const draft = parsed && parsed.profileDraft && typeof parsed.profileDraft === 'object' ? parsed.profileDraft : null;
