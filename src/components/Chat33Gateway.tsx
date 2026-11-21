@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import { supabase } from "@/lib/supabase";
 import { useStore } from "@/lib/store";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -79,9 +79,9 @@ export function Chat33QuickPublisher({ compact=false }: { compact?:boolean }) {
           mediaBySlot[slot]=[url];
         }
       }
-      const groups=Array.from(groupsBySlot.entries()).map(([slot,items])=>({slot,accountIds:items.map(item=>item.id)}));
+      const groups=Array.from(groupsBySlot.entries()).map(([slot,items])=>({slot,accountIds:items.map(item=>item.id),mediaUrls:mediaBySlot[slot]||[]}));
       const results=await workerRequest(businessId,"/chat33/publish","POST",{
-        groups,text:caption.trim(),mediaUrls:Array.from(new Set(Object.values(mediaBySlot).flat())),
+        groups,text:caption.trim(),
         mediaType:file?(file.type.startsWith("video/")?"video":"image"):"",
         scheduledAt:scheduledAt?new Date(scheduledAt).toISOString():""
       });
