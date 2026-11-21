@@ -25,7 +25,7 @@ async function ensureUsageSchema(env) {
 
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     if (req.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
     const path = new URL(req.url).pathname;
 
@@ -224,8 +224,11 @@ async function runBusinessAgentTasks(env, businessId) {
       .bind(now(), businessId, task.id).run();
     if (!claimed.meta || Number(claimed.meta.changes || 0) !== 1) continue;
     try {
-      if (task.task_type !== 'daily_review') throw new Error('Unknown automated task type.');
-      const result = await runBusinessReview(env, businessId, task.id);
+      let result;
+      if (task.task_type === 'daily_review') result = await runBusinessReview(env, businessId, task.id);
+      else if (task.task_type === 'whatsapp_reply') result = await processWhatsAppMessage(env, businessId, JSON.parse(task.detail || '{}'));
+      else if (task.task_type === 'whatsapp_call_event') result = await processWhatsAppCallEvent(env, businessId, JSON.parse(task.detail || '{}'));
+      else throw new Error('Unknown automated task type.');
       outcomes.push({id: task.id, ok: true, result: result});
     } catch (error) {
       const detail = txt(error && error.message ? error.message : error, 500);
