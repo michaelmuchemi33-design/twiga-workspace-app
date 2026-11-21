@@ -229,6 +229,7 @@ async function runBusinessAgentTasks(env, businessId) {
       else if (task.task_type === 'whatsapp_reply') result = await processWhatsAppMessage(env, businessId, JSON.parse(task.detail || '{}'));
       else if (task.task_type === 'whatsapp_call_event') result = await processWhatsAppCallEvent(env, businessId, JSON.parse(task.detail || '{}'));
       else throw new Error('Unknown automated task type.');
+      if (task.task_type !== 'daily_review') await env.DB.prepare("UPDATE business_worker_tasks SET status = 'done', result_json = ?, updated_at = ? WHERE business_id = ? AND id = ?").bind(JSON.stringify(result || {}), now(), businessId, task.id).run();
       outcomes.push({id: task.id, ok: true, result: result});
     } catch (error) {
       const detail = txt(error && error.message ? error.message : error, 500);
@@ -493,6 +494,11 @@ async function processWhatsAppMessage(env, businessId, detail) {
     .bind(messageId,businessId,account.phone_number_id,from,txt(message.type,30),incomingText,inboundAt).run();
   await env.DB.prepare('INSERT INTO whatsapp_conversations (business_id, phone_number_id, wa_id, last_inbound_at, updated_at) VALUES (?,?,?,?,?) ON CONFLICT(business_id, wa_id) DO UPDATE SET phone_number_id=excluded.phone_number_id, last_inbound_at=excluded.last_inbound_at, updated_at=excluded.updated_at')
     .bind(businessId,account.phone_number_id,from,inboundAt,now()).run();
+  const withinWindow = Date.now() - timestamp * 1000 < 24 * 60 * 60 * 1000;
+  if (!withinWindow) {
+    await createWhatsAppOwnerTask(env,businessId,'whatsapp_window_expired','WhatsApp reply needs an approved template','A customer message was received outside the 24-hour reply window. No free-form WhatsApp response was sent.','wa-window-' + messageId);
+    return {ok:true,replied:false,reason:'outside_customer_service_window'};
+  }
   const explicitHuman = /\b(human|person|staff|agent|manager|speak to someone|talk to someone)\b/i.test(incomingText);
   if (explicitHuman) {
     await createWhatsAppOwnerTask(env,businessId,'whatsapp_handover','Customer wants a person',from + ': ' + incomingText,'wa-human-' + messageId);
@@ -517,14 +523,8 @@ async function processWhatsAppMessage(env, businessId, detail) {
       'If the customer wants a person, say you have passed the request to the team.',
       'Business facts (JSON): ' + JSON.stringify(profile)
     ].join('\n\n');
-    await metaGraph(env, token, account.phone_number_id + '/messages', 'POST', {messaging_product:'whatsapp',status:'read',message_id:messageId,typing_indicator:{type:'text'}});
     const raw = await runCloudflareAI(env,[{role:'system',content:system},...previous],{max_tokens:420});
     reply = txt(raw,1500);
-  }
-  const withinWindow = Date.now() - timestamp * 1000 < 24 * 60 * 60 * 1000;
-  if (!withinWindow) {
-    await createWhatsAppOwnerTask(env,businessId,'whatsapp_window_expired','WhatsApp reply needs an approved template','A customer message was received outside the 24-hour reply window. No free-form WhatsApp response was sent.','wa-window-' + messageId);
-    return {ok:true,replied:false,reason:'outside_customer_service_window'};
   }
   await new Promise((resolve) => setTimeout(resolve,1500));
   const sent = await sendWhatsAppText(env,account,token,from,reply);
