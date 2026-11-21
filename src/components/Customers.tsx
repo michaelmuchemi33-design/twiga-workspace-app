@@ -83,6 +83,14 @@ export default function Customers({ onOpenCoreFunctions }: { onOpenCoreFunctions
       if (!inboxResponse.ok || inboxResult?.ok !== true) {
         throw new Error(String(inboxResult?.error || "Chat33 conversations could not be synchronised."));
       }
+      // Discover comment authors through Chat33's documented comment tools too.
+      const commentResponse = await fetch("https://twiga-api.twiga-ke.workers.dev/chat33/comments?business_id=" + encodeURIComponent(businessId), { headers });
+      const commentResult = await commentResponse.json().catch(() => ({}));
+      if (!commentResponse.ok || commentResult?.ok !== true) {
+        setContactsMessage(String(commentResult?.error || "Chat33 comment contacts could not be synchronised. Check comments:read."));
+      } else if (Array.isArray(commentResult.errors) && commentResult.errors.length) {
+        setContactsMessage("Some Chat33 comment contacts could not refresh. Check comments:read for the affected account slots.");
+      }
     }
     const response = await fetch("https://twiga-api.twiga-ke.workers.dev/chat33/people?business_id=" + encodeURIComponent(businessId), { headers });
     const result = await response.json().catch(() => ({}));
@@ -214,6 +222,11 @@ export default function Customers({ onOpenCoreFunctions }: { onOpenCoreFunctions
     callContactMap.set(digits, {id:record.id, phone:String(phone), name, lastCallAt:record.started_at || record.created_at, direction});
   }
   const callContacts = Array.from(callContactMap.values());
+  const searchTerm = contactSearch.trim().toLowerCase();
+  const matchesContact = (values: unknown[]) => !searchTerm || values.some(value=>String(value || "").toLowerCase().includes(searchTerm));
+  const filteredCloudContacts = cloudContacts.filter((person:any)=>matchesContact([person.Name,person.name,person.Phone,person.phone,person.Email,person.email,person.Source,person.source]));
+  const filteredSocialContacts = socialContacts.filter((person:any)=>matchesContact([person.name,person.username,person.phone,person.platform,person.channel,person.source]));
+  const filteredCallContacts = callContacts.filter((person:any)=>matchesContact([person.name,person.phone,person.direction]));
   const due = customers.filter((c) => c.followUpIn === 0).length;
 
   return (
@@ -262,10 +275,10 @@ export default function Customers({ onOpenCoreFunctions }: { onOpenCoreFunctions
             <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="Email (optional)" className="h-10 rounded-lg border border-neutral-200 px-3 text-sm" />
             <Button onClick={() => void addManualContact()} disabled={contactsBusy || demoMode} className="bg-orange-500 text-white hover:bg-orange-600">Add contact</Button>
           </div>
-          <input value={contactSearch} onChange={(e) => setContactSearch(e.target.value)} placeholder="Search saved contacts by name or phone…" className="h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm" />
+          <input value={contactSearch} onChange={(e) => setContactSearch(e.target.value)} placeholder="Search all contacts by name, phone, email or social handle…" className="h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm" />
           {contactsMessage && <p role="status" className="rounded-lg bg-neutral-50 p-3 text-sm text-neutral-600">{contactsMessage}</p>}
           <div className="space-y-2">
-            {cloudContacts.length === 0 && socialContacts.length === 0 && callContacts.length === 0 && <p className="rounded-xl border border-dashed border-neutral-200 p-8 text-center text-sm text-neutral-500">{demoMode ? "Contact imports are disabled in demo mode." : "No contacts yet. Import Google Contacts, CSV, or connect Chat33 to capture supported social conversations."}</p>}
+            {filteredCloudContacts.length === 0 && filteredSocialContacts.length === 0 && filteredCallContacts.length === 0 && <p className="rounded-xl border border-dashed border-neutral-200 p-8 text-center text-sm text-neutral-500">{demoMode ? "Contact imports are disabled in demo mode." : "No contacts yet. Import Google Contacts, CSV, or connect Chat33 to capture supported social conversations."}</p>}
             {cloudContacts.map((person: any, i: number) => <div key={person.Phone || person.phone || i} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-100 px-3 py-2.5">
               <div><p className="text-sm font-semibold text-neutral-900">{person.Name || person.name || "Contact"}</p><p className="mt-0.5 text-xs text-neutral-500">{person.Phone || person.phone || ""}{(person.Email || person.email) ? " · " + (person.Email || person.email) : ""}</p></div>
               <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[10px] font-semibold text-neutral-500">Cloudflare · {person.Source || person.source || "Contact"}</span>
@@ -274,7 +287,7 @@ export default function Customers({ onOpenCoreFunctions }: { onOpenCoreFunctions
               <div><p className="text-sm font-semibold text-neutral-900">{person.name || person.username || "Social contact"}</p><p className="mt-0.5 text-xs text-neutral-500">{person.username ? "@" + person.username + " · " : ""}{person.channel ? person.channel + " · " : ""}{person.platform ? person.platform.toUpperCase() : "SOCIAL"}{person.slot ? " · Chat33 account " + person.slot : ""}</p></div>
               <span className="rounded-full bg-orange-50 px-2.5 py-1 text-[10px] font-semibold text-orange-700">{person.source === "meta_whatsapp" ? "WhatsApp · Meta" : "Social · Chat33"}</span>
             </div>)}
-            {callContacts.map((person: any) => <div key={"call:" + person.phone} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-100 px-3 py-2.5">
+            {filteredCallContacts.map((person: any) => <div key={"call:" + person.phone} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-100 px-3 py-2.5">
               <div><p className="text-sm font-semibold text-neutral-900">{person.name}</p><p className="mt-0.5 text-xs text-neutral-500">{person.phone}{person.lastCallAt ? " · last call " + new Date(person.lastCallAt).toLocaleString() : ""}</p></div>
               <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[10px] font-semibold text-neutral-600">Calls · {person.direction}</span>
             </div>)}
