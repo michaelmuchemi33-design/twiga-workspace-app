@@ -39,6 +39,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [savedProfile, setSavedProfile] = useState<Record<string, any>>({});
 
   useEffect(() => {
     if (demo || !businessId || !supabase) return;
@@ -46,13 +47,14 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
     setLoading(true);
     void Promise.all([
       supabase.from("businesses").select("name,business_type").eq("id", businessId).maybeSingle(),
-      supabase.from("twiga_business_profiles").select("business_summary,what_they_do,what_they_sell,products_and_services,opening_hours,service_area").eq("business_id", businessId).maybeSingle(),
+      supabase.from("twiga_business_profiles").select("*").eq("business_id", businessId).maybeSingle(),
     ]).then(([businessResult, profileResult]) => {
       if (!active) return;
       if (businessResult.error) throw businessResult.error;
       if (profileResult.error) throw profileResult.error;
       const business = businessResult.data || {};
       const profile = profileResult.data || {};
+      setSavedProfile(profile);
       setForm({
         name: String(business.name || ""),
         businessType: String(business.business_type || "general"),
@@ -96,6 +98,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       const { data: authData } = await supabase.auth.getUser();
       const user = authData.user;
       const profile = {
+        ...savedProfile,
         business_name: form.name.trim(),
         business_type: form.businessType,
         owner_name: String(user?.user_metadata?.full_name || user?.user_metadata?.name || ""),
