@@ -157,9 +157,12 @@ async function chat33Connection(req, env) {
       await deleteIntegrationD1(env,access.businessId,provider,{userId:access.ctx.userId,role:access.ctx.role},'Business owner disconnected a Chat33 gateway account.');
       return json({ok:true,deleted:true,slot});
     }
-    const apiKey = String(body.apiKey || '').trim();
-    const webhookSecret = String(body.webhookSecret || '').trim();
-    const displayName = txt(body.displayName || ('Chat33 account ' + slot),100);
+    const existing = await chat33GetSlot(env,access.businessId,slot);
+    const submittedKey = String(body.apiKey || '').trim();
+    const apiKey = submittedKey || (existing && existing.key) || '';
+    const submittedWebhookSecret = String(body.webhookSecret || '').trim();
+    const webhookSecret = submittedWebhookSecret || (existing && existing.webhookSecret) || '';
+    const displayName = txt(body.displayName || (existing && existing.name) || ('Chat33 account ' + slot),100);
     if (apiKey.length < 12 || apiKey.length > 4000) return json({ok:false,error:'Enter a valid Chat33 API key.'},400);
     if (webhookSecret && (webhookSecret.length < 12 || webhookSecret.length > 4000)) return json({ok:false,error:'The Chat33 webhook signing secret is invalid.'},400);
     // A read-only channel check verifies the key without publishing or messaging.
@@ -296,7 +299,8 @@ async function chat33Publish(req, env) {
         const accountsPayload=await chat33Api(record.key,'/accounts','GET');
         const validIds=new Set(chat33Array(accountsPayload,['accounts','channels']).map(item=>String(item.id||item.accountId||item.channelId||'')));
         if(ids.some(id=>!validIds.has(id))) throw new Error('One or more selected channels do not belong to this Chat33 account.');
-        const postBody={accountIds:ids,text:textValue,mediaUrls,mediaType:mediaType||undefined,scheduledAt:scheduledAt||undefined};
+        const groupMediaUrls=Array.isArray(group.mediaUrls)?group.mediaUrls.map(value=>txt(value,1200)).filter(Boolean).slice(0,4):mediaUrls;
+      const postBody={accountIds:ids,text:textValue,mediaUrls:groupMediaUrls,mediaType:mediaType||undefined,scheduledAt:scheduledAt||undefined};
         if(body.platformConfig && typeof body.platformConfig==='object') postBody.platformConfig=body.platformConfig;
         const validation=await chat33Api(record.key,'/posts/validate','POST',postBody);
         if(validation && (validation.valid===false || validation.ok===false || validation.error)) throw new Error(txt(validation.error || validation.message || 'Chat33 rejected the post validation.',240));
@@ -314,13 +318,15 @@ async function chat33Publish(req, env) {
     return json({ok:false,error:message.startsWith('INACTIVE|')?message.slice(9):status===401?'Sign in again.':status===403?'You do not have access to this business workspace.':'TWIGA could not publish through Chat33.'},status);
   }
 }
+let chat33SchemaReady = null;
 async function ensureChat33Schema(env) {
-  await env.DB.batch([
+  if (!chat33SchemaReady) chat33SchemaReady = env.DB.batch([
     env.DB.prepare("CREATE TABLE IF NOT EXISTS chat33_social_contacts (business_id TEXT NOT NULL, slot INTEGER NOT NULL, contact_id TEXT NOT NULL, platform TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', username TEXT NOT NULL DEFAULT '', channel_name TEXT NOT NULL DEFAULT '', last_message_at TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (business_id,slot,contact_id,platform))"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_chat33_people_tenant ON chat33_social_contacts(business_id,updated_at)"),
     env.DB.prepare("CREATE TABLE IF NOT EXISTS chat33_social_messages (event_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, slot INTEGER NOT NULL, conversation_id TEXT NOT NULL, contact_id TEXT NOT NULL, platform TEXT NOT NULL, direction TEXT NOT NULL, message_text TEXT NOT NULL DEFAULT '', message_sent_at TEXT, reply_window_ends_at TEXT, payload_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)"),
     env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_chat33_messages_inbox ON chat33_social_messages(business_id,slot,conversation_id,created_at)")
-  ]);
+  ]).catch(error => { chat33SchemaReady = null; throw error; });
+  return chat33SchemaReady;
 }
 async function chat33SaveContact(env,businessId,slot,platform,contact,channel) {
   const id=txt(contact && (contact.id || contact.externalId || contact.username || contact.handle),160);
@@ -353,6 +359,7 @@ async function chat33SignatureValid(raw,header,secret) {
   return expected.length===parts.v1.length && expected===parts.v1;
 }
 async function chat33Webhook(req,env) {
+  await ensureIntegrationSchema(env);
   const raw=await req.text();
   let body; try{body=JSON.parse(raw);}catch(_){return json({ok:false,error:'Invalid webhook JSON.'},400);}
   const slots=[];
