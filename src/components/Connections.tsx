@@ -36,6 +36,7 @@ async function edgeFunctionError(error: any, fallback: string) {
 
 export default function Connections({ businessId, demo = false, googleAuth }: { businessId: string; demo?: boolean; googleAuth?: { tokens?: { accessToken: string; refreshToken?: string } | null } }) {
   const [status, setStatus] = useState<any>({ connected: false });
+  const [includeGmailSend, setIncludeGmailSend] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [tests, setTests] = useState<Record<string, string>>({});
@@ -97,7 +98,9 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     if (!businessId || !supabase) return;
     try {
       const [connection, oauth] = await Promise.all([action("status"), action("oauth.config")]);
-      setStatus(connection); setOauthConfig(oauth);
+      setStatus(connection);
+      setIncludeGmailSend(Boolean(connection.gmailSendEnabled));
+      setOauthConfig(oauth);
     } catch (e) { setMessage(e instanceof Error ? e.message : "Google status unavailable."); }
   }, [action, businessId]);
 
@@ -165,7 +168,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     if (!businessId || !supabase) { setMessage("Create or select a business first."); return; }
     setBusy(true); setMessage("");
     try {
-      if (googleAuth?.tokens?.accessToken) {
+      if (googleAuth?.tokens?.accessToken && !includeGmailSend) {
         const saved = await action("connect", { accessToken: googleAuth.tokens.accessToken, refreshToken: googleAuth.tokens.refreshToken });
         if (!saved.connected) throw new Error(saved.message || "Google did not grant all required permissions. Sign out and sign in with Google again to review the permissions.");
         setMessage("Google connected as " + (saved.googleEmail || "your account") + "."); await refresh(); return;
@@ -174,10 +177,10 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       if (!cfg.clientId) throw new Error("Google OAuth client ID is missing from TWIGA server settings.");
       await loadGoogleIdentity();
       const client = (window as any).google.accounts.oauth2.initCodeClient({
-        client_id: cfg.clientId, scope: (cfg.scopes || []).join(" "), ux_mode: "popup", access_type: "offline", prompt: "consent", include_granted_scopes: true,
+        client_id: cfg.clientId, scope: [...(cfg.scopes || []), ...(includeGmailSend && cfg.gmailSendScope ? [cfg.gmailSendScope] : [])].join(" "), ux_mode: "popup", access_type: "offline", prompt: "consent", include_granted_scopes: true,
         callback: async (result: any) => {
           if (result.error || !result.code) { setMessage(result.error_description || result.error || "Google permission was not completed."); setBusy(false); return; }
-          try { const saved = await action("connect", { authorizationCode: result.code, redirectUri: "postmessage" }); if (!saved.connected) throw new Error(saved.message || "Google did not grant all requested permissions."); setMessage("Google connected as " + (saved.googleEmail || "your account") + "."); await refresh(); }
+          try { const saved = await action("connect", { authorizationCode: result.code, redirectUri: "postmessage", includeGmailSend }); if (!saved.connected) throw new Error(saved.message || "Google did not grant all requested permissions."); setMessage("Google connected as " + (saved.googleEmail || "your account") + "."); await refresh(); }
           catch (e) { setMessage(e instanceof Error ? e.message : "Google connection failed."); } finally { setBusy(false); }
         },
         error_callback: (e: any) => { setMessage(e?.message || "Google permission window closed."); setBusy(false); },
@@ -341,6 +344,15 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     <BringYourOwnAPI businessId={businessId} demo={demo} />
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <h2 className="text-lg font-semibold text-neutral-950">Google permissions</h2><p className="mt-1 text-sm text-neutral-500">Approve access in Google. You can revoke it from your Google Account at any time.</p>
+      <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-950">
+        <label className="flex items-start gap-3 text-sm text-neutral-800 dark:text-neutral-100">
+          <input type="checkbox" checked={includeGmailSend} onChange={(event) => setIncludeGmailSend(event.target.checked)} className="mt-1 accent-orange-500" />
+          <span><strong>Also connect Gmail sending (optional)</strong>
+            <span className="mt-1 block text-xs leading-5 text-neutral-600 dark:text-neutral-300">Allows TWIGA to send approved business emails from this Google account. It does not grant inbox-reading access. Google classifies this as a sensitive scope, so the public OAuth app must complete Google's verification before it is generally available.</span>
+            <span className="mt-1 block text-xs font-semibold text-neutral-700 dark:text-neutral-200">{status.gmailSendEnabled ? "Gmail sending permission granted" : "Not connected"}</span>
+          </span>
+        </label>
+      </div>
       <div className="mt-4 divide-y divide-neutral-100">
         {items.map(item => {
           const granted = (status.scopes || []).some((scope: string) => item.key === "calendar" ? scope.includes("calendar.events") : item.key === "contacts" ? scope.includes("contacts") : item.key === "sheets" ? scope.includes("spreadsheets") : scope.includes("drive.file"));
