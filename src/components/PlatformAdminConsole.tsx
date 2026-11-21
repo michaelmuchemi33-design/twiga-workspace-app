@@ -202,7 +202,7 @@ export default function PlatformAdminConsole() {
 
   const metrics = overview.metrics || {};
   const lineFor = (businessId: string) => phoneLines.filter((line) => line.business_id === businessId);
-  const providersFor = (businessId: string) => providerConnections.filter((item) => item.business_id === businessId).map((item) => item.provider).join(", ") || "None registered";
+  const providersFor = (businessId: string) => providerConnections.filter((item) => item.business_id === businessId).map((item) => String(item.provider || "provider") + (item.secret_last4 ? " · ••••" + String(item.secret_last4) : "")).join(", ") || "None registered";
 
   return <section className="space-y-5 rounded-2xl border border-neutral-300 bg-white p-5 shadow-sm">
     <div className="flex flex-wrap items-start justify-between gap-3">
