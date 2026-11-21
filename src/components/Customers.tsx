@@ -32,7 +32,7 @@ const stageMeta: Record<
 };
 
 export default function Customers() {
-  const { customers, advanceCustomer, businessId, demoMode } = useStore();
+  const { customers, advanceCustomer, businessId, demoMode, callRecords } = useStore();
   const [draftCustomerId, setDraftCustomerId] = useState("");
   const [draftCustomerName, setDraftCustomerName] = useState("");
   const [draftText, setDraftText] = useState("");
@@ -185,6 +185,22 @@ export default function Customers() {
     } finally { setDraftBusy(false); }
   };
 
+  const normalizedPhone = (value: unknown) => String(value || "").replace(/\\D/g, "");
+  const knownPhones = new Set([
+    ...cloudContacts.map((person: any) => normalizedPhone(person.Phone || person.phone)),
+    ...socialContacts.map((person: any) => normalizedPhone(person.phone || (person.platform === "whatsapp" ? person.id : ""))),
+  ].filter(Boolean));
+  const callContactMap = new Map<string, any>();
+  for (const record of callRecords || []) {
+    const direction = String(record.direction || "").toLowerCase();
+    const phone = direction.includes("inbound") ? (record.from_number || record.to_number) : (record.to_number || record.from_number);
+    const digits = normalizedPhone(phone);
+    if (!digits || knownPhones.has(digits) || callContactMap.has(digits)) continue;
+    const details = (record.structured_data || {}) as Record<string, unknown>;
+    const name = String(details.contact_name || details.customer_name || details.callerName || details.name || phone);
+    callContactMap.set(digits, {id:record.id, phone:String(phone), name, lastCallAt:record.started_at || record.created_at, direction});
+  }
+  const callContacts = Array.from(callContactMap.values());
   const due = customers.filter((c) => c.followUpIn === 0).length;
 
   return (
@@ -215,8 +231,8 @@ export default function Customers() {
       <Card className="rounded-2xl border-neutral-200 shadow-sm">
         <CardHeader className="flex flex-wrap items-center justify-between gap-3">
           <div><CardTitle className="flex items-center gap-2 text-xl font-semibold"><IconUsers className="h-5 w-5 text-orange-500" /> People & contacts</CardTitle>
-            <CardDescription>Phone, Google and imported contacts plus social identities captured from connected Chat33 inboxes are shown for this business. Records remain tenant-scoped.</CardDescription></div>
-          <Badge className="border-neutral-200 bg-neutral-50 text-neutral-700">{cloudContacts.length + socialContacts.length} contacts</Badge>
+            <CardDescription>Phone, Google, call-history, WhatsApp and supported Chat33 social contacts are shown together for this business. Records remain tenant-scoped.</CardDescription></div>
+          <Badge className="border-neutral-200 bg-neutral-50 text-neutral-700">{cloudContacts.length + socialContacts.length + callContacts.length} contacts</Badge>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap gap-2">
@@ -236,17 +252,21 @@ export default function Customers() {
           <input value={contactSearch} onChange={(e) => setContactSearch(e.target.value)} placeholder="Search saved contacts by name or phone…" className="h-10 w-full rounded-lg border border-neutral-200 px-3 text-sm" />
           {contactsMessage && <p role="status" className="rounded-lg bg-neutral-50 p-3 text-sm text-neutral-600">{contactsMessage}</p>}
           <div className="space-y-2">
-            {cloudContacts.length === 0 && socialContacts.length === 0 && <p className="rounded-xl border border-dashed border-neutral-200 p-8 text-center text-sm text-neutral-500">{demoMode ? "Contact imports are disabled in demo mode." : "No contacts yet. Import Google Contacts, CSV, or connect Chat33 to capture supported social conversations."}</p>}
+            {cloudContacts.length === 0 && socialContacts.length === 0 && callContacts.length === 0 && <p className="rounded-xl border border-dashed border-neutral-200 p-8 text-center text-sm text-neutral-500">{demoMode ? "Contact imports are disabled in demo mode." : "No contacts yet. Import Google Contacts, CSV, or connect Chat33 to capture supported social conversations."}</p>}
             {cloudContacts.map((person: any, i: number) => <div key={person.Phone || person.phone || i} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-100 px-3 py-2.5">
               <div><p className="text-sm font-semibold text-neutral-900">{person.Name || person.name || "Contact"}</p><p className="mt-0.5 text-xs text-neutral-500">{person.Phone || person.phone || ""}{(person.Email || person.email) ? " · " + (person.Email || person.email) : ""}</p></div>
               <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[10px] font-semibold text-neutral-500">Cloudflare · {person.Source || person.source || "Contact"}</span>
             </div>)}
             {socialContacts.map((person: any, i: number) => <div key={"social:" + person.slot + ":" + person.platform + ":" + (person.id || i)} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-orange-100 bg-orange-50/30 px-3 py-2.5">
-              <div><p className="text-sm font-semibold text-neutral-900">{person.name || person.username || "Social contact"}</p><p className="mt-0.5 text-xs text-neutral-500">{person.username ? "@" + person.username + " · " : ""}{person.channel ? person.channel + " · " : ""}{person.platform ? person.platform.toUpperCase() : "SOCIAL"} · Chat33 account {person.slot}</p></div>
-              <span className="rounded-full bg-orange-50 px-2.5 py-1 text-[10px] font-semibold text-orange-700">Social · Chat33</span>
+              <div><p className="text-sm font-semibold text-neutral-900">{person.name || person.username || "Social contact"}</p><p className="mt-0.5 text-xs text-neutral-500">{person.username ? "@" + person.username + " · " : ""}{person.channel ? person.channel + " · " : ""}{person.platform ? person.platform.toUpperCase() : "SOCIAL"}{person.slot ? " · Chat33 account " + person.slot : ""}</p></div>
+              <span className="rounded-full bg-orange-50 px-2.5 py-1 text-[10px] font-semibold text-orange-700">{person.source === "meta_whatsapp" ? "WhatsApp · Meta" : "Social · Chat33"}</span>
+            </div>)}
+            {callContacts.map((person: any) => <div key={"call:" + person.phone} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-100 px-3 py-2.5">
+              <div><p className="text-sm font-semibold text-neutral-900">{person.name}</p><p className="mt-0.5 text-xs text-neutral-500">{person.phone}{person.lastCallAt ? " · last call " + new Date(person.lastCallAt).toLocaleString() : ""}</p></div>
+              <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[10px] font-semibold text-neutral-600">Calls · {person.direction}</span>
             </div>)}
           </div>
-          <p className="text-xs leading-5 text-neutral-400">Google Contacts and CSV imports are saved in this business's contact index. Chat33 adds social identities from supported connected inbox conversations (currently Instagram and Facebook Messenger); phone details are shown when that source provides them.</p>
+          <p className="text-xs leading-5 text-neutral-400">The directory combines saved contacts, call participants, WhatsApp Business senders and social identities captured from connected Chat33 inboxes. Displayed networks depend on each provider's supported contact and inbox APIs.</p>
         </CardContent>
       </Card>
 
