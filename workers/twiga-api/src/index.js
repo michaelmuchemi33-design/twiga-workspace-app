@@ -718,6 +718,9 @@ async function wahaTenantRuntime(env, businessId) {
     WAHA_API_KEY:String(env.WAHA_INTERNAL_API_KEY),
     WAHA_RUN_XVFB:'false',
     WAHA_LOCAL_STORE_BASE_DIR:'/app/.sessions',
+    WAHA_EVENTS_DOWNLOAD_MEDIA:'true',
+    WAHA_API_DOWNLOAD_MEDIA:'true',
+    WAHA_NAMESPACE:'all',
     R2_ACCOUNT_ID:String(env.R2_ACCOUNT_ID),
     R2_BUCKET_NAME:bucket,
     AWS_ACCESS_KEY_ID:accessKey,
@@ -923,7 +926,7 @@ async function wahaDisconnect(req,env) {
     const ctx = await authorize(env,token,body.business_id);
     const account = await wahaAccount(env,ctx.biz.id);
     if (!account) return json({ok:true,disconnected:true});
-    const response = await wahaRequest(env,ctx.biz.id,'/api/sessions/'+wahaUrlSegment(account.session_name)+'/logout','POST',{});
+    const response = await wahaRequest(env,ctx.biz.id,'/api/sessions/'+wahaUrlSegment(account.session_name),'DELETE');
     if (!response.ok) {
       const details = await response.text();
       return json({ok:false,error:txt(details || 'WhatsApp could not be disconnected.',240)},response.status);
@@ -996,9 +999,14 @@ async function processWahaMessage(env,businessId,detail) {
     if (typeof media.data === 'string' && media.data.length < 12000000) {
       const base64 = media.data.replace(/^data:[^,]+,/, '');
       audioBytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
-    } else if (typeof media.url === 'string' && media.url.startsWith('/api/')) {
-      const response = await wahaRequest(env,businessId,media.url,'GET');
-      if (response.ok) audioBytes = new Uint8Array(await response.arrayBuffer());
+    } else if (typeof media.url === 'string') {
+      try {
+        const mediaUrl = new URL(media.url, 'http://localhost:3000');
+        if ((mediaUrl.hostname === 'localhost' || mediaUrl.hostname === '127.0.0.1') && mediaUrl.pathname.startsWith('/api/')) {
+          const response = await wahaRequest(env,businessId,mediaUrl.pathname+mediaUrl.search,'GET');
+          if (response.ok) audioBytes = new Uint8Array(await response.arrayBuffer());
+        }
+      } catch (_) {}
     }
     if (audioBytes && audioBytes.length < 12 * 1024 * 1024 && env.AI) {
       const transcript = await env.AI.run('@cf/openai/whisper',{audio:Array.from(audioBytes)});
@@ -1117,7 +1125,6 @@ export class WahaContainer extends Container {
   defaultPort = 3000;
   sleepAfter = '2h';
   enableInternet = true;
-  pingEndpoint = 'api/health';
 }
 
 
