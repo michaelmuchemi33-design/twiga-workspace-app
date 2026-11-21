@@ -567,3 +567,46 @@ html:focus-within { scroll-behavior: auto !important; }
 .dark .hover\\:bg-neutral-50:hover,
 .dark .hover\\:bg-neutral-100:hover { background-color: #303030 !important; }
 .dark .bg-white .text-white { color: #f5f5f5 !important; }
+
+
+/* TWIGA contrast guard: dark action buttons keep white labels, numbers and icons. */
+button[class*="bg-neutral-950"],
+button[class*="bg-neutral-900"],
+button[class*="bg-black"],
+button[class*="bg-gray-900"],
+button[class*="bg-zinc-900"],
+button[class*="bg-stone-900"],
+a[role="button"][class*="bg-neutral-950"],
+a[role="button"][class*="bg-neutral-900"],
+a[role="button"][class*="bg-black"],
+[role="button"][class*="bg-neutral-950"],
+[role="button"][class*="bg-neutral-900"],
+[role="button"][class*="bg-black"] {
+  color: #fff !important;
+}
+button[class*="bg-neutral-950"] *,
+button[class*="bg-neutral-900"] *,
+button[class*="bg-black"] *,
+button[class*="bg-gray-900"] *,
+button[class*="bg-zinc-900"] *,
+button[class*="bg-stone-900"] *,
+a[role="button"][class*="bg-neutral-950"] *,
+a[role="button"][class*="bg-neutral-900"] *,
+a[role="button"][class*="bg-black"] *,
+[role="button"][class*="bg-neutral-950"] *,
+[role="button"][class*="bg-neutral-900"] *,
+[role="button"][class*="bg-black"] * {
+  color: #fff !important;
+}
+button[class*="bg-neutral-950"] svg,
+button[class*="bg-neutral-900"] svg,
+button[class*="bg-black"] svg,
+button[class*="bg-gray-900"] svg,
+button[class*="bg-zinc-900"] svg,
+button[class*="bg-stone-900"] svg,
+[role="button"][class*="bg-neutral-950"] svg,
+[role="button"][class*="bg-neutral-900"] svg,
+[role="button"][class*="bg-black"] svg {
+  color: #fff !important;
+  stroke: currentColor;
+}
