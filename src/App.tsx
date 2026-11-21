@@ -195,14 +195,14 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
     <StoreProvider demo={demo} userId={userId} businessId={businessId}>
       <div
         className={cn(
-          "min-h-screen bg-neutral-50 text-neutral-900 transition-all duration-500",
+          "min-h-screen bg-neutral-50 text-neutral-900 transition-all duration-500 dark:bg-neutral-950 dark:text-neutral-100",
           isCompactPwaLayout ? "pb-36" : "pb-8"
         )}
       >
         {!isCompactPwaLayout && <SideRail tab={tab} onSelect={go} />}
 
         <main className={cn("mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8", !isCompactPwaLayout && "lg:pl-24")}>
-          <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between dark:border-neutral-800 dark:bg-neutral-900">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-950 text-lg font-black text-orange-400">{demo ? <img src="https://twiga.co.ke/favicon-demo.png" alt="TWIGA" className="h-10 w-10 rounded-xl object-contain" /> : "T"}</div>
               <div><p className="font-bold tracking-tight text-neutral-950">TWIGA</p><p className="text-xs text-neutral-500">{demo ? "Interactive product preview · live AI · sample data" : "Your private business workspace"}</p></div>

@@ -7,6 +7,30 @@ const cache = new Map();
 const today = () => new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
 const now = () => new Date().toISOString();
 const txt = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 200);
+const aiReplyText = (value, fallback, limit, depth) => {
+  const level = Number(depth || 0);
+  if (level > 5 || value == null) return fallback;
+  if (typeof value === 'string') {
+    const text = txt(value, limit || 1800);
+    return text && text !== '[object Object]' && text !== '[object Array]' ? text : fallback;
+  }
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return fallback;
+  if (Array.isArray(value)) return value.map((item) => aiReplyText(item, '', limit, level + 1)).filter(Boolean).join('\\n') || fallback;
+  if (typeof value === 'object') {
+    for (const key of ['text', 'content', 'reply', 'message', 'response', 'output_text', 'generated_text', 'generation', 'answer', 'output', 'result', 'data', 'description', 'summary']) {
+      if (value[key] !== undefined && value[key] !== value) {
+        const text = aiReplyText(value[key], '', limit, level + 1);
+        if (text) return text;
+      }
+    }
+    if (Array.isArray(value.choices)) {
+      const text = aiReplyText(value.choices[0], '', limit, level + 1);
+      if (text) return text;
+    }
+  }
+  return fallback;
+};
 const num = (v, label, min) => { const n = Number(v); if (!isFinite(n) || n < (min == null ? 0 : min)) throw new Error('Invalid ' + label); return Math.round(n * 100) / 100; };
 const rid = p => p + '-' + today().slice(2).replace(/-/g, '') + '-' + Math.random().toString(16).slice(2, 7).toUpperCase();
 const size = (...s) => 120 + s.reduce((a, x) => a + String(x == null ? '' : x).length, 0);
@@ -139,7 +163,7 @@ async function dispatchDueBusinessWorkers(env) {
     const businessId = String(row.business_id);
     const timestamp = now();
     const taskId = 'daily-' + businessId + '-' + today();
-    await env.DB.prepare("INSERT OR IGNORE INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'daily_review', 'Daily business review', 'Review recent orders, sales, enquiries and work that may need the owner.', 'pending', 'normal', ?, ?, ?)")
+    await env.DB.prepare("INSERT OR IGNORE INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'daily_review', 'Daily business review', 'Review recent orders, sales, enquiries and work that may need the owner.', 'pending', 'medium', ?, ?, ?)")
       .bind(taskId, businessId, timestamp, timestamp, timestamp).run();
     await env.DB.prepare('UPDATE business_worker_settings SET next_review_at = ?, updated_at = ? WHERE business_id = ? AND enabled = 1')
       .bind(nextNairobiReviewAt(), timestamp, businessId).run();
@@ -160,12 +184,22 @@ async function runBusinessReview(env, businessId, taskId) {
   const ctx = {biz: {id: businessId, name: bizName, business_type: bizType}, role: 'owner'};
   const results = await Promise.all([
     ACTIONS.summary(env, ctx, {}),
-    ACTIONS.listOrders(env, ctx, {limit: 12}),
+    ACTIONS.listOrders(env, ctx, {limit: 30}),
     ACTIONS.listItems(env, ctx, {})
   ]);
   const summary = results[0];
   const orders = results[1];
   const items = results[2];
+  const recentOrders = (orders.orders || []).slice(0, 30);
+  const catalogue = (items.items || []).slice(0, 80);
+  const ordersNeedingOwnerReview = recentOrders.filter((order) => {
+    const status = String(order.Status || '').toLowerCase();
+    return !['completed', 'cancelled', 'paid', 'quote'].includes(status) || Number(order.Paid || 0) < Number(order.Total || 0);
+  }).slice(0, 20);
+  const unpaidOrders = recentOrders.filter((order) => Number(order.Paid || 0) < Number(order.Total || 0) && !['cancelled', 'quote'].includes(String(order.Status || '').toLowerCase())).slice(0, 20);
+  const appointments = recentOrders.filter((order) => String(order.Type || '').toLowerCase() === 'appointment' && !['completed', 'cancelled'].includes(String(order.Status || '').toLowerCase())).slice(0, 15);
+  const zeroStockItems = catalogue.filter((item) => Number(item.Active) !== 0 && Number(item.TrackStock) === 1 && Number(item.Stock || 0) <= 0);
+  const deliveryRequests = recentOrders.filter((order) => /deliver|delivery|drop.?off/i.test(String(order.Notes || ''))).slice(0, 15);
   const data = {
     business: {name: bizName, type: bizType},
     profile: {
@@ -176,18 +210,25 @@ async function runBusinessReview(env, businessId, taskId) {
       faq: txt(profile.frequently_asked_questions, 1600)
     },
     today: summary,
-    recentOrders: (orders.orders || []).slice(0, 12),
-    catalogue: (items.items || []).slice(0, 50)
+    recentOrders,
+    ordersNeedingOwnerReview,
+    unpaidOrders,
+    appointments,
+    deliveryRequests,
+    zeroStockItems,
+    catalogue
   };
   const system = [
-    'You are TWIGA Business Worker. Produce a concise owner operations review for one Kenyan business.',
-    'Use only the supplied business data. Never invent a customer, order, price, payment, stock figure, missed call or appointment.',
-    'Identify only practical actions supported by the data. Keep every action as a suggestion for the owner or staff to review. Do not send messages, place calls, charge customers, change prices, cancel bookings, purchase anything or claim work was completed.',
-    'If there is no reliable evidence for an action, return an empty actions array.',
-    'Return one JSON object only: {"headline":"short status","summary":"2-4 concise sentences","actions":[{"title":"short owner task","detail":"why it matters and what the owner should check","priority":"normal|high"}]}. Maximum 5 actions.',
+    'You are TWIGA Business Worker. Produce a concise, evidence-based owner operations review for one Kenyan business.',
+    'Use only the supplied business data. Never invent a customer, order, price, payment, delivery request, stock figure, missed call, appointment or deadline.',
+    'Create useful owner/staff to-do items from real evidence: review and prepare open orders; verify unpaid balances before dispatch; check delivery details only when the order notes explicitly mention delivery; confirm appointment details and staff availability; resolve zero-stock catalogue items before selling them; and check any other clearly evidenced operational issue.',
+    'For every order task, include its real order ID and customer when available. For stock tasks, include the exact catalogue item name. For appointment tasks, include the recorded service/date/time only when supplied.',
+    'Prioritise high for urgent customer commitments or blocked orders, medium for outstanding fulfilment, bookings or payment checks, and low for routine stock and follow-up planning. Do not invent due dates.',
+    'Tasks are recommendations for the business owner or staff to review. Do not send messages, place calls, charge customers, change prices, cancel bookings, purchase stock, dispatch a delivery or claim work was completed.',
+    'Return one JSON object only: {"headline":"short status","summary":"2-4 concise sentences","actions":[{"title":"short, specific owner task","detail":"what the owner/staff should check and the evidence behind it","priority":"high|medium|low"}]}. Maximum 10 actions. Return fewer rather than inventing work.',
     'Business facts (JSON): ' + JSON.stringify(data)
   ].join('\n\n');
-  const raw = await runCloudflareAI(env, [{role: 'system', content: system}, {role: 'user', content: 'Review this business now.'}], {max_tokens: 900});
+  const raw = await runCloudflareAI(env, [{role: 'system', content: system}, {role: 'user', content: 'Review the real business records and prepare the owner action list.'}], {max_tokens: 1600});
   let parsed = null;
   try {
     let candidate = String(raw).trim();
@@ -198,7 +239,7 @@ async function runBusinessReview(env, businessId, taskId) {
   } catch (_) {}
   const headline = txt(parsed && parsed.headline ? parsed.headline : 'Daily review completed', 120);
   const reviewSummary = txt(parsed && parsed.summary ? parsed.summary : 'TWIGA checked the latest business records. Review the pending items below before taking action.', 1000);
-  const actions = Array.isArray(parsed && parsed.actions) ? parsed.actions.slice(0, 5) : [];
+  const actions = Array.isArray(parsed && parsed.actions) ? parsed.actions.slice(0, 10) : [];
   const stamp = now();
   const newTasks = actions.map((action, index) => {
     const title = txt(action && action.title, 140);
@@ -207,7 +248,7 @@ async function runBusinessReview(env, businessId, taskId) {
       id: 'own-' + taskId + '-' + index,
       title: title,
       detail: txt(action && action.detail, 800),
-      priority: action && action.priority === 'high' ? 'high' : 'normal'
+      priority: String(action && action.priority || '').toLowerCase() === 'high' ? 'high' : String(action && action.priority || '').toLowerCase() === 'low' ? 'low' : 'medium'
     };
   }).filter(Boolean);
   if (newTasks.length) {
@@ -229,7 +270,7 @@ async function runBusinessAgentTasks(env, businessId) {
   const staleBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   await env.DB.prepare("UPDATE business_worker_tasks SET status = 'pending', updated_at = ? WHERE business_id = ? AND status = 'processing' AND updated_at <= ?")
     .bind(now(), businessId, staleBefore).run();
-  const tasks = await env.DB.prepare("SELECT id, task_type, detail FROM business_worker_tasks WHERE business_id = ? AND status = 'pending' AND due_at <= ? ORDER BY priority DESC, due_at LIMIT 10")
+  const tasks = await env.DB.prepare("SELECT id, task_type, detail FROM business_worker_tasks WHERE business_id = ? AND status = 'pending' AND due_at <= ? ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'normal' THEN 1 ELSE 2 END, due_at LIMIT 10")
     .bind(businessId, now()).all();
   const outcomes = [];
   for (const task of tasks.results || []) {
@@ -272,7 +313,7 @@ async function aiWorker(req, env) {
     if (body.action === 'overview') {
       const result = await Promise.all([
         env.DB.prepare('SELECT enabled, next_review_at, last_run_at, last_review_at FROM business_worker_settings WHERE business_id = ?').bind(ctx.biz.id).first(),
-        env.DB.prepare("SELECT id, title, detail, status, priority, due_at, created_at FROM business_worker_tasks WHERE business_id = ? AND status IN ('needs_review','pending','failed') ORDER BY CASE priority WHEN 'high' THEN 0 ELSE 1 END, created_at DESC LIMIT 6").bind(ctx.biz.id).all(),
+        env.DB.prepare("SELECT id, task_type, title, detail, status, priority, due_at, created_at FROM business_worker_tasks WHERE business_id = ? AND status IN ('needs_review','pending','failed') ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'normal' THEN 1 ELSE 2 END, due_at ASC, created_at DESC LIMIT 30").bind(ctx.biz.id).all(),
         env.DB.prepare('SELECT id, notification_type, title, body, priority, created_at FROM business_worker_notifications WHERE business_id = ? ORDER BY created_at DESC LIMIT 4').bind(ctx.biz.id).all(),
         env.DB.prepare("SELECT SUM(CASE WHEN status = 'needs_review' THEN 1 ELSE 0 END) AS needs_review, SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed FROM business_worker_tasks WHERE business_id = ?").bind(ctx.biz.id).first()
       ]);
@@ -284,7 +325,7 @@ async function aiWorker(req, env) {
       if (['owner','admin'].indexOf(String(ctx.role)) < 0) return json({ok: false, error: 'Only a business owner or administrator can run the Worker review.'}, 403);
       const id = 'manual-' + ctx.biz.id + '-' + crypto.randomUUID();
       const stamp = now();
-      await env.DB.prepare("INSERT INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'daily_review', 'Manual business review', 'Owner requested a fresh review.', 'pending', 'normal', ?, ?, ?)")
+      await env.DB.prepare("INSERT INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'daily_review', 'Manual business review', 'Owner requested a fresh review.', 'pending', 'medium', ?, ?, ?)")
         .bind(id, ctx.biz.id, stamp, stamp, stamp).run();
       const result = await dispatchBusinessAgent(env, ctx.biz.id);
       return json({ok: true, result: result});
@@ -705,7 +746,7 @@ async function whatsappWebhook(req, env, ctx) {
 async function runCloudflareAI(env, messages, options) {
   if (!env.AI || typeof env.AI.run !== 'function') throw new Error('CLOUDFLARE_AI_BINDING_MISSING');
   const result = await env.AI.run(AI_MODEL, Object.assign({messages, temperature: 0.25, max_tokens: 1800}, options || {}));
-  const content = txt(result && (result.response || (result.choices && result.choices[0] && result.choices[0].message && result.choices[0].message.content)), 12000);
+  const content = aiReplyText(result && (result.response || (result.choices && result.choices[0] && result.choices[0].message && result.choices[0].message.content)), '', 12000);
   if (!content) throw new Error('CLOUDFLARE_AI_EMPTY_RESPONSE');
   return content;
 }
@@ -1206,13 +1247,27 @@ async function aiSetup(req,env) {
       for (const key of allowed) safeDraft[key] = txt(draft[key] || '', key === 'assistant_instructions' || key === 'products_and_services' ? 12000 : 8000);
       safeDraft.setup_details = draft.setup_details && typeof draft.setup_details === 'object' && !Array.isArray(draft.setup_details) ? draft.setup_details : {};
       const businessProfile = Object.assign({},safeDraft,{business_name:txt(draft.business_name || ctx.biz.name,120),business_type:txt(draft.business_type || ctx.biz.business_type || 'general',80)});
-      return json({ok:true,reply:txt(parsed.reply || 'I have prepared a draft from the details you shared. Review it, then save the profile.',1200),profileDraft:businessProfile,businessProfile,model:AI_MODEL});
+      return json({ok:true,reply:aiReplyText(parsed.reply, 'I have prepared a draft from the details you shared. Review it, then save the profile.', 1200),profileDraft:businessProfile,businessProfile,model:AI_MODEL});
     }
-    return json({ok:true,reply:txt(parsed && parsed.reply || raw,1800),profileDraft:null,model:AI_MODEL});
+    return json({ok:true,reply:aiReplyText(parsed && parsed.reply, raw, 1800),profileDraft:null,model:AI_MODEL});
   } catch (error) {
     const message = String(error && error.message || error);
-    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : message.startsWith('INACTIVE|') ? 403 : message === 'CLOUDFLARE_AI_BINDING_MISSING' ? 503 : 500;
-    return json({ok:false,error:message.startsWith('INACTIVE|') ? message.slice(9) : status === 401 ? 'Sign in again to continue business setup.' : status === 403 ? 'You do not have access to this business workspace.' : status === 503 ? 'Cloudflare Workers AI is not enabled for TWIGA yet.' : 'TWIGA could not complete this setup step. Your saved profile has not been changed.'},status);
+    const requestId = crypto.randomUUID();
+    const status = message === 'LOGIN_REQUIRED' ? 401
+      : message === 'NO_ACCESS' || message.startsWith('INACTIVE|') ? 403
+      : message === 'CLOUDFLARE_AI_BINDING_MISSING' ? 503
+      : message === 'CLOUDFLARE_AI_EMPTY_RESPONSE' || message === 'CLOUDFLARE_AI_REQUEST_FAILED' ? 502
+      : 500;
+    // Keep provider/database details in Worker logs, not in the browser response.
+    console.error('TWIGA /ai/setup failed', requestId, message);
+    const safeMessage = message.startsWith('INACTIVE|') ? message.slice(9)
+      : status === 401 ? 'Your sign-in has expired. Sign in again to continue.'
+      : status === 403 ? 'You do not have access to this business workspace.'
+      : status === 503 ? 'Cloudflare Workers AI is not enabled for TWIGA yet. Check the Worker AI binding.'
+      : status === 502 ? 'TWIGA AI is temporarily unavailable. Please retry in a moment.'
+      : message === 'Could not load this business profile.' ? message
+      : 'TWIGA could not complete this setup step. Your saved profile has not been changed.';
+    return json({ok:false,error:safeMessage,requestId},status);
   }
 }
 
