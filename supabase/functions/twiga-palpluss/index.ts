@@ -7,6 +7,19 @@ async function palRequest(key:string,path:string,method="GET",body?:unknown){
  const raw=await res.text();let parsed:any={};try{parsed=raw?JSON.parse(raw):{};}catch{parsed={message:raw.slice(0,500)};}
  return {ok:res.ok,status:res.status,data:parsed?.data??parsed,error:parsed?.error??null};
 }
+async function cloudflareIntegrationRequest(db:any,businessId:string,body:Record<string,unknown>){
+ const {data:secret,error}=await db.rpc("twiga_get_worker_internal_secret");
+ if(error||!secret)throw new Error("Cloudflare business integration service is not configured.");
+ const response=await fetch("https://twiga-api.twiga-ke.workers.dev/internal/integrations",{
+  method:"POST",
+  headers:{"x-twiga-worker-secret":String(secret),"Content-Type":"application/json"},
+  body:JSON.stringify({businessId,...body}),
+  signal:AbortSignal.timeout(15000),
+ });
+ const data=await response.json().catch(()=>({}));
+ if(!response.ok||data?.ok!==true)throw new Error(String(data?.error||"Cloudflare could not access this business's credentials."));
+ return data;
+}
 Deno.serve(async(req:Request)=>{
  if(req.method==="OPTIONS")return new Response("ok",{headers:cors});
  if(req.method!=="POST")return reply({error:"POST only"},405);
@@ -52,16 +65,29 @@ Deno.serve(async(req:Request)=>{
    if(key.length<20||key.length>500)return reply({error:"Enter a valid PalPluss API key or Basic Base64 credential."},400);
    const check=await palRequest(key,"/wallets/service/balance");
    if(!check.ok)return reply({error:check.status===401?"PalPluss rejected this credential. Check that the API key belongs to the correct PalPluss account.":String(check.error?.message||check.data?.message||"Could not validate the PalPluss key or account.")},check.status===401?401:400);
-   const {data:last4,error}=await db.rpc("twiga_set_palpluss_secret",{p_business_id:businessId,p_secret:key,p_updated_by:user.id});
-   if(error){console.error("PalPluss Vault save failed",error.message);return reply({error:"The credential validated but could not be stored securely."},500);}
-   return reply({saved:true,keyLast4:last4,balance:check.data,message:"PalPluss credential validated and saved in encrypted Supabase Vault. TWIGA stores the API key and creates the Base64 Basic Authorization header server-side."});
+   const result=await cloudflareIntegrationRequest(db,businessId,{
+    action:"save",provider:"palpluss",displayName:"Business PalPluss account",integrationType:"payments",
+    credentials:{api_key:key},config:{},status:"verified",
+    lastTestMessage:"PalPluss account validated against the service wallet endpoint.",
+    actorUserId:user.id,actorRole:String(member.role||"owner"),assistedByAdmin:false
+   });
+   const last4=String(result.integration?.credentials_last4?.api_key||key.slice(-4));
+   return reply({saved:true,keyLast4:last4,balance:check.data,message:"PalPluss credential validated and saved in this business's encrypted Cloudflare D1 workspace. TWIGA creates the Base64 Basic Authorization header server-side."});
   }
 
-  const {data:businessSecret,error:secretError}=await db.rpc("twiga_get_provider_secret",{p_business_id:businessId,p_provider:"palpluss"});
+  let d1BusinessSecret="";
+  let d1BusinessLast4="";
+  try{
+   const result=await cloudflareIntegrationRequest(db,businessId,{action:"get_secret",provider:"palpluss"});
+   d1BusinessSecret=String(result.credentials?.api_key||"");
+   d1BusinessLast4=String(result.credentials_last4?.api_key||d1BusinessSecret.slice(-4));
+  }catch(error){console.warn("PalPluss Cloudflare D1 lookup unavailable; checking legacy credential store.",String(error).slice(0,160));}
+  const {data:legacyBusinessSecret,error:secretError}=await db.rpc("twiga_get_provider_secret",{p_business_id:businessId,p_provider:"palpluss"});
   const {data:platformSecret}=await db.rpc("twiga_get_platform_secret",{p_provider:"palpluss_platform_api_key"});
-  const secret=platformSecret||businessSecret;
-  const keySource=platformSecret?"platform":businessSecret?"business":"missing";
-  if(secretError&&!secret)console.error("PalPluss business key lookup failed",secretError.message);
+  const businessSecret=d1BusinessSecret||legacyBusinessSecret;
+  const secret=businessSecret||platformSecret;
+  const keySource=d1BusinessSecret?"business_cloudflare_d1":legacyBusinessSecret?"business_legacy_vault":platformSecret?"platform":"missing";
+  if(secretError&&!secret)console.error("PalPluss legacy business key lookup failed",secretError.message);
   if(!secret){
    if(action==="get_config"){
     const {data:businessSettings}=await db.from("twiga_business_settings").select("palpluss_paylink_id").eq("business_id",businessId).maybeSingle();
@@ -76,7 +102,7 @@ Deno.serve(async(req:Request)=>{
    if(!result.ok)return reply({error:"Could not read the PalPluss service wallet."},502);
    const {data:ref}=await db.from("twiga_provider_secret_refs").select("secret_last4,updated_at").eq("business_id",businessId).eq("provider","palpluss").maybeSingle();
    const {data:platformRef}=await db.from("twiga_platform_secret_refs").select("secret_last4,updated_at").eq("provider","palpluss_platform_api_key").maybeSingle();
-   const activeRef=ref||platformRef;
+   const activeRef=d1BusinessSecret?{secret_last4:d1BusinessLast4,updated_at:null}:ref||platformRef;
    const {data:businessSettings}=await db.from("twiga_business_settings").select("palpluss_paylink_id").eq("business_id",businessId).maybeSingle();
    return reply({
     keyConfigured:true,keyLast4:activeRef?.secret_last4||"",keyUpdatedAt:activeRef?.updated_at||null,
