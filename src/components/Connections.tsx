@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import BringYourOwnAPI from "@/components/BringYourOwnAPI";
+import WhatsAppOutbox from "@/components/WhatsAppOutbox";
 
 const items = [
   { key: "calendar", title: "Google Calendar", detail: "Read and create appointments.", action: "calendar.list" },
@@ -324,7 +325,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
   return <div className="mx-auto max-w-5xl space-y-5">
     <header className="rounded-2xl border border-neutral-200 bg-white p-6">
       <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Workspace integrations</p><h1 className="mt-2 text-3xl font-semibold tracking-tight text-neutral-950">Connections & permissions</h1>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Connect Google services for each business and manage the TWIGA AI providers. API keys are validated on the server and stored in encrypted Supabase Vault, never in browser storage.</p>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Connect Google, WhatsApp, phone, payment, email and AI services for this business. Supported API credentials are validated server-side and stored encrypted in this business's Cloudflare D1 workspace, never in browser storage.</p>
       <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{!oauthConfig.serverConfigured && !googleAuth?.tokens?.accessToken ? "Manual Google reconnection needs the Google OAuth web client ID and client secret in TWIGA server settings. If you sign in with Google, TWIGA can use the approved sign-in token to connect these services automatically." : "Google Workspace permissions can be connected using your approved Google sign-in or the separate consent screen."}</div>
       <div className="mt-3">
         <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800 shadow-sm transition hover:border-orange-300 hover:bg-orange-100">
@@ -341,6 +342,12 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       </div>
       {!businessId && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Create or select a business in AI Setup first.</p>}
     </header>
+    <section className="rounded-2xl border border-orange-200 bg-orange-50/40 p-4 dark:border-orange-900 dark:bg-orange-950/20">
+      <p className="text-xs font-semibold uppercase tracking-wider text-orange-700 dark:text-orange-400">WhatsApp · visible connection controls</p>
+      <h2 className="mt-1 text-lg font-bold text-neutral-950 dark:text-neutral-100">Connect your business WhatsApp number</h2>
+      <p className="mt-1 mb-3 text-sm leading-5 text-neutral-600 dark:text-neutral-300">Official Meta WhatsApp Cloud API, QR/linking-session status and the business WhatsApp outbox are shown here for the selected workspace.</p>
+      <WhatsAppOutbox />
+    </section>
     <BringYourOwnAPI businessId={businessId} demo={demo} />
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <h2 className="text-lg font-semibold text-neutral-950">Google permissions</h2><p className="mt-1 text-sm text-neutral-500">Approve access in Google. You can revoke it from your Google Account at any time.</p>

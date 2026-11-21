@@ -546,7 +546,7 @@ export default {
         const file = form.get("file");
         if (!(file instanceof File)) return json(req, { error: "Choose a file to upload." }, 400);
         if (!file.size || file.size > 25 * 1024 * 1024) return json(req, { error: "Files must be between 1 byte and 25 MB." }, 413);
-        const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf", "text/plain", "text/csv", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation"]);
+        const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf", "text/plain", "text/csv", "text/tab-separated-values", "text/markdown", "application/json", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation"]);
         const contentType = String(file.type || "application/octet-stream").toLowerCase();
         if (!allowedTypes.has(contentType)) return json(req, { error: "File type not supported. Use an image, PDF, CSV, text, Word, Excel or PowerPoint file." }, 415);
         const id = crypto.randomUUID();
