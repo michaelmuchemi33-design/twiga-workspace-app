@@ -172,10 +172,10 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
         setBusinesses([created]);
         setBusinessId(created.id);
         setBusinessesLoaded(true);
-        setTab("setup");
-        setGoogleSetupMessage(googleAuth?.isGoogleUser && googleAuth.tokens?.accessToken
-          ? "Your private business workspace is ready. You can now complete setup and connect optional Google tools."
-          : "Your private business workspace is ready. Complete your business setup, then connect payments, phone and messaging when ready.");
+        // Sign-in should land in the workspace dashboard. Business setup and
+        // integrations remain available from the dashboard when the owner is ready.
+        setTab("dashboard");
+        setGoogleSetupMessage("Your private TWIGA workspace is ready. You can now manage your business from the dashboard.");
       } catch (e) {
         setGoogleSetupMessage(e instanceof Error ? e.message : "Your Google account is signed in, but the workspace could not be created.");
         setTab("setup");
