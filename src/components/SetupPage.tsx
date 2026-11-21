@@ -52,8 +52,8 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
       if (!active) return;
       if (businessResult.error) throw businessResult.error;
       if (profileResult.error) throw profileResult.error;
-      const business = businessResult.data || {};
-      const profile = profileResult.data || {};
+      const business: Record<string, any> = businessResult.data || {};
+      const profile: Record<string, any> = profileResult.data || {};
       setSavedProfile(profile);
       setForm({
         name: String(business.name || ""),
