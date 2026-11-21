@@ -320,7 +320,7 @@ async function aiWorker(req, env) {
             ? 'TWIGA could not sync the saved business profile (Supabase HTTP ' + profileFailure[1] + ').'
             : message === 'The TWIGA Business Worker is not provisioned yet.'
               ? 'The TWIGA Business Worker is not provisioned for this workspace yet.'
-              : 'TWIGA Worker could not finish this request. Reference: ' + reference;
+              : 'TWIGA Worker could not finish this request.';
     const safeDiagnostic = message
       .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
       .replace(/\b(?:sb_secret|sb_publishable|sk_live|pk_live)_[A-Za-z0-9_-]+/g, '[redacted-key]')
