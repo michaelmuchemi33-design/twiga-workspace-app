@@ -760,18 +760,22 @@ const BUSINESS_AI_ENDPOINTS = {
 };
 
 async function runBusinessAI(env, businessId, messages, options) {
-  // Read business-owned credentials only on the server through a service-role-only RPC.
-  // No credential value is ever returned to the browser or included in model messages.
+  // Read Vault-backed credentials only through the private Supabase Edge Function.
+  // The worker uses a dedicated server-to-server secret; its publishable key alone cannot read Vault.
+  if (!env.TWIGA_WORKER_SECRET) {
+    console.error('TWIGA internal AI credential binding is missing');
+    return runCloudflareAI(env, messages, options);
+  }
   let response;
   try {
-    response = await fetch(env.SUPABASE_URL + '/rest/v1/rpc/twiga_get_primary_business_ai_integration', {
+    response = await fetch(env.SUPABASE_URL + '/functions/v1/twiga-business-integrations', {
       method: 'POST',
       headers: {
         apikey: env.SUPABASE_KEY,
-        Authorization: 'Bearer ' + env.SUPABASE_KEY,
+        'x-twiga-worker-secret': env.TWIGA_WORKER_SECRET,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({p_business_id: businessId})
+      body: JSON.stringify({action: 'runtime', businessId: businessId})
     });
   } catch (error) {
     console.error('TWIGA business AI configuration lookup failed', txt(error && error.message ? error.message : error, 180));
