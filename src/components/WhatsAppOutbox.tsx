@@ -142,7 +142,9 @@ export default function WhatsAppOutbox() {
 
   useEffect(() => {
     const receiveSignupMessage = (event: MessageEvent) => {
-      if (!event.origin || !/facebook\\.com$/i.test(new URL(event.origin).hostname)) return;
+      let originHost = "";
+      try { originHost = new URL(event.origin).hostname.toLowerCase(); } catch { return; }
+      if (originHost !== "facebook.com" && !originHost.endsWith(".facebook.com")) return;
       let payload: any = event.data;
       if (typeof payload === "string") {
         try { payload = JSON.parse(payload); } catch { return; }
@@ -154,9 +156,13 @@ export default function WhatsAppOutbox() {
         setChannelMessage("WhatsApp setup was cancelled. No changes were made.");
         return;
       }
+      if (eventType === "ERROR") {
+        setChannelMessage(String(data.error_message || "Meta could not complete the WhatsApp signup. No number was connected."));
+        return;
+      }
       const wabaId = String(data.waba_id || data.wabaId || data.whatsapp_business_account_id || "");
       const phoneNumberId = String(data.phone_number_id || data.phoneNumberId || "");
-      if (wabaId && phoneNumberId) {
+      if (eventType === "FINISH" && wabaId && phoneNumberId) {
         signupRef.current.wabaId = wabaId;
         signupRef.current.phoneNumberId = phoneNumberId;
         void completeEmbeddedSignup();
