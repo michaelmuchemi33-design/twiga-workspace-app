@@ -11,7 +11,7 @@ type ChatMessage = { role: "assistant" | "user"; content: string };
 type ProfileDraft = Record<string, any>;
 const API = "https://twiga-api.twiga-ke.workers.dev";
 
-const firstMessage = "Hi! Let’s set up your receptionist. What should TWIGA call your business, and what do customers usually come to you for? We’ll build this together one step at a time.";
+const firstMessage = "Hi! Let’s set up your receptionist. I already have your business name. What do you sell or do, and what do customers usually come to you for? We’ll build this together one step at a time.";
 
 export default function SetupPage({ demo = false, onDone }: {
   demo?: boolean;
