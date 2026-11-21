@@ -7,18 +7,27 @@ const cache = new Map();
 const today = () => new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
 const now = () => new Date().toISOString();
 const txt = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 200);
-const aiReplyText = (value, fallback, limit) => {
-  if (typeof value === 'string') return txt(value, limit || 1800) || fallback;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) return value.map((item) => aiReplyText(item, '', limit)).filter(Boolean).join('\\n') || fallback;
-  if (value && typeof value === 'object') {
-    for (const key of ['text', 'content', 'reply', 'message', 'response', 'output_text']) {
+const aiReplyText = (value, fallback, limit, depth) => {
+  const level = Number(depth || 0);
+  if (level > 5 || value == null) return fallback;
+  if (typeof value === 'string') {
+    const text = txt(value, limit || 1800);
+    return text && text !== '[object Object]' && text !== '[object Array]' ? text : fallback;
+  }
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'boolean') return fallback;
+  if (Array.isArray(value)) return value.map((item) => aiReplyText(item, '', limit, level + 1)).filter(Boolean).join('\\n') || fallback;
+  if (typeof value === 'object') {
+    for (const key of ['text', 'content', 'reply', 'message', 'response', 'output_text', 'generated_text', 'generation', 'answer', 'output', 'result', 'data', 'description', 'summary']) {
       if (value[key] !== undefined && value[key] !== value) {
-        const text = aiReplyText(value[key], '', limit);
+        const text = aiReplyText(value[key], '', limit, level + 1);
         if (text) return text;
       }
     }
-    try { return txt(JSON.stringify(value), limit || 1800); } catch (_) { return fallback; }
+    if (Array.isArray(value.choices)) {
+      const text = aiReplyText(value.choices[0], '', limit, level + 1);
+      if (text) return text;
+    }
   }
   return fallback;
 };
