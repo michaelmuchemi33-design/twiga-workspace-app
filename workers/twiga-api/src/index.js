@@ -1,7 +1,7 @@
 
 const QUOTA = 524288000;
 const AI_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
-const cors = {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info', 'Access-Control-Max-Age': '86400'};
+const cors = {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info, x-business-id', 'Access-Control-Max-Age': '86400'};
 const json = (o, s) => new Response(JSON.stringify(o), {status: s || 200, headers: Object.assign({'Content-Type': 'application/json'}, cors)});
 const cache = new Map();
 const today = () => new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
@@ -28,6 +28,7 @@ export default {
   async fetch(req, env) {
     if (req.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
     const path = new URL(req.url).pathname;
+    if (req.method === 'POST' && path === '/ai/worker') return aiWorker(req, env);
     if (req.method === 'POST' && path === '/ai/chat') return aiChat(req, env);
     if (req.method === 'POST' && path === '/ai/demo') return aiDemo(req, env);
     if (req.method === 'GET' && path === '/ai/status') return json({ok: true, configured: Boolean(env.AI), provider: 'Cloudflare Workers AI', model: AI_MODEL});
@@ -43,9 +44,266 @@ export default {
     } catch (e) {
       return json({ok: false, error: String(e.message || e)});
     }
+  },
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(dispatchDueBusinessWorkers(env));
   }
 };
 
+
+
+let businessWorkerSchemaReady;
+async function ensureBusinessWorkerSchema(env) {
+  if (!businessWorkerSchemaReady) {
+    businessWorkerSchemaReady = env.DB.batch([
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS business_worker_settings (business_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1, next_review_at TEXT NOT NULL, last_run_at TEXT, last_review_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS business_worker_profiles (business_id TEXT PRIMARY KEY, business_name TEXT NOT NULL, business_type TEXT NOT NULL DEFAULT 'general', profile_json TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS business_worker_tasks (id TEXT PRIMARY KEY, business_id TEXT NOT NULL, task_type TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', priority TEXT NOT NULL DEFAULT 'normal', due_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, result_json TEXT NOT NULL DEFAULT '{}')"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_business_worker_tasks_due ON business_worker_tasks(status, due_at, business_id)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_business_worker_tasks_tenant ON business_worker_tasks(business_id, status, created_at)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS business_worker_notifications (id TEXT PRIMARY KEY, business_id TEXT NOT NULL, notification_type TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, priority TEXT NOT NULL DEFAULT 'normal', created_at TEXT NOT NULL, read_at TEXT)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_business_worker_notifications_tenant ON business_worker_notifications(business_id, created_at)")
+    ]).catch((error) => { businessWorkerSchemaReady = null; throw error; });
+  }
+  return businessWorkerSchemaReady;
+}
+
+function nextNairobiReviewAt() {
+  const day = today();
+  const p = day.split('-').map(Number);
+  let target = Date.UTC(p[0], p[1] - 1, p[2], 5, 0, 0);
+  if (target <= Date.now()) target += 86400000;
+  return new Date(target).toISOString();
+}
+
+async function syncBusinessWorkerProfile(env, ctx, token) {
+  const response = await fetch(env.SUPABASE_URL + '/rest/v1/twiga_business_profiles?select=business_summary,what_they_do,what_they_sell,products_and_services,target_customers,unique_selling_points,service_area,opening_hours,delivery_and_payment,returns_and_refunds,frequently_asked_questions,brand_voice,reply_language,assistant_instructions,receptionist_greeting,setup_details&business_id=eq.' + encodeURIComponent(ctx.biz.id), {
+    headers: {apikey: env.SUPABASE_KEY, Authorization: 'Bearer ' + token}
+  });
+  if (!response.ok) throw new Error('TWIGA could not read this business profile for its Worker.');
+  const rows = await response.json();
+  const profile = Array.isArray(rows) ? (rows[0] || {}) : {};
+  await env.DB.prepare("INSERT INTO business_worker_profiles (business_id, business_name, business_type, profile_json, updated_at) VALUES (?,?,?,?,?) ON CONFLICT(business_id) DO UPDATE SET business_name=excluded.business_name, business_type=excluded.business_type, profile_json=excluded.profile_json, updated_at=excluded.updated_at")
+    .bind(ctx.biz.id, txt(ctx.biz.name, 120), txt(ctx.biz.business_type || 'general', 80), JSON.stringify(profile), now()).run();
+  return profile;
+}
+
+async function ensureBusinessWorkerSettings(env, businessId) {
+  const current = await env.DB.prepare('SELECT business_id FROM business_worker_settings WHERE business_id = ?').bind(businessId).first();
+  if (!current) {
+    const timestamp = now();
+    await env.DB.prepare('INSERT OR IGNORE INTO business_worker_settings (business_id, enabled, next_review_at, created_at, updated_at) VALUES (?,1,?,?,?)')
+      .bind(businessId, nextNairobiReviewAt(), timestamp, timestamp).run();
+  }
+}
+
+function businessAgentStub(env, businessId) {
+  if (!env.BUSINESS_AGENT) throw new Error('The TWIGA Business Worker is not provisioned yet.');
+  return env.BUSINESS_AGENT.get(env.BUSINESS_AGENT.idFromName(businessId));
+}
+
+async function dispatchBusinessAgent(env, businessId) {
+  const stub = businessAgentStub(env, businessId);
+  const response = await stub.fetch('https://business-agent.internal/tick', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({businessId: businessId})
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.ok === false) throw new Error(data.error || 'The business worker did not finish its task.');
+  return data;
+}
+
+async function dispatchDueBusinessWorkers(env) {
+  await ensureBusinessWorkerSchema(env);
+  const due = await env.DB.prepare('SELECT business_id FROM business_worker_settings WHERE enabled = 1 AND next_review_at <= ? ORDER BY next_review_at LIMIT 50').bind(now()).all();
+  const businesses = due.results || [];
+  const outcomes = await Promise.allSettled(businesses.map(async (row) => {
+    const businessId = String(row.business_id);
+    const timestamp = now();
+    const taskId = 'daily-' + businessId + '-' + today();
+    await env.DB.prepare("INSERT OR IGNORE INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'daily_review', 'Daily business review', 'Review recent orders, sales, enquiries and work that may need the owner.', 'pending', 'normal', ?, ?, ?)")
+      .bind(taskId, businessId, timestamp, timestamp, timestamp).run();
+    await env.DB.prepare('UPDATE business_worker_settings SET next_review_at = ?, updated_at = ? WHERE business_id = ? AND enabled = 1')
+      .bind(nextNairobiReviewAt(), timestamp, businessId).run();
+    return await dispatchBusinessAgent(env, businessId);
+  }));
+  const failed = outcomes.filter((result) => result.status === 'rejected').length;
+  if (failed) console.error('TWIGA business worker scheduler had failures', {businesses: businesses.length, failed});
+}
+
+async function runBusinessReview(env, businessId, taskId) {
+  const profileRow = await env.DB.prepare('SELECT business_name, business_type, profile_json FROM business_worker_profiles WHERE business_id = ?').bind(businessId).first();
+  const profile = profileRow ? JSON.parse(profileRow.profile_json || '{}') : {};
+  const bizName = profileRow ? profileRow.business_name : 'Business';
+  const bizType = profileRow ? profileRow.business_type : 'general';
+  const ctx = {biz: {id: businessId, name: bizName, business_type: bizType}, role: 'owner'};
+  const results = await Promise.all([
+    ACTIONS.summary(env, ctx, {}),
+    ACTIONS.listOrders(env, ctx, {limit: 12}),
+    ACTIONS.listItems(env, ctx, {})
+  ]);
+  const summary = results[0];
+  const orders = results[1];
+  const items = results[2];
+  const data = {
+    business: {name: bizName, type: bizType},
+    profile: {
+      summary: txt(profile.business_summary || profile.what_they_do || profile.what_they_sell, 2200),
+      productsAndServices: txt(profile.products_and_services || profile.what_they_sell, 2200),
+      hours: txt(profile.opening_hours, 500),
+      serviceArea: txt(profile.service_area, 500),
+      faq: txt(profile.frequently_asked_questions, 1600)
+    },
+    today: summary,
+    recentOrders: (orders.orders || []).slice(0, 12),
+    catalogue: (items.items || []).slice(0, 50)
+  };
+  const system = [
+    'You are TWIGA Business Worker. Produce a concise owner operations review for one Kenyan business.',
+    'Use only the supplied business data. Never invent a customer, order, price, payment, stock figure, missed call or appointment.',
+    'Identify only practical actions supported by the data. Keep every action as a suggestion for the owner or staff to review. Do not send messages, place calls, charge customers, change prices, cancel bookings, purchase anything or claim work was completed.',
+    'If there is no reliable evidence for an action, return an empty actions array.',
+    'Return one JSON object only: {"headline":"short status","summary":"2-4 concise sentences","actions":[{"title":"short owner task","detail":"why it matters and what the owner should check","priority":"normal|high"}]}. Maximum 5 actions.',
+    'Business facts (JSON): ' + JSON.stringify(data)
+  ].join('\n\n');
+  const raw = await runCloudflareAI(env, [{role: 'system', content: system}, {role: 'user', content: 'Review this business now.'}], {max_tokens: 900});
+  let parsed = null;
+  try {
+    let candidate = String(raw).trim();
+    const open = candidate.indexOf('{');
+    const close = candidate.lastIndexOf('}');
+    if (open >= 0 && close > open) candidate = candidate.slice(open, close + 1);
+    parsed = JSON.parse(candidate);
+  } catch (_) {}
+  const headline = txt(parsed && parsed.headline ? parsed.headline : 'Daily review completed', 120);
+  const reviewSummary = txt(parsed && parsed.summary ? parsed.summary : 'TWIGA checked the latest business records. Review the pending items below before taking action.', 1000);
+  const actions = Array.isArray(parsed && parsed.actions) ? parsed.actions.slice(0, 5) : [];
+  const stamp = now();
+  const newTasks = actions.map((action, index) => {
+    const title = txt(action && action.title, 140);
+    if (!title) return null;
+    return {
+      id: 'own-' + taskId + '-' + index,
+      title: title,
+      detail: txt(action && action.detail, 800),
+      priority: action && action.priority === 'high' ? 'high' : 'normal'
+    };
+  }).filter(Boolean);
+  if (newTasks.length) {
+    await env.DB.batch(newTasks.map((item) => env.DB.prepare("INSERT OR IGNORE INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'owner_action', ?, ?, 'needs_review', ?, ?, ?, ?)")
+      .bind(item.id, businessId, item.title, item.detail, item.priority, stamp, stamp, stamp)));
+  }
+  const notificationId = 'review-' + taskId;
+  await env.DB.prepare('INSERT OR IGNORE INTO business_worker_notifications (id, business_id, notification_type, title, body, priority, created_at) VALUES (?,?,?,?,?,?,?)')
+    .bind(notificationId, businessId, 'daily_review', headline, reviewSummary + (newTasks.length ? ' ' + newTasks.length + ' item(s) need your review.' : ' No owner action was identified.'), newTasks.some((item) => item.priority === 'high') ? 'high' : 'normal', stamp).run();
+  await env.DB.prepare("UPDATE business_worker_tasks SET status = 'done', result_json = ?, updated_at = ? WHERE business_id = ? AND id = ?")
+    .bind(JSON.stringify({summary: reviewSummary, actionsCreated: newTasks.length}), stamp, businessId, taskId).run();
+  await env.DB.prepare('UPDATE business_worker_settings SET last_run_at = ?, last_review_at = ?, updated_at = ? WHERE business_id = ?')
+    .bind(stamp, stamp, stamp, businessId).run();
+  return {ok: true, headline: headline, summary: reviewSummary, tasksCreated: newTasks.length};
+}
+
+async function runBusinessAgentTasks(env, businessId) {
+  const tasks = await env.DB.prepare("SELECT id, task_type FROM business_worker_tasks WHERE business_id = ? AND status = 'pending' AND due_at <= ? ORDER BY priority DESC, due_at LIMIT 10")
+    .bind(businessId, now()).all();
+  const outcomes = [];
+  for (const task of tasks.results || []) {
+    const claimed = await env.DB.prepare("UPDATE business_worker_tasks SET status = 'processing', updated_at = ? WHERE business_id = ? AND id = ? AND status = 'pending'")
+      .bind(now(), businessId, task.id).run();
+    if (!claimed.meta || Number(claimed.meta.changes || 0) !== 1) continue;
+    try {
+      if (task.task_type !== 'daily_review') throw new Error('Unknown automated task type.');
+      const result = await runBusinessReview(env, businessId, task.id);
+      outcomes.push({id: task.id, ok: true, result: result});
+    } catch (error) {
+      const detail = txt(error && error.message ? error.message : error, 500);
+      await env.DB.prepare("UPDATE business_worker_tasks SET status = 'failed', detail = ?, updated_at = ? WHERE business_id = ? AND id = ?")
+        .bind(detail, now(), businessId, task.id).run();
+      const notificationId = 'failed-' + task.id;
+      await env.DB.prepare('INSERT OR IGNORE INTO business_worker_notifications (id, business_id, notification_type, title, body, priority, created_at) VALUES (?,?,?,?,?,?,?)')
+        .bind(notificationId, businessId, 'worker_error', 'TWIGA review needs attention', 'The scheduled review could not finish: ' + detail, 'high', now()).run();
+      outcomes.push({id: task.id, ok: false, error: detail});
+    }
+  }
+  return {ok: true, businessId: businessId, processed: outcomes.length, outcomes: outcomes};
+}
+
+async function aiWorker(req, env) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const headerAuth = req.headers.get('Authorization') || '';
+    const token = String(body.token || headerAuth.replace(/^Bearer\s+/i, '')).trim();
+    const ctx = await authorize(env, token, body.business_id);
+    await ensureUsageSchema(env);
+    await ensureBusinessWorkerSchema(env);
+    if (body.action !== 'resolve_task' && body.action !== 'set_enabled') await syncBusinessWorkerProfile(env, ctx, token);
+    await ensureBusinessWorkerSettings(env, ctx.biz.id);
+    if (body.action === 'overview') {
+      const result = await Promise.all([
+        env.DB.prepare('SELECT enabled, next_review_at, last_run_at, last_review_at FROM business_worker_settings WHERE business_id = ?').bind(ctx.biz.id).first(),
+        env.DB.prepare("SELECT id, title, detail, status, priority, due_at, created_at FROM business_worker_tasks WHERE business_id = ? AND status IN ('needs_review','pending','failed') ORDER BY CASE priority WHEN 'high' THEN 0 ELSE 1 END, created_at DESC LIMIT 6").bind(ctx.biz.id).all(),
+        env.DB.prepare('SELECT id, notification_type, title, body, priority, created_at FROM business_worker_notifications WHERE business_id = ? ORDER BY created_at DESC LIMIT 4').bind(ctx.biz.id).all(),
+        env.DB.prepare("SELECT SUM(CASE WHEN status = 'needs_review' THEN 1 ELSE 0 END) AS needs_review, SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed FROM business_worker_tasks WHERE business_id = ?").bind(ctx.biz.id).first()
+      ]);
+      const settings = result[0] || {};
+      const counts = result[3] || {};
+      return json({ok: true, worker: {enabled: Number(settings.enabled === undefined ? 1 : settings.enabled) === 1, schedule: 'Every minute · up to 50 businesses per scheduler tick', nextReviewAt: settings.next_review_at || null, lastRunAt: settings.last_run_at || null, lastReviewAt: settings.last_review_at || null}, tasks: result[1].results || [], notifications: result[2].results || [], counts: {needsReview: Number(counts.needs_review || 0), failed: Number(counts.failed || 0)}});
+    }
+    if (body.action === 'run_review') {
+      if (['owner','admin'].indexOf(String(ctx.role)) < 0) return json({ok: false, error: 'Only a business owner or administrator can run the Worker review.'}, 403);
+      const id = 'manual-' + ctx.biz.id + '-' + crypto.randomUUID();
+      const stamp = now();
+      await env.DB.prepare("INSERT INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'daily_review', 'Manual business review', 'Owner requested a fresh review.', 'pending', 'normal', ?, ?, ?)")
+        .bind(id, ctx.biz.id, stamp, stamp, stamp).run();
+      const result = await dispatchBusinessAgent(env, ctx.biz.id);
+      return json({ok: true, result: result});
+    }
+    if (body.action === 'resolve_task') {
+      if (['owner','admin'].indexOf(String(ctx.role)) < 0) return json({ok: false, error: 'Only a business owner or administrator can resolve Worker tasks.'}, 403);
+      const taskId = txt(body.task_id, 180);
+      const result = await env.DB.prepare("UPDATE business_worker_tasks SET status = 'done', updated_at = ? WHERE business_id = ? AND id = ? AND status IN ('needs_review','failed')")
+        .bind(now(), ctx.biz.id, taskId).run();
+      if (!result.meta || Number(result.meta.changes || 0) !== 1) return json({ok: false, error: 'That task is no longer awaiting review.'}, 404);
+      return json({ok: true, resolved: true});
+    }
+    if (body.action === 'set_enabled') {
+      if (['owner','admin'].indexOf(String(ctx.role)) < 0) return json({ok: false, error: 'Only a business owner or administrator can change Worker status.'}, 403);
+      const enabled = body.enabled === true ? 1 : 0;
+      await env.DB.prepare('UPDATE business_worker_settings SET enabled = ?, updated_at = ? WHERE business_id = ?')
+        .bind(enabled, now(), ctx.biz.id).run();
+      return json({ok: true, enabled: enabled === 1});
+    }
+    return json({ok: false, error: 'Unknown Worker action.'}, 404);
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error);
+    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : message.indexOf('INACTIVE|') === 0 ? 403 : 500;
+    return json({ok: false, error: status === 401 ? 'Sign in again to use the TWIGA Worker.' : status === 403 ? 'You do not have access to this business workspace.' : message.indexOf('INACTIVE|') === 0 ? message.slice(9) : 'TWIGA Worker could not complete that request.'}, status);
+  }
+}
+
+export class BusinessAgent {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+  }
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (request.method !== 'POST' || url.pathname !== '/tick') return json({ok: false, error: 'Not found.'}, 404);
+    const body = await request.json().catch(() => ({}));
+    const businessId = String(body.businessId || '');
+    if (!/^[0-9a-f-]{36}$/i.test(businessId)) return json({ok: false, error: 'Invalid business worker identity.'}, 400);
+    const lockKey = 'tick-lock';
+    const existing = await this.state.storage.get(lockKey);
+    if (Number(existing || 0) > Date.now()) return json({ok: true, skipped: true, reason: 'already-running'});
+    await this.state.storage.put(lockKey, Date.now() + 4 * 60 * 1000);
+    try {
+      return json(await runBusinessAgentTasks(this.env, businessId));
+    } finally {
+      await this.state.storage.delete(lockKey);
+    }
+  }
+}
 
 
 async function runCloudflareAI(env, messages, options) {
