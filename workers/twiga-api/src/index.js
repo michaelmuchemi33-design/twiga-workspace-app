@@ -94,10 +94,10 @@ function nextNairobiReviewAt() {
 }
 
 async function syncBusinessWorkerProfile(env, ctx, token) {
-  const response = await fetch(env.SUPABASE_URL + '/rest/v1/twiga_business_profiles?select=business_summary,what_they_do,what_they_sell,products_and_services,target_customers,unique_selling_points,service_area,opening_hours,delivery_and_payment,returns_and_refunds,frequently_asked_questions,brand_voice,reply_language,assistant_instructions,receptionist_greeting,setup_details&business_id=eq.' + encodeURIComponent(ctx.biz.id), {
+  const response = await fetch(env.SUPABASE_URL + '/rest/v1/twiga_business_profiles?select=business_summary,what_they_do,what_they_sell,products_and_services,target_customers,unique_selling_points,service_area,opening_hours,delivery_and_payment,returns_and_refunds,frequently_asked_questions,brand_voice,reply_language,assistant_instructions,setup_details&business_id=eq.' + encodeURIComponent(ctx.biz.id), {
     headers: {apikey: env.SUPABASE_KEY, Authorization: 'Bearer ' + token}
   });
-  if (!response.ok) throw new Error('TWIGA could not read this business profile for its Worker.');
+  if (!response.ok) throw new Error('TWIGA_PROFILE_READ_FAILED|' + response.status);
   const rows = await response.json();
   const profile = Array.isArray(rows) ? (rows[0] || {}) : {};
   await env.DB.prepare("INSERT INTO business_worker_profiles (business_id, business_name, business_type, profile_json, updated_at) VALUES (?,?,?,?,?) ON CONFLICT(business_id) DO UPDATE SET business_name=excluded.business_name, business_type=excluded.business_type, profile_json=excluded.profile_json, updated_at=excluded.updated_at")
@@ -259,8 +259,9 @@ async function runBusinessAgentTasks(env, businessId) {
 }
 
 async function aiWorker(req, env) {
+  let body = {};
   try {
-    const body = await req.json().catch(() => ({}));
+    body = await req.json().catch(() => ({}));
     const headerAuth = req.headers.get('Authorization') || '';
     const token = String(body.token || headerAuth.replace(/^Bearer\s+/i, '')).trim();
     const ctx = await authorize(env, token, body.business_id);
@@ -307,7 +308,31 @@ async function aiWorker(req, env) {
   } catch (error) {
     const message = String(error && error.message ? error.message : error);
     const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : message.indexOf('INACTIVE|') === 0 ? 403 : 500;
-    return json({ok: false, error: status === 401 ? 'Sign in again to use the TWIGA Worker.' : status === 403 ? 'You do not have access to this business workspace.' : message.indexOf('INACTIVE|') === 0 ? message.slice(9) : 'TWIGA Worker could not complete that request.'}, status);
+    const reference = crypto.randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase();
+    const profileFailure = message.match(/^TWIGA_PROFILE_READ_FAILED\\|(\\d{3})$/);
+    const publicError = status === 401
+      ? 'Sign in again to use the TWIGA Worker.'
+      : message.indexOf('INACTIVE|') === 0
+        ? message.slice(9)
+        : status === 403
+          ? 'You do not have access to this business workspace.'
+          : profileFailure
+            ? 'TWIGA could not sync the saved business profile (Supabase HTTP ' + profileFailure[1] + ').'
+            : message === 'The TWIGA Business Worker is not provisioned yet.'
+              ? 'The TWIGA Business Worker is not provisioned for this workspace yet.'
+              : 'TWIGA Worker could not finish this request. Reference: ' + reference;
+    const safeDiagnostic = message
+      .replace(/Bearer\\s+[^\\s"'\\x60]+/gi, 'Bearer [redacted]')
+      .replace(/\\b(?:sb_secret|sb_publishable|sk_live|pk_live)_[A-Za-z0-9_-]+/g, '[redacted-key]')
+      .slice(0, 500);
+    console.error('[TWIGA Worker] request failed', {
+      reference: reference,
+      action: txt(body && body.action, 50) || 'unknown',
+      businessId: /^[0-9a-f-]{36}$/i.test(String(body && body.business_id || '')) ? String(body.business_id) : null,
+      status: status,
+      error: safeDiagnostic
+    });
+    return json({ok: false, error: publicError, reference: reference}, status);
   }
 }
 
