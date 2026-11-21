@@ -160,7 +160,7 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
       <div className="flex flex-col gap-4 rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-orange-500">
-            AI Front Desk
+            Your business
           </p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-900">
             {ownerName ? `Welcome, ${ownerName}` : settings.business.name ? `Welcome, ${settings.business.name}` : "Your workspace"}
