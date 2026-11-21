@@ -1004,6 +1004,7 @@ async function businessIntegrationsRoute(req,env) {
     return json({ok:false,error:message},status);
   }
 }
+// Business API credentials are decrypted only in this Worker request and never returned to browser clients.
 async function runBusinessAI(env,businessId,messages,options) {
   const integration=await getPrimaryAiD1(env,businessId);
   if(!integration)return runCloudflareAI(env,messages,options);
