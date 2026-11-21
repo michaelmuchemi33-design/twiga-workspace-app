@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import BringYourOwnAPI from "@/components/BringYourOwnAPI";
+import WhatsAppOutbox from "@/components/WhatsAppOutbox";
 
 const items = [
   { key: "calendar", title: "Google Calendar", detail: "Read and create appointments.", action: "calendar.list" },
@@ -341,6 +342,12 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       </div>
       {!businessId && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Create or select a business in AI Setup first.</p>}
     </header>
+    <section className="rounded-2xl border border-orange-200 bg-orange-50/40 p-4 dark:border-orange-900 dark:bg-orange-950/20">
+      <p className="text-xs font-semibold uppercase tracking-wider text-orange-700 dark:text-orange-400">WhatsApp · visible connection controls</p>
+      <h2 className="mt-1 text-lg font-bold text-neutral-950 dark:text-neutral-100">Connect your business WhatsApp number</h2>
+      <p className="mt-1 mb-3 text-sm leading-5 text-neutral-600 dark:text-neutral-300">Official Meta WhatsApp Cloud API, QR/linking-session status and the business WhatsApp outbox are shown here for the selected workspace.</p>
+      <WhatsAppOutbox />
+    </section>
     <BringYourOwnAPI businessId={businessId} demo={demo} />
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <h2 className="text-lg font-semibold text-neutral-950">Google permissions</h2><p className="mt-1 text-sm text-neutral-500">Approve access in Google. You can revoke it from your Google Account at any time.</p>
