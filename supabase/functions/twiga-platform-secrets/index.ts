@@ -37,6 +37,18 @@ Deno.serve(async(req:Request)=>{
    await admin.from("twiga_admin_audit_logs").insert({admin_email:user.email||"unknown",action:"provider.business.assign",resource_type:"business",resource_id:businessId,metadata:{provider:provider,secret_last4:last4}});
    return json({isAdmin:true,saved:true,businessId,provider,last4:last4,message:"Provider setting securely assigned to this business. The value will never be shown again."});
   }
+  if(action==="waha.platform.status"){
+   const {data:ref,error}=await admin.from("twiga_platform_secret_refs").select("secret_last4,updated_at").eq("provider","waha_internal_api_key").maybeSingle();
+   if(error) throw error;
+   return json({isAdmin:true,keyConfigured:!!ref,keyLast4:ref?.secret_last4||"",updatedAt:ref?.updated_at||null});
+  }
+  if(action==="waha.platform.save"){
+   const apiKey=String(body.apiKey||"").trim();
+   if(apiKey.length<24||apiKey.length>400) return json({error:"Enter a WAHA internal API key with at least 24 characters."},400);
+   const {data:last4,error}=await admin.rpc("twiga_set_platform_secret",{p_provider:"waha_internal_api_key",p_secret:apiKey,p_updated_by:user.id});
+   if(error){console.error("WAHA platform key save failed",error.message);return json({error:"WAHA service key could not be stored in encrypted Supabase Vault."},500);}
+   return json({isAdmin:true,keyConfigured:true,keyLast4:last4,message:"WAHA service key saved in encrypted Vault. It is sent only to private TWIGA WAHA containers."});
+  }
   if(action==="get_config"){
    const {data:ref}=await admin.from("twiga_platform_secret_refs").select("secret_last4,updated_at").eq("provider","xai").maybeSingle();
    return json({isAdmin:true,keyConfigured:!!ref||!!Deno.env.get("XAI_API_KEY"),keySource:ref?"vault":Deno.env.get("XAI_API_KEY")?"environment":"missing",keyLast4:ref?.secret_last4||"",updatedAt:ref?.updated_at||null});
