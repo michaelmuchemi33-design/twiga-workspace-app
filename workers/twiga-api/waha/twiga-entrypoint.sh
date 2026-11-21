@@ -14,7 +14,6 @@ R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
 /usr/local/bin/tigrisfs \
   --endpoint "${R2_ENDPOINT}" \
-  --region auto \
   -f "${R2_BUCKET_NAME}" \
   /app/.sessions &
 FUSE_PID=$!
