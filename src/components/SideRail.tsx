@@ -95,7 +95,7 @@ export default function SideRail({
               expanded ? "opacity-100" : "w-0 overflow-hidden opacity-0"
             )}
           >
-            AI Front Desk
+            TWIGA
           </span>
         </div>
 
