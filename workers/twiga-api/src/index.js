@@ -317,35 +317,49 @@ async function chat33Publish(req, env) {
   try {
     const body=await req.json().catch(()=>({}));
     const access=await chat33Auth(req,env,body);
-    const textValue=txt(body.text||'',5000), mediaUrls=Array.isArray(body.mediaUrls)?body.mediaUrls.map(value=>txt(value,1200)).filter(Boolean).slice(0,4):[];
+    const textValue=txt(body.text||'',5000);
+    const mediaUrls=Array.isArray(body.mediaUrls)?body.mediaUrls.map(value=>txt(value,1200)).filter(Boolean).slice(0,4):[];
     const mediaType=txt(body.mediaType||'',20).toLowerCase();
     const scheduledAt=body.scheduledAt?String(body.scheduledAt):'';
     const groups=Array.isArray(body.groups)?body.groups.slice(0,3):[];
     if(!groups.length||(!textValue&&!mediaUrls.length)) return json({ok:false,error:'Select at least one social account and add a caption or media.'},400);
     if(scheduledAt && (!Number.isFinite(Date.parse(scheduledAt)) || Date.parse(scheduledAt)<Date.now()+60000)) return json({ok:false,error:'Choose a future publishing time at least one minute from now.'},400);
     const results=[];
+    const seenSlots=new Set();
     for(const group of groups) {
-      const slot=Number(group.slot), ids=Array.isArray(group.accountIds)?group.accountIds.map(id=>txt(id,160)).filter(Boolean).slice(0,10):[];
+      const slot=Number(group.slot);
+      const ids=Array.isArray(group.accountIds)?Array.from(new Set(group.accountIds.map(id=>txt(id,160)).filter(Boolean))).slice(0,100):[];
       if(![1,2,3].includes(slot)||!ids.length) continue;
+      if(seenSlots.has(slot)) { results.push({slot,ok:false,error:'Send only one channel group per Chat33 account slot.'}); continue; }
+      seenSlots.add(slot);
       const record=await chat33GetSlot(env,access.businessId,slot);
       if(!record) { results.push({slot,ok:false,error:'Chat33 account not connected.'}); continue; }
       try {
         const accountsPayload=await chat33Api(record.key,'/accounts','GET');
-        const validIds=new Set(chat33Array(accountsPayload,['accounts','channels']).map(item=>String(item.id||item.accountId||item.channelId||'')));
-        if(ids.some(id=>!validIds.has(id))) throw new Error('One or more selected channels do not belong to this Chat33 account.');
+        const knownAccounts=chat33Array(accountsPayload,['accounts','channels']);
+        const accountNames=new Map(knownAccounts.map(item=>[String(item.id||item.accountId||item.channelId||''),txt(item.name||item.username||item.platform||'Social channel',100)]));
+        if(ids.some(id=>!accountNames.has(id))) throw new Error('One or more selected channels do not belong to this Chat33 account.');
         const groupMediaUrls=Array.isArray(group.mediaUrls)?group.mediaUrls.map(value=>txt(value,1200)).filter(Boolean).slice(0,4):mediaUrls;
-      const postBody={accountIds:ids,text:textValue,mediaUrls:groupMediaUrls,mediaType:mediaType||undefined,scheduledAt:scheduledAt||undefined};
-        if(body.platformConfig && typeof body.platformConfig==='object') postBody.platformConfig=body.platformConfig;
-        const validation=await chat33Api(record.key,'/posts/validate','POST',postBody);
-        if(validation && (validation.valid===false || validation.ok===false || validation.error)) throw new Error(txt(validation.error || validation.message || 'Chat33 rejected the post validation.',240));
-        const created=await chat33Api(record.key,'/posts','POST',postBody);
-        results.push({slot,ok:true,result:created});
+        for(let offset=0;offset<ids.length;offset+=10) {
+          const batchIds=ids.slice(offset,offset+10);
+          const postBody={accountIds:batchIds,text:textValue,mediaUrls:groupMediaUrls,mediaType:mediaType||undefined,scheduledAt:scheduledAt||undefined};
+          if(body.platformConfig && typeof body.platformConfig==='object') postBody.platformConfig=body.platformConfig;
+          try {
+            const validation=await chat33Api(record.key,'/posts/validate','POST',postBody);
+            if(validation && (validation.valid===false || validation.ok===false || validation.error)) throw new Error(txt(validation.error || validation.message || 'Chat33 rejected the post validation.',240));
+            const created=await chat33Api(record.key,'/posts','POST',postBody);
+            results.push({slot,ok:true,accountIds:batchIds,channels:batchIds.map(id=>accountNames.get(id)),result:created});
+          } catch(error) {
+            results.push({slot,ok:false,accountIds:batchIds,channels:batchIds.map(id=>accountNames.get(id)),error:txt(error && error.message || error,240)});
+          }
+        }
       } catch(error) {
         results.push({slot,ok:false,error:txt(error && error.message || error,240)});
       }
     }
     if(!results.length) return json({ok:false,error:'No valid Chat33 channel targets were supplied.'},400);
-    return json({ok:results.every(item=>item.ok),results},results.some(item=>item.ok)?200:502);
+    const successes=results.some(item=>item.ok);
+    return json({ok:successes,results,error:successes?undefined:'All selected Chat33 publishing groups failed.'},successes?200:502);
   } catch(error) {
     const message=String(error && error.message || error);
     const status=message==='LOGIN_REQUIRED'?401:message==='NO_ACCESS'||message.startsWith('INACTIVE|')?403:400;
