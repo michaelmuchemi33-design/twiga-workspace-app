@@ -424,7 +424,7 @@ export default function WhatsAppOutbox() {
                   <p className="text-sm text-neutral-700">Enter the WhatsApp phone number including country code, without the plus sign.</p>
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <Input value={wahaPairPhone} onChange={(event)=>setWahaPairPhone(event.target.value)} placeholder="254712345678"/>
-                    <Button onClick={()=>void (wahaStatus.session ? requestWahaPairingCode() : connectWaha().then(()=>requestWahaPairingCode()))} disabled={wahaBusy||demoMode||!wahaPairPhone.trim()||wahaStatus.runtimeStatus==="NEEDS_ADMIN_SETUP"} className="bg-neutral-950 text-white hover:bg-neutral-800">{wahaBusy?"Requesting…":"Get pairing code"}</Button>
+                    <Button onClick={async()=>{if(!wahaStatus.session)await connectWaha();await requestWahaPairingCode();}} disabled={wahaBusy||demoMode||!wahaPairPhone.trim()||wahaStatus.runtimeStatus==="NEEDS_ADMIN_SETUP"} className="bg-neutral-950 text-white hover:bg-neutral-800">{wahaBusy?"Requesting…":"Get pairing code"}</Button>
                   </div>
                   {wahaPairCode && <div className="rounded-xl bg-neutral-950 p-4 text-center text-white"><p className="text-xs text-neutral-300">Enter this code in WhatsApp → Linked devices → Link with phone number</p><p className="mt-2 text-2xl font-bold tracking-[.25em] text-white">{wahaPairCode}</p></div>}
                 </div>
