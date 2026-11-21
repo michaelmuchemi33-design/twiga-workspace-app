@@ -891,9 +891,9 @@ async function wahaConnect(req, env) {
       } else if (status === 'FAILED') {
         await wahaRequest(env,'/api/sessions/' + encodeURIComponent(sessionName) + '/restart','POST',{});
       }
-      const latest = await getWahaConnection(env,businessId);
       await env.DB.prepare('UPDATE waha_connections SET status = ?, last_error = NULL, updated_at = ? WHERE business_id = ?').bind(status,now(),businessId).run();
-      return json({ok:true,...wahaPublicStatus(latest),status,sessionName,message:status === 'WORKING' ? 'WhatsApp is already connected.' : 'WhatsApp session is starting. Scan the QR code or use phone-number pairing.'});
+      const latest = await getWahaConnection(env,businessId);
+      return json({ok:true,...wahaPublicStatus(latest),connected:status === 'WORKING',status,sessionName,message:status === 'WORKING' ? 'WhatsApp is already connected.' : 'WhatsApp session is starting. Scan the QR code or use phone-number pairing.'});
     }
 
     const webhookToken = wahaRandomToken();
