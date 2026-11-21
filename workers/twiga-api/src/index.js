@@ -60,6 +60,15 @@ export default {
     if (path === '/whatsapp/webhook' && req.method === 'POST') return whatsappWebhook(req, env, ctx);
     if (path === '/whatsapp/config' && req.method === 'GET') return whatsappConfig(req, env);
     if (path === '/whatsapp/connect' && req.method === 'POST') return whatsappConnect(req, env);
+    if (path === '/chat33/webhook' && req.method === 'POST') return chat33Webhook(req, env);
+    if (path === '/chat33/status' && req.method === 'GET') return chat33Status(req, env);
+    if (path === '/chat33/connection' && req.method === 'POST') return chat33Connection(req, env);
+    if (path === '/chat33/inbox' && req.method === 'GET') return chat33Inbox(req, env);
+    if (path === '/chat33/messages' && req.method === 'GET') return chat33Messages(req, env);
+    if (path === '/chat33/reply' && req.method === 'POST') return chat33Reply(req, env);
+    if (path === '/chat33/media-upload-url' && req.method === 'POST') return chat33MediaUploadUrl(req, env);
+    if (path === '/chat33/publish' && req.method === 'POST') return chat33Publish(req, env);
+    if (path === '/chat33/people' && req.method === 'GET') return chat33People(req, env);
     if (path === '/waha/webhook' && req.method === 'POST') return wahaWebhook(req, env, ctx);
     if (path === '/waha/config' && req.method === 'GET') return wahaConfig(req, env);
     if (path === '/waha/connect' && req.method === 'POST') return wahaConnect(req, env);
@@ -93,6 +102,284 @@ export default {
 
 
 let businessWorkerSchemaReady;
+
+const CHAT33_BASE = 'https://chat33.io/api/v1';
+const chat33SlotSlug = (slot) => 'chat33_' + String(Number(slot));
+async function chat33Api(key, path, method, body) {
+  const response = await fetch(CHAT33_BASE + (path.startsWith('/') ? path : '/' + path), {
+    method: method || 'GET',
+    headers: Object.assign({'x-api-key':String(key),'Accept':'application/json'}, body === undefined ? {} : {'Content-Type':'application/json'}),
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(25000)
+  });
+  const raw = await response.text();
+  let data = {};
+  try { data = raw ? JSON.parse(raw) : {}; } catch (_) { data = {message:raw.slice(0,300)}; }
+  if (!response.ok) {
+    const detail = txt(data.message || data.error || data.detail || data.code || ('Chat33 returned HTTP ' + response.status), 260);
+    throw Object.assign(new Error(detail), {status:response.status, providerCode:txt(data.code || '',80)});
+  }
+  return data;
+}
+function chat33Array(data, keys) {
+  if (Array.isArray(data)) return data;
+  for (const key of keys || []) if (Array.isArray(data && data[key])) return data[key];
+  if (Array.isArray(data && data.data)) return data.data;
+  if (Array.isArray(data && data.items)) return data.items;
+  return [];
+}
+async function chat33GetSlot(env, businessId, slot) {
+  const record = await getIntegrationD1(env,businessId,chat33SlotSlug(slot));
+  return record && record.credentials && record.credentials.api_key
+    ? {slot:Number(slot),key:String(record.credentials.api_key),webhookSecret:String(record.credentials.webhook_secret || ''),name:String(record.row.display_name || ('Chat33 account ' + slot)),last4:String((record.credentials.api_key || '').slice(-4))}
+    : null;
+}
+async function chat33AllSlots(env,businessId) {
+  const found = await Promise.all([1,2,3].map(slot => chat33GetSlot(env,businessId,slot)));
+  return found.filter(Boolean);
+}
+async function chat33Auth(req, env, body) {
+  const url = new URL(req.url);
+  const businessId = String((body && body.business_id) || url.searchParams.get('business_id') || '');
+  const bearer = String(req.headers.get('Authorization') || '').replace(/^Bearer\s+/i,'');
+  const token = String((body && body.token) || bearer);
+  const ctx = await authorize(env,token,businessId);
+  return {businessId,token,ctx};
+}
+async function chat33Connection(req, env) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const access = await chat33Auth(req,env,body);
+    const slot = Number(body.slot);
+    if (![1,2,3].includes(slot)) return json({ok:false,error:'Choose Chat33 account slot 1, 2 or 3.'},400);
+    const provider = chat33SlotSlug(slot);
+    if (body.action === 'delete') {
+      await deleteIntegrationD1(env,access.businessId,provider,{userId:access.ctx.userId,role:access.ctx.role},'Business owner disconnected a Chat33 gateway account.');
+      return json({ok:true,deleted:true,slot});
+    }
+    const apiKey = String(body.apiKey || '').trim();
+    const webhookSecret = String(body.webhookSecret || '').trim();
+    const displayName = txt(body.displayName || ('Chat33 account ' + slot),100);
+    if (apiKey.length < 12 || apiKey.length > 4000) return json({ok:false,error:'Enter a valid Chat33 API key.'},400);
+    if (webhookSecret && (webhookSecret.length < 12 || webhookSecret.length > 4000)) return json({ok:false,error:'The Chat33 webhook signing secret is invalid.'},400);
+    // A read-only channel check verifies the key without publishing or messaging.
+    const accountData = await chat33Api(apiKey,'/accounts','GET');
+    const accounts = chat33Array(accountData,['accounts','channels']);
+    await saveIntegrationD1(env,{
+      businessId:access.businessId, provider, displayName, integrationType:'messaging',
+      credentials:{api_key:apiKey,webhook_secret:webhookSecret},
+      config:{provider:'chat33',slot}, status:'verified', lastTestMessage:'Chat33 API key verified; '+accounts.length+' social channel(s) listed.',
+      actorUserId:access.ctx.userId, actorRole:access.ctx.role
+    });
+    return json({ok:true,verified:true,slot,displayName,accountCount:accounts.length,accounts});
+  } catch (error) {
+    const message = String(error && error.message || error);
+    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' || message.startsWith('INACTIVE|') ? 403 : Number(error && error.status) || 400;
+    return json({ok:false,error:message.startsWith('INACTIVE|') ? message.slice(9) : status === 401 ? 'Sign in again to connect Chat33.' : status === 403 ? 'You do not have access to this business workspace.' : 'Chat33 could not verify this API key. Check the key and its accounts:read permission.'},status);
+  }
+}
+async function chat33Status(req, env) {
+  try {
+    const access = await chat33Auth(req,env);
+    const slots = await chat33AllSlots(env,access.businessId);
+    const output = [];
+    for (const slot of slots) {
+      try {
+        const payload = await chat33Api(slot.key,'/accounts','GET');
+        const accounts = chat33Array(payload,['accounts','channels']).map(item => ({
+          id:String(item.id || item.accountId || item.channelId || ''),
+          name:txt(item.name || item.username || item.handle || item.displayName || item.id || 'Social account',100),
+          username:txt(item.username || item.handle || '',100),
+          platform:txt(item.platform || item.type || item.provider || 'social',40).toLowerCase(),
+          status:txt(item.status || 'connected',40),
+          avatarUrl:txt(item.avatarUrl || item.profilePicture || item.imageUrl || '',500),
+          slot:slot.slot
+        })).filter(item => item.id);
+        output.push({slot:slot.slot,name:slot.name,last4:slot.last4,connected:true,accounts,accountCount:accounts.length,webhookConfigured:!!slot.webhookSecret});
+      } catch (error) {
+        output.push({slot:slot.slot,name:slot.name,last4:slot.last4,connected:false,accounts:[],accountCount:0,webhookConfigured:!!slot.webhookSecret,error:txt(error && error.message || error,220)});
+      }
+    }
+    return json({ok:true,slots:output,accounts:output.flatMap(item=>item.accounts),maxSlots:3});
+  } catch (error) {
+    const message = String(error && error.message || error);
+    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' || message.startsWith('INACTIVE|') ? 403 : 500;
+    return json({ok:false,error:message.startsWith('INACTIVE|') ? message.slice(9) : status===401?'Sign in again.':status===403?'You do not have access to this business workspace.':'Could not load Chat33 connection status.'},status);
+  }
+}
+async function chat33Inbox(req, env) {
+  try {
+    const access = await chat33Auth(req,env);
+    const slots = await chat33AllSlots(env,access.businessId);
+    const conversations = [], errors = [];
+    await ensureChat33Schema(env);
+    for (const slot of slots) {
+      try {
+        const payload = await chat33Api(slot.key,'/conversations?limit=100','GET');
+        const rows = chat33Array(payload,['conversations','items']).map(row=>Object.assign({},row,{_twigaSlot:slot.slot,_twigaAccountName:slot.name}));
+        conversations.push(...rows);
+        for (const row of rows) await chat33SaveContact(env,access.businessId,slot.slot,row.platform || row.channel && row.channel.platform || '',row.contact || row);
+      } catch (error) { errors.push({slot:slot.slot,error:txt(error && error.message || error,200)}); }
+    }
+    conversations.sort((a,b)=>String(b.lastMessageAt || b.updatedAt || b.lastActivityAt || '').localeCompare(String(a.lastMessageAt || a.updatedAt || a.lastActivityAt || '')));
+    return json({ok:true,conversations:conversations.slice(0,300),errors});
+  } catch (error) {
+    const message=String(error && error.message || error);
+    const status=message==='LOGIN_REQUIRED'?401:message==='NO_ACCESS'||message.startsWith('INACTIVE|')?403:500;
+    return json({ok:false,error:message.startsWith('INACTIVE|')?message.slice(9):status===401?'Sign in again.':status===403?'You do not have access to this business workspace.':'Chat33 inbox could not be loaded.'},status);
+  }
+}
+async function chat33Messages(req, env) {
+  try {
+    const access=await chat33Auth(req,env);
+    const url=new URL(req.url), slot=Number(url.searchParams.get('slot')), conversationId=txt(url.searchParams.get('conversation_id'),160);
+    if(![1,2,3].includes(slot)||!conversationId) return json({ok:false,error:'Choose a Chat33 account and conversation.'},400);
+    const record=await chat33GetSlot(env,access.businessId,slot);
+    if(!record) return json({ok:false,error:'This Chat33 account is not connected.'},404);
+    const payload=await chat33Api(record.key,'/conversations/'+encodeURIComponent(conversationId)+'/messages','GET');
+    return json({ok:true,messages:chat33Array(payload,['messages','items']),conversation:payload.conversation || null});
+  } catch(error) {
+    const message=String(error && error.message || error);
+    const status=message==='LOGIN_REQUIRED'?401:message==='NO_ACCESS'||message.startsWith('INACTIVE|')?403:Number(error&&error.status)||500;
+    return json({ok:false,error:message.startsWith('INACTIVE|')?message.slice(9):status===401?'Sign in again.':status===403?'You do not have access to this business workspace.':'Messages could not be loaded from Chat33.'},status);
+  }
+}
+async function chat33Reply(req, env) {
+  try {
+    const body=await req.json().catch(()=>({}));
+    const access=await chat33Auth(req,env,body);
+    const slot=Number(body.slot), conversationId=txt(body.conversationId,160), message=txt(body.message,4000);
+    if(![1,2,3].includes(slot)||!conversationId||!message) return json({ok:false,error:'Choose a conversation and enter a reply.'},400);
+    const record=await chat33GetSlot(env,access.businessId,slot);
+    if(!record) return json({ok:false,error:'This Chat33 account is not connected.'},404);
+    const result=await chat33Api(record.key,'/conversations/'+encodeURIComponent(conversationId)+'/reply','POST',{message});
+    return json({ok:true,result,message:'Chat33 accepted the reply.'});
+  } catch(error) {
+    const message=String(error && error.message || error);
+    const status=message==='LOGIN_REQUIRED'?401:message==='NO_ACCESS'||message.startsWith('INACTIVE|')?403:Number(error&&error.status)||502;
+    return json({ok:false,error:message.startsWith('INACTIVE|')?message.slice(9):status===401?'Sign in again.':status===403?'You do not have access to this business workspace.':message.indexOf('window_closed')>=0?'The reply window has closed on this platform.':'Chat33 could not send that reply.'},status);
+  }
+}
+async function chat33MediaUploadUrl(req, env) {
+  try {
+    const body=await req.json().catch(()=>({}));
+    const access=await chat33Auth(req,env,body);
+    const slot=Number(body.slot), filename=txt(body.filename,180), contentType=txt(body.contentType,120), sizeBytes=Number(body.sizeBytes||0);
+    if(![1,2,3].includes(slot)||!filename||!contentType||!Number.isFinite(sizeBytes)||sizeBytes<1||sizeBytes>500*1024*1024) return json({ok:false,error:'Choose a Chat33 account and a file up to 500 MB.'},400);
+    const record=await chat33GetSlot(env,access.businessId,slot);
+    if(!record) return json({ok:false,error:'This Chat33 account is not connected.'},404);
+    const result=await chat33Api(record.key,'/media/upload-url','POST',{filename,contentType,size:sizeBytes});
+    return json({ok:true,...result});
+  } catch(error) {
+    const message=String(error && error.message || error);
+    const status=message==='LOGIN_REQUIRED'?401:message==='NO_ACCESS'||message.startsWith('INACTIVE|')?403:Number(error&&error.status)||502;
+    return json({ok:false,error:message.startsWith('INACTIVE|')?message.slice(9):status===401?'Sign in again.':status===403?'You do not have access to this business workspace.':'Chat33 could not prepare a media upload.'},status);
+  }
+}
+async function chat33Publish(req, env) {
+  try {
+    const body=await req.json().catch(()=>({}));
+    const access=await chat33Auth(req,env,body);
+    const textValue=txt(body.text||'',5000), mediaUrls=Array.isArray(body.mediaUrls)?body.mediaUrls.map(value=>txt(value,1200)).filter(Boolean).slice(0,4):[];
+    const mediaType=txt(body.mediaType||'',20).toLowerCase();
+    const scheduledAt=body.scheduledAt?String(body.scheduledAt):'';
+    const groups=Array.isArray(body.groups)?body.groups.slice(0,3):[];
+    if(!groups.length||(!textValue&&!mediaUrls.length)) return json({ok:false,error:'Select at least one social account and add a caption or media.'},400);
+    if(scheduledAt && (!Number.isFinite(Date.parse(scheduledAt)) || Date.parse(scheduledAt)<Date.now()+60000)) return json({ok:false,error:'Choose a future publishing time at least one minute from now.'},400);
+    const results=[];
+    for(const group of groups) {
+      const slot=Number(group.slot), ids=Array.isArray(group.accountIds)?group.accountIds.map(id=>txt(id,160)).filter(Boolean).slice(0,10):[];
+      if(![1,2,3].includes(slot)||!ids.length) continue;
+      const record=await chat33GetSlot(env,access.businessId,slot);
+      if(!record) { results.push({slot,ok:false,error:'Chat33 account not connected.'}); continue; }
+      try {
+        const accountsPayload=await chat33Api(record.key,'/accounts','GET');
+        const validIds=new Set(chat33Array(accountsPayload,['accounts','channels']).map(item=>String(item.id||item.accountId||item.channelId||'')));
+        if(ids.some(id=>!validIds.has(id))) throw new Error('One or more selected channels do not belong to this Chat33 account.');
+        const postBody={accountIds:ids,text:textValue,mediaUrls,mediaType:mediaType||undefined,scheduledAt:scheduledAt||undefined};
+        if(body.platformConfig && typeof body.platformConfig==='object') postBody.platformConfig=body.platformConfig;
+        const validation=await chat33Api(record.key,'/posts/validate','POST',postBody);
+        if(validation && (validation.valid===false || validation.ok===false || validation.error)) throw new Error(txt(validation.error || validation.message || 'Chat33 rejected the post validation.',240));
+        const created=await chat33Api(record.key,'/posts','POST',postBody);
+        results.push({slot,ok:true,result:created});
+      } catch(error) {
+        results.push({slot,ok:false,error:txt(error && error.message || error,240)});
+      }
+    }
+    if(!results.length) return json({ok:false,error:'No valid Chat33 channel targets were supplied.'},400);
+    return json({ok:results.every(item=>item.ok),results},results.some(item=>item.ok)?200:502);
+  } catch(error) {
+    const message=String(error && error.message || error);
+    const status=message==='LOGIN_REQUIRED'?401:message==='NO_ACCESS'||message.startsWith('INACTIVE|')?403:400;
+    return json({ok:false,error:message.startsWith('INACTIVE|')?message.slice(9):status===401?'Sign in again.':status===403?'You do not have access to this business workspace.':'TWIGA could not publish through Chat33.'},status);
+  }
+}
+async function ensureChat33Schema(env) {
+  await env.DB.batch([
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS chat33_social_contacts (business_id TEXT NOT NULL, slot INTEGER NOT NULL, contact_id TEXT NOT NULL, platform TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', username TEXT NOT NULL DEFAULT '', channel_name TEXT NOT NULL DEFAULT '', last_message_at TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (business_id,slot,contact_id,platform))"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_chat33_people_tenant ON chat33_social_contacts(business_id,updated_at)"),
+    env.DB.prepare("CREATE TABLE IF NOT EXISTS chat33_social_messages (event_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, slot INTEGER NOT NULL, conversation_id TEXT NOT NULL, contact_id TEXT NOT NULL, platform TEXT NOT NULL, direction TEXT NOT NULL, message_text TEXT NOT NULL DEFAULT '', message_sent_at TEXT, reply_window_ends_at TEXT, payload_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)"),
+    env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_chat33_messages_inbox ON chat33_social_messages(business_id,slot,conversation_id,created_at)")
+  ]);
+}
+async function chat33SaveContact(env,businessId,slot,platform,contact,channel) {
+  const id=txt(contact && (contact.id || contact.externalId || contact.username || contact.handle),160);
+  if(!id) return;
+  const name=txt(contact.name || contact.displayName || contact.fullName || contact.username || 'Social contact',120);
+  const username=txt(contact.username || contact.handle || '',120);
+  const channelName=txt(channel && (channel.name || channel.username) || '',120);
+  await env.DB.prepare("INSERT INTO chat33_social_contacts (business_id,slot,contact_id,platform,name,username,channel_name,last_message_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(business_id,slot,contact_id,platform) DO UPDATE SET name=CASE WHEN excluded.name<>'' THEN excluded.name ELSE chat33_social_contacts.name END,username=excluded.username,channel_name=excluded.channel_name,last_message_at=COALESCE(excluded.last_message_at,chat33_social_contacts.last_message_at),updated_at=excluded.updated_at")
+    .bind(businessId,slot,id,txt(platform,40).toLowerCase(),name,username,channelName,contact.lastMessageAt || contact.last_message_at || null,now()).run();
+}
+async function chat33People(req,env) {
+  try {
+    const access=await chat33Auth(req,env);
+    await ensureChat33Schema(env);
+    const result=await env.DB.prepare("SELECT contact_id AS id,platform,name,username,channel_name AS channel,last_message_at,updated_at FROM chat33_social_contacts WHERE business_id=? ORDER BY COALESCE(last_message_at,updated_at) DESC LIMIT 500").bind(access.businessId).all();
+    return json({ok:true,contacts:result.results||[]});
+  } catch(error) {
+    const message=String(error && error.message || error), status=message==='LOGIN_REQUIRED'?401:message==='NO_ACCESS'||message.startsWith('INACTIVE|')?403:500;
+    return json({ok:false,error:status===401?'Sign in again.':status===403?'You do not have access to this business workspace.':'Social contacts could not be loaded.'},status);
+  }
+}
+async function chat33SignatureValid(raw,header,secret) {
+  const parts={};
+  for(const item of String(header||'').split(',')){const index=item.indexOf('=');if(index>0)parts[item.slice(0,index).trim()]=item.slice(index+1).trim();}
+  const stamp=Number(parts.t);
+  if(!stamp||!parts.v1||Math.abs(Date.now()/1000-stamp)>300) return false;
+  const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+  const signed=await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(String(parts.t)+'.'+raw));
+  const expected=Array.from(new Uint8Array(signed)).map(v=>v.toString(16).padStart(2,'0')).join('');
+  return expected.length===parts.v1.length && expected===parts.v1;
+}
+async function chat33Webhook(req,env) {
+  const raw=await req.text();
+  let body; try{body=JSON.parse(raw);}catch(_){return json({ok:false,error:'Invalid webhook JSON.'},400);}
+  const slots=[];
+  const integrationRows=await env.DB.prepare("SELECT business_id,provider_slug,credentials_cipher,credentials_iv FROM business_integrations WHERE provider_slug IN ('chat33_1','chat33_2','chat33_3')").all().catch(()=>({results:[]}));
+  for(const row of integrationRows.results||[]) {
+    try {
+      const credentials=await decryptD1(env,row.business_id,'integration:'+row.provider_slug,row.credentials_iv,row.credentials_cipher);
+      if(await chat33SignatureValid(raw,req.headers.get('X-Chat33-Signature'),String(credentials.webhook_secret||''))) {
+        slots.push({businessId:row.business_id,slot:Number(row.provider_slug.slice(-1))});
+        break;
+      }
+    } catch(_) {}
+  }
+  if(!slots.length) return json({ok:false,error:'Invalid Chat33 webhook signature.'},401);
+  const access=slots[0], data=body.data || {}, contact=data.contact || {}, message=data.message || {};
+  await ensureChat33Schema(env);
+  const platform=txt(data.platform || '',40).toLowerCase(), contactId=txt(contact.id || contact.externalId || contact.username,160);
+  const conversationId=txt(data.conversationId || data.conversation_id || '',160);
+  if(body.event==='message.received' && contactId && conversationId) {
+    await chat33SaveContact(env,access.businessId,access.slot,platform,contact,data.channel || {});
+    const eventId=txt(body.id || message.id || crypto.randomUUID(),180);
+    await env.DB.prepare("INSERT OR IGNORE INTO chat33_social_messages (event_id,business_id,slot,conversation_id,contact_id,platform,direction,message_text,message_sent_at,reply_window_ends_at,payload_json,created_at) VALUES (?,?,?,?,?,?,'inbound',?,?,?,?,?)")
+      .bind(eventId,access.businessId,access.slot,conversationId,contactId,platform,txt(message.text || message.body || '',4000),message.sentAt || body.createdAt || now(),data.replyWindowEndsAt || null,JSON.stringify(body).slice(0,12000),now()).run();
+  }
+  return json({ok:true,accepted:true});
+}
+
 async function ensureBusinessWorkerSchema(env) {
   if (!businessWorkerSchemaReady) {
     businessWorkerSchemaReady = env.DB.batch([
