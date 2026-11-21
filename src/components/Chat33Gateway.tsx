@@ -115,7 +115,7 @@ export function Chat33QuickPublisher({ compact=false }: { compact?:boolean }) {
             <input ref={fileRef} type="file" accept="image/*,video/*" className="sr-only" onChange={(e:ChangeEvent<HTMLInputElement>)=>setFile(e.target.files?.[0]||null)} />
             {file ? "Selected: "+file.name : "Add photo or video"}
           </label>
-          <label className="flex flex-col gap-1 text-xs font-medium text-neutral-600">Schedule (optional)<input type="datetime-local" value={scheduledAt} onChange={e=>setScheduledAt(e.target.value)} min={new Date(Date.now()+60000).toISOString().slice(0,16)} className="h-11 rounded-xl border border-neutral-200 px-3 text-sm text-neutral-900" /></label>
+          <label className="flex flex-col gap-1 text-xs font-medium text-neutral-600">Schedule (optional)<input type="datetime-local" value={scheduledAt} onChange={e=>setScheduledAt(e.target.value)} min={new Date(Date.now()+60000-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16)} className="h-11 rounded-xl border border-neutral-200 px-3 text-sm text-neutral-900" /></label>
         </div>
         {file && <p className="text-xs text-neutral-500">{file.type.startsWith("video/")?"Video":"Image"} · {(file.size/1024/1024).toFixed(1)} MB. Chat33 direct upload supports files up to 500 MB per upload URL.</p>}
         <div className="flex flex-wrap gap-2"><Button onClick={()=>void publish()} disabled={busy||!accounts.length||!selected.length} className="bg-neutral-950 text-white hover:bg-neutral-800">{busy?"Working…":scheduledAt?"Schedule post":"Publish to selected accounts"}</Button><Button variant="outline" onClick={()=>void refresh()} disabled={busy}>Refresh channels</Button></div>
