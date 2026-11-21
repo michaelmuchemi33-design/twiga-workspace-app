@@ -279,11 +279,11 @@ export default function Customers({ onOpenCoreFunctions }: { onOpenCoreFunctions
           {contactsMessage && <p role="status" className="rounded-lg bg-neutral-50 p-3 text-sm text-neutral-600">{contactsMessage}</p>}
           <div className="space-y-2">
             {filteredCloudContacts.length === 0 && filteredSocialContacts.length === 0 && filteredCallContacts.length === 0 && <p className="rounded-xl border border-dashed border-neutral-200 p-8 text-center text-sm text-neutral-500">{demoMode ? "Contact imports are disabled in demo mode." : "No contacts yet. Import Google Contacts, CSV, or connect Chat33 to capture supported social conversations."}</p>}
-            {cloudContacts.map((person: any, i: number) => <div key={person.Phone || person.phone || i} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-100 px-3 py-2.5">
+            {filteredCloudContacts.map((person: any, i: number) => <div key={person.Phone || person.phone || i} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-100 px-3 py-2.5">
               <div><p className="text-sm font-semibold text-neutral-900">{person.Name || person.name || "Contact"}</p><p className="mt-0.5 text-xs text-neutral-500">{person.Phone || person.phone || ""}{(person.Email || person.email) ? " · " + (person.Email || person.email) : ""}</p></div>
               <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[10px] font-semibold text-neutral-500">Cloudflare · {person.Source || person.source || "Contact"}</span>
             </div>)}
-            {socialContacts.map((person: any, i: number) => <div key={"social:" + person.slot + ":" + person.platform + ":" + (person.id || i)} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-orange-100 bg-orange-50/30 px-3 py-2.5">
+            {filteredSocialContacts.map((person: any, i: number) => <div key={"social:" + person.slot + ":" + person.platform + ":" + (person.id || i)} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-orange-100 bg-orange-50/30 px-3 py-2.5">
               <div><p className="text-sm font-semibold text-neutral-900">{person.name || person.username || "Social contact"}</p><p className="mt-0.5 text-xs text-neutral-500">{person.username ? "@" + person.username + " · " : ""}{person.channel ? person.channel + " · " : ""}{person.platform ? person.platform.toUpperCase() : "SOCIAL"}{person.slot ? " · Chat33 account " + person.slot : ""}</p></div>
               <span className="rounded-full bg-orange-50 px-2.5 py-1 text-[10px] font-semibold text-orange-700">{person.source === "meta_whatsapp" ? "WhatsApp · Meta" : "Social · Chat33"}</span>
             </div>)}
