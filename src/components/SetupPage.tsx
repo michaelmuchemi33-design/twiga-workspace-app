@@ -15,22 +15,29 @@ const firstMessage = "Hi! Let’s set up your receptionist. I already have your 
 
 // Worker/model responses are not guaranteed to be plain strings. Never render
 // JavaScript's default "[object Object]" representation in the conversation.
-function readableText(value: unknown, fallback = ""): string {
+function readableText(value: unknown, fallback = "", depth = 0): string {
+  if (depth > 5 || value == null) return fallback;
   if (typeof value === "string") return value.trim() || fallback;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "number") return String(value);
+  if (typeof value === "boolean") return fallback;
   if (Array.isArray(value)) {
-    const parts = value.map((item) => readableText(item)).filter(Boolean);
+    const parts = value.map((item) => readableText(item, "", depth + 1)).filter(Boolean);
     return parts.join("\\n") || fallback;
   }
-  if (value && typeof value === "object") {
+  if (typeof value === "object") {
     const record = value as Record<string, unknown>;
-    for (const key of ["text", "content", "reply", "message", "response", "description"]) {
+    const keys = ["text", "content", "reply", "message", "response", "output_text", "generated_text", "generation", "answer", "output", "result", "data", "description", "summary"];
+    for (const key of keys) {
       if (record[key] !== undefined && record[key] !== value) {
-        const text = readableText(record[key]);
+        const text = readableText(record[key], "", depth + 1);
         if (text) return text;
       }
     }
-    try { return JSON.stringify(value); } catch { return fallback; }
+    if (Array.isArray(record.choices)) {
+      const text = readableText(record.choices[0], "", depth + 1);
+      if (text) return text;
+    }
+    // Unknown objects are not chat messages. Use the caller's safe fallback.
   }
   return fallback;
 }
@@ -86,7 +93,7 @@ export default function SetupPage({ demo = false, onDone }: {
     setMessages(next); setSending(true);
     try {
       const result = await askTwiga("chat",next);
-      setMessages([...next,{role:"assistant",content:readableText(result.reply || result.message, "Tell me a little more about the business.")}]);
+      setMessages([...next,{role:"assistant",content:readableText(result.reply ?? result.message, "I received an unexpected response format. Please send that message again.")}]);
     } catch (cause) {
       setMessages(next);
       setInput(text);
@@ -101,7 +108,7 @@ export default function SetupPage({ demo = false, onDone }: {
       const result = await askTwiga("build_profile",messages);
       if (!result.profileDraft || typeof result.profileDraft !== "object") throw new Error("TWIGA did not return a complete profile draft. Add a little more detail and try again.");
       setDraft(result.profileDraft);
-      setMessages((current) => [...current,{role:"assistant",content:readableText(result.reply || result.message, "I’ve prepared your receptionist profile. Review the summary below and save it when you’re ready.")}]);
+      setMessages((current) => [...current,{role:"assistant",content:readableText(result.reply ?? result.message, "I’ve prepared your receptionist profile. Review the summary below and save it when you’re ready.")}]);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not prepare your business profile.");
     } finally { setBuilding(false); }
