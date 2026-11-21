@@ -646,7 +646,7 @@ Deno.serve(async (req: Request) => {
 
     if (action === "get_config") {
       const { data: businessProfile } = await admin.from("twiga_business_profiles")
-        .select("setup_details").eq("business_id", businessId).maybeSingle();
+        .select("owner_name,owner_email,setup_details").eq("business_id", businessId).maybeSingle();
       const profileSetup: Row = businessProfile?.setup_details && typeof businessProfile.setup_details === "object" ? businessProfile.setup_details : {};
       const savedVoicePreference: Row = profileSetup.voice_preference && typeof profileSetup.voice_preference === "object" ? profileSetup.voice_preference : {};
       if (!line) {
