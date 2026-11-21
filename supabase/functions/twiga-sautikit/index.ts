@@ -701,7 +701,7 @@ Deno.serve(async (req: Request) => {
         }
         return json({
           phoneLine: null, keyConfigured: !!key, keyLast4: keyRef?.secret_last4 || "",
-          keyScope: keySource, keySource,
+          keyScope: keySource.startsWith("business") ? "business" : keySource, keySource,
           serverProxyReady: !!key, serverDirectReady: !!key, isPlatformAdmin,
           availableNumbers, providerError,
           voicePreference: { voice: savedVoicePreference.voice || "Woman", gender: savedVoicePreference.gender || (savedVoicePreference.voice === "Man" ? "male" : "female"), model: savedVoicePreference.model || "sautikit-flash" },
@@ -814,7 +814,7 @@ Deno.serve(async (req: Request) => {
         providerConnectionSource: number && verifiedAgent ? "live_sautikit_direct_lookup" : savedProviderVerification ? "saved_sautikit_direct_verification" : null,
         providerVerificationAt: verificationAt || null,
         keyLast4: keyRef?.secret_last4 || "",
-        keyScope: keySource, keySource,
+        keyScope: keySource.startsWith("business") ? "business" : keySource, keySource,
         keyUpdatedAt: keyRef?.updated_at || null,
         numberVerified: !!number || savedProviderVerification,
         providerNumber: String(verifiedNumber?.phone_number || verifiedNumber?.number_e164 || verifiedNumber?.phoneNumber || verifiedNumber?.number || line?.line_number || ""),
