@@ -761,15 +761,20 @@ const BUSINESS_AI_ENDPOINTS = {
   groq: 'https://api.groq.com/openai/v1',
   deepseek: 'https://api.deepseek.com'
 };
-
-
-const BUSINESS_AI_ENDPOINTS = {
-  openai: 'https://api.openai.com/v1',
-  openrouter: 'https://openrouter.ai/api/v1',
-  xai: 'https://api.x.ai/v1',
-  groq: 'https://api.groq.com/openai/v1',
-  deepseek: 'https://api.deepseek.com'
-};
+let integrationSchemaReady = null;
+async function ensureIntegrationSchema(env) {
+  if (!integrationSchemaReady) {
+    integrationSchemaReady = env.DB.batch([
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS business_integrations (business_id TEXT NOT NULL, provider_slug TEXT NOT NULL, display_name TEXT NOT NULL, integration_type TEXT NOT NULL, config_json TEXT NOT NULL DEFAULT '{}', credentials_cipher TEXT NOT NULL, credentials_iv TEXT NOT NULL, credentials_last4_json TEXT NOT NULL DEFAULT '{}', is_primary_ai INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'saved', last_test_at TEXT, last_test_message TEXT, created_by TEXT, updated_by TEXT, assisted_by_admin INTEGER NOT NULL DEFAULT 0, assistance_note TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (business_id, provider_slug))"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_business_integrations_tenant ON business_integrations(business_id, integration_type, updated_at)"),
+      env.DB.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_business_integrations_one_primary_ai ON business_integrations(business_id) WHERE integration_type = 'ai_model' AND is_primary_ai = 1"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS business_integration_audit (audit_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, provider_slug TEXT NOT NULL, action TEXT NOT NULL, actor_user_id TEXT, actor_role TEXT NOT NULL, assisted_by_admin INTEGER NOT NULL DEFAULT 1, assistance_note TEXT, metadata_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_business_integration_audit_tenant ON business_integration_audit(business_id, created_at)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS google_business_connections (business_id TEXT PRIMARY KEY, connected_by TEXT NOT NULL, google_email TEXT, granted_scopes TEXT NOT NULL DEFAULT '', connection_cipher TEXT NOT NULL, connection_iv TEXT NOT NULL, access_expires_at TEXT, spreadsheet_id TEXT, spreadsheet_url TEXT, last_sync_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
+    ]).catch(error => { integrationSchemaReady = null; throw error; });
+  }
+  return integrationSchemaReady;
+}
 let integrationCryptoKeyPromise = null;
 async function integrationKey(env) {
   if (!integrationCryptoKeyPromise) {
@@ -820,11 +825,13 @@ async function saveIntegrationD1(env,d) {
   return {provider_slug:provider,display_name:name,integration_type:type,credentials_last4:last4,is_primary_ai:primary===1,status:txt(d.status||'saved',20),updated_at:time};
 }
 async function getIntegrationD1(env,biz,provider) {
+  await ensureIntegrationSchema(env);
   const row=await env.DB.prepare("SELECT provider_slug,display_name,integration_type,config_json,credentials_cipher,credentials_iv FROM business_integrations WHERE business_id=? AND provider_slug=?").bind(biz,provider).first();
   if(!row)return null;
   return {row,credentials:await decryptD1(env,biz,'integration:'+provider,row.credentials_iv,row.credentials_cipher)};
 }
 async function listIntegrationsD1(env,biz) {
+  await ensureIntegrationSchema(env);
   const rows=await env.DB.prepare("SELECT provider_slug,display_name,integration_type,config_json,credentials_last4_json,is_primary_ai,status,last_test_at,last_test_message,updated_at FROM business_integrations WHERE business_id=? ORDER BY updated_at DESC").bind(biz).all();
   return (rows.results||[]).map(r=>({provider_slug:r.provider_slug,display_name:r.display_name,integration_type:r.integration_type,config:JSON.parse(r.config_json||'{}'),credentials_last4:JSON.parse(r.credentials_last4_json||'{}'),is_primary_ai:Number(r.is_primary_ai)===1,status:r.status,last_test_at:r.last_test_at,last_test_message:r.last_test_message,updated_at:r.updated_at}));
 }
@@ -836,11 +843,13 @@ async function deleteIntegrationD1(env,biz,provider,actor,note) {
   return true;
 }
 async function getPrimaryAiD1(env,biz) {
+  await ensureIntegrationSchema(env);
   const row=await env.DB.prepare("SELECT provider_slug,config_json,credentials_cipher,credentials_iv FROM business_integrations WHERE business_id=? AND integration_type='ai_model' AND is_primary_ai=1 AND status IN ('saved','verified') LIMIT 1").bind(biz).first();
   if(!row)return null;
   return {provider_slug:row.provider_slug,config:JSON.parse(row.config_json||'{}'),credentials:await decryptD1(env,biz,'integration:'+row.provider_slug,row.credentials_iv,row.credentials_cipher)};
 }
 async function getGoogleD1(env,biz) {
+  await ensureIntegrationSchema(env);
   const row=await env.DB.prepare("SELECT * FROM google_business_connections WHERE business_id=?").bind(biz).first();
   if(!row)return null;
   return Object.assign(await decryptD1(env,biz,'google-oauth',row.connection_iv,row.connection_cipher),{
@@ -850,6 +859,7 @@ async function getGoogleD1(env,biz) {
   });
 }
 async function saveGoogleD1(env,biz,connection) {
+  await ensureIntegrationSchema(env);
   const old=await env.DB.prepare("SELECT created_at FROM google_business_connections WHERE business_id=?").bind(biz).first();
   const time=now(), tokenPayload={access_token:String(connection.access_token||''),refresh_token:connection.refresh_token?String(connection.refresh_token):null};
   if(!tokenPayload.access_token)throw new Error('Google did not return an access token.');
