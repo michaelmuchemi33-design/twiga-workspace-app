@@ -1743,7 +1743,9 @@ function twigaTools() {
     {type: 'function', function: {name: 'list_products', description: 'List the active products and services with their current prices and stock. Always call this before quoting a price or stock level.', parameters: {type: 'object', properties: {}, additionalProperties: false}}},
     {type: 'function', function: {name: 'create_order', description: 'Save a customer sale/order after the customer has confirmed the items, quantities, name and phone. The order is recorded as unpaid for staff to confirm payment.', parameters: {type: 'object', properties: {customerName: {type: 'string', description: 'Customer full name'}, customerPhone: {type: 'string', description: 'Customer phone number'}, items: {type: 'array', minItems: 1, items: {type: 'object', properties: {itemId: {type: 'string'}, quantity: {type: 'number', minimum: 0.01}}, required: ['itemId', 'quantity'], additionalProperties: false}}, notes: {type: 'string'}}, required: ['customerName', 'customerPhone', 'items'], additionalProperties: false}}},
     {type: 'function', function: {name: 'check_appointment_availability', description: 'Check whether a date and time slot is free in the business calendar before offering or confirming an appointment.', parameters: {type: 'object', properties: {date: {type: 'string', description: 'Appointment date YYYY-MM-DD in Africa/Nairobi'}, time: {type: 'string', description: 'Start time HH:MM in 24-hour Africa/Nairobi time'}, durationMinutes: {type: 'number', minimum: 15, maximum: 180}}, required: ['date', 'time'], additionalProperties: false}}},
-    {type: 'function', function: {name: 'book_appointment', description: 'Create a confirmed appointment in the business order ledger and calendar after the customer confirms an available time.', parameters: {type: 'object', properties: {customerName: {type: 'string'}, customerPhone: {type: 'string'}, serviceItemId: {type: 'string', description: 'ItemId of an active service from list_products'}, date: {type: 'string', description: 'YYYY-MM-DD in Africa/Nairobi'}, time: {type: 'string', description: 'HH:MM in 24-hour Africa/Nairobi time'}, durationMinutes: {type: 'number', minimum: 15, maximum: 180}, notes: {type: 'string'}}, required: ['customerName', 'customerPhone', 'serviceItemId', 'date', 'time'], additionalProperties: false}}}
+    {type: 'function', function: {name: 'book_appointment', description: 'Create a confirmed appointment in the business order ledger and calendar after the customer confirms an available time.', parameters: {type: 'object', properties: {customerName: {type: 'string'}, customerPhone: {type: 'string'}, serviceItemId: {type: 'string', description: 'ItemId of an active service from list_products'}, date: {type: 'string', description: 'YYYY-MM-DD in Africa/Nairobi'}, time: {type: 'string', description: 'HH:MM in 24-hour Africa/Nairobi time'}, durationMinutes: {type: 'number', minimum: 15, maximum: 180}, notes: {type: 'string'}}, required: ['customerName', 'customerPhone', 'serviceItemId', 'date', 'time'], additionalProperties: false}}},
+    {type: 'function', function: {name: 'save_customer_contact', description: 'Save or update a customer name and phone in this business workspace after the customer has provided the details for an order, booking or requested follow-up.', parameters: {type: 'object', properties: {customerName: {type: 'string'}, customerPhone: {type: 'string'}, email: {type: 'string'}}, required: ['customerName', 'customerPhone'], additionalProperties: false}}},
+    {type: 'function', function: {name: 'take_message_for_staff', description: 'Record a staff handover in this business workspace when a caller asks for a person, has a complaint, needs a callback, raises an urgent operational matter or asks for something the receptionist cannot safely complete. Tell the caller you are recording a message for staff review; do not promise an immediate transfer or callback.', parameters: {type: 'object', properties: {customerName: {type: 'string'}, customerPhone: {type: 'string', description: 'Use the caller number when available'}, reason: {type: 'string'}, message: {type: 'string'}}, required: ['reason', 'message'], additionalProperties: false}}}
   ];
 }
 
@@ -1797,12 +1799,36 @@ async function aiListProducts(env, ctx) {
   return {items: items};
 }
 async function aiSaveContact(env, ctx, name, phone) {
-  if (!phone) return;
+  if (!phone) return {ok: false, skipped: true};
   try {
-    await ACTIONS.saveContacts(env, ctx, {contacts: [{name: name, phone: phone, email: ''}]});
+    const result = await ACTIONS.saveContacts(env, ctx, {contacts: [{name: name, phone: phone, email: ''}]});
+    return {ok: true, saved: Number(result && result.saved || 0)};
   } catch (e) {
     console.error('TWIGA AI contact save failed', e && e.message);
+    return {ok: false, error: 'Contact could not be saved.'};
   }
+}
+async function aiSaveCustomerContact(env, ctx, args) {
+  const name = txt(args.customerName, 120);
+  const phone = txt(args.customerPhone, 30).replace(/[^0-9+]/g, '');
+  const email = txt(args.email, 120);
+  if (!name || phone.replace(/\D/g, '').length < 7) throw new Error('A customer name and valid phone number are required.');
+  const result = await ACTIONS.saveContacts(env, ctx, {contacts: [{name: name, phone: phone, email: email}]});
+  if (!result || Number(result.saved || 0) < 1) throw new Error('The customer contact was not saved.');
+  return {ok: true, saved: true, customerName: name, customerPhone: phone};
+}
+async function aiTakeStaffMessage(env, ctx, args, call, callId, toolId) {
+  await ensureBusinessWorkerSchema(env);
+  const name = txt(args.customerName, 120);
+  const phone = txt(args.customerPhone || call && call.customer && call.customer.number || call && call.fromNumber, 30);
+  const reason = txt(args.reason, 180);
+  const message = txt(args.message, 900);
+  if (!reason || !message) throw new Error('A reason and a short message for the team are required.');
+  if (name && phone) await aiSaveContact(env, ctx, name, phone);
+  const detail = [name ? 'Customer: ' + name : '', phone ? 'Phone: ' + phone : '', 'Reason: ' + reason, 'Message: ' + message, 'Call ID: ' + txt(callId, 100)].filter(Boolean).join('\n');
+  const taskId = ('phone-handover-' + safeToolKey(callId) + '-' + safeToolKey(toolId)).slice(0, 170);
+  await createWhatsAppOwnerTask(env, ctx.biz.id, 'phone_handover', 'Phone receptionist handover · ' + (name || phone || 'caller'), detail, taskId);
+  return {ok: true, recorded: true, taskId: taskId, status: 'needs_review', message: 'The message has been recorded in this business workspace for staff review. No live transfer or callback has been placed.'};
 }
 async function aiCreateOrder(env, ctx, args, callId, toolId) {
   const customer = txt(args.customerName, 120);
@@ -2009,9 +2035,9 @@ function buildAssistant(o) {
   parts.push(o.prompt && o.prompt.trim() ? o.prompt.trim() : '(The owner has not added business details yet. Be helpful in general and offer to take a message.)');
   if (o.faq && o.faq.trim()) parts.push('QUESTIONS AND ANSWERS (use these answers when asked):\n' + o.faq.trim());
   if (o.rules && o.rules.trim()) parts.push('RULES (always follow):\n' + o.rules.trim());
-  const baseSystem = 'You are the AI receptionist for ' + biz + ', answering a phone call. Speak in short, warm, natural sentences like a helpful Kenyan receptionist. Use natural Kenyan English phrasing and everyday Kiswahili. Reply in the language the caller uses (English or Kiswahili) and follow them if they switch. Use only the business information below. If you do not know something, say so and offer to take a message or connect a person. Never invent prices, stock or availability. For an order or booking, collect the caller\'s name and phone number, repeat the details back and ask them to confirm. Amounts are in Kenya shillings (KSh). When the caller is finished, say goodbye politely.\n\nBUSINESS INFORMATION:\n' + parts.join('\n\n');
+  const baseSystem = 'You are the AI receptionist and front-desk operations coordinator for ' + biz + '. Provide a continuous service whenever the configured phone provider routes a call to TWIGA, including after business hours. Use the saved opening hours to explain when the physical business is open; do not switch the receptionist off at midnight or claim the business itself is open when it is not. Speak in short, warm, natural Kenyan English or Kiswahili and match the caller\'s language. Use only the business information below. Triage each caller\'s purpose: enquiry, price or stock question, order, appointment, existing booking, complaint, request for staff, delivery question, payment question or urgent matter. For supported operations, use the available tools and wait for their results before confirming completion. For requests you cannot complete, take a message for staff review using take_message_for_staff when the caller wants help or a follow-up; otherwise explain the limitation plainly. Never invent prices, stock, availability, payment status, staff schedules, provider connections or completed work. For any order or booking, collect the caller\'s name and phone number, repeat the full details and obtain explicit confirmation before creating it. Amounts are in Kenya shillings (KSh). When finished, close politely.\n\nBUSINESS INFORMATION:\n' + parts.join('\n\n');
   const nowKenya = new Intl.DateTimeFormat('en-KE', {timeZone: 'Africa/Nairobi', dateStyle: 'full', timeStyle: 'short'}).format(new Date());
-  const system = baseSystem + '\n\nCURRENT DATE/TIME IN NAIROBI: ' + nowKenya + '. Interpret relative dates in Africa/Nairobi time.\n\nBUSINESS ACTION RULES: Use list_products before quoting prices or stock. Create an order only after collecting the customer name and phone, repeating the items and quantities, and receiving explicit confirmation. Orders are saved unpaid; never claim payment was received and never promise M-Pesa checkout. For appointments, identify a service from list_products, check the requested slot with check_appointment_availability, offer another slot if unavailable, repeat the service/date/time and receive explicit confirmation before book_appointment. Never claim an order or appointment was saved unless the tool returns ok=true. If check_appointment_availability returns googleCalendarConnected=false, do not say Google Calendar was checked; explain that the slot was checked against the TWIGA calendar only and Google Workspace needs connecting for Google Calendar conflict checks. If the appointment tool returns googleCalendarSynced=false, explain that it is saved in TWIGA calendar only and Google Calendar was not updated. Never claim Google Calendar sync unless the tool returns googleCalendarSynced=true.';
+  const system = baseSystem + '\n\nCURRENT DATE/TIME IN NAIROBI: ' + nowKenya + '. Interpret relative dates in Africa/Nairobi time.\n\nBUSINESS ACTION RULES: Use list_products before quoting prices or stock. Create an order only after collecting the customer name and phone, repeating the items and quantities, and receiving explicit confirmation. Orders are saved unpaid; never claim payment was received and never promise M-Pesa checkout. For appointments, identify a service from list_products, check the requested slot with check_appointment_availability, offer another slot if unavailable, repeat the service/date/time and receive explicit confirmation before book_appointment. Never claim an order or appointment was saved unless the tool returns ok=true. Save a contact only when the caller has provided those details for a genuine business interaction. If the caller asks for a staff member, reports a complaint, asks for a callback or needs an unsupported action, capture the reason and message with take_message_for_staff and say it is recorded for staff review; do not claim a live transfer, instant notification or callback. Do not promise emergency services; for immediate danger tell the caller to contact local emergency services directly. Do not claim TWIGA sent WhatsApp, SMS, Gmail, invoices, payment prompts, refunds, purchase orders, Zoom links, room bookings or Google Sheets/Drive updates unless a specific connected tool returns confirmed success. Do not claim physical tasks such as greeting a walk-in, issuing a badge, escorting a visitor, tidying a reception area or stocking shelves have happened. The connected phone webhook and one-minute Worker scheduler operate independently of the business opening-hours text; opening hours describe the business, not the Worker shutdown time. If check_appointment_availability returns googleCalendarConnected=false, do not say Google Calendar was checked; explain that the slot was checked against the TWIGA calendar only and Google Workspace needs connecting for Google Calendar conflict checks. If the appointment tool returns googleCalendarSynced=false, explain that it is saved in TWIGA calendar only and Google Calendar was not updated. Never claim Google Calendar sync unless the tool returns googleCalendarSynced=true.';
   return {
     name: 'TWIGA phone receptionist',
     firstMessage: (o.greeting && o.greeting.trim()) || ('Hello, karibu ' + biz + '. How can I help you today?'),
@@ -2042,6 +2068,7 @@ async function vapiHook(req, env) {
   }
   if (m.type === 'tool-calls') {
     await ensureUsageSchema(env);
+    await ensureBusinessWorkerSchema(env);
     const calls = Array.isArray(m.toolCallList) ? m.toolCallList : [];
     let d;
     try { d = await getAiLineConfig(env, num); }
@@ -2064,6 +2091,8 @@ async function vapiHook(req, env) {
         else if (name === 'create_order') result = await aiCreateOrder(env, ctx, args || {}, callId, toolCallId);
         else if (name === 'check_appointment_availability') result = await aiCheckSlot(env, ctx, args || {});
         else if (name === 'book_appointment') result = await aiBookAppointment(env, ctx, args || {}, callId, toolCallId);
+        else if (name === 'save_customer_contact') result = await aiSaveCustomerContact(env, ctx, args || {});
+        else if (name === 'take_message_for_staff') result = await aiTakeStaffMessage(env, ctx, args || {}, call, callId, toolCallId);
         else throw new Error('Unknown TWIGA AI action.');
         results.push({toolCallId: toolCallId, result: JSON.stringify(result)});
       } catch (e) {
