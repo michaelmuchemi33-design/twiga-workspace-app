@@ -33,7 +33,14 @@ const groups: { title: string; items: TabDef[] }[] = [
       { id: "outreach", label: "Outreach", icon: IconPhone },
       { id: "connections", label: "Connections", icon: IconUsers },
       { id: "organizer", label: "Organize", icon: IconSwap },
-      { id: "functions", label: "Functions", icon: IconSparkle },
+    ],
+  },
+  {
+    title: "Social & customers",
+    items: [
+      { id: "functions", label: "The 10 core functions", icon: IconSparkle },
+      { id: "customers", label: "People & contacts", icon: IconUsers },
+      { id: "whatsapp", label: "Unified Inbox", icon: IconChat },
     ],
   },
   {
@@ -44,13 +51,6 @@ const groups: { title: string; items: TabDef[] }[] = [
       { id: "payments", label: "Customer payments", icon: IconCard },
       { id: "products", label: "Products & services", icon: IconBox },
       { id: "reports", label: "Reports", icon: IconFile },
-    ],
-  },
-  {
-    title: "People",
-    items: [
-      { id: "customers", label: "People", icon: IconUsers },
-      { id: "whatsapp", label: "WhatsApp", icon: IconChat },
     ],
   },
   {
