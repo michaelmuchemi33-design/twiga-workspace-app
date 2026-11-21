@@ -72,7 +72,7 @@ const moreTabs = [
 ];
 
 export default function App({ demo = false, userId, googleAuth, onSignOut }: { demo?: boolean; userId?: string; googleAuth?: GoogleAuthContext; onSignOut?: () => Promise<void> }) {
-  const [tab, setTab] = useState("setup");
+  const [tab, setTab] = useState("dashboard");
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     try { return localStorage.getItem("twiga_theme") === "dark" ? "dark" : "light"; }
     catch { return "light"; }
