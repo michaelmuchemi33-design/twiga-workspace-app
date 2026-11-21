@@ -375,10 +375,10 @@ async function whatsappConfig(req, env) {
     const businessId = String(req.headers.get('x-business-id') || new URL(req.url).searchParams.get('business_id') || '');
     const ctx = await authorize(env, token, businessId);
     await ensureBusinessWorkerSchema(env);
-    const account = await env.DB.prepare('SELECT display_phone_number, verified_name, status, updated_at, token_expires_at FROM whatsapp_accounts WHERE business_id = ?').bind(ctx.biz.id).first();
+    const account = await env.DB.prepare('SELECT display_phone_number, verified_name, status, updated_at, token_expires_at, last_webhook_at FROM whatsapp_accounts WHERE business_id = ?').bind(ctx.biz.id).first();
     const appId = String(env.META_APP_ID || '');
     const configId = String(env.META_EMBEDDED_SIGNUP_CONFIG_ID || '');
-    return json({ok: true, configured: !!(appId && configId && env.META_APP_SECRET && env.META_WEBHOOK_VERIFY_TOKEN && env.WHATSAPP_TOKEN_ENCRYPTION_KEY), appId: appId, configId: configId, graphVersion: metaGraphVersion(env), connected: !!(account && account.status === 'connected'), phoneNumber: account ? account.display_phone_number : '', verifiedName: account ? account.verified_name : '', tokenExpiresAt: account ? account.token_expires_at : null, status: account ? account.status : 'not_connected'});
+    return json({ok: true, configured: !!(appId && configId && env.META_APP_SECRET && env.META_WEBHOOK_VERIFY_TOKEN && env.WHATSAPP_TOKEN_ENCRYPTION_KEY), appId: appId, configId: configId, graphVersion: metaGraphVersion(env), connected: !!(account && account.status === 'connected'), phoneNumber: account ? account.display_phone_number : '', verifiedName: account ? account.verified_name : '', tokenExpiresAt: account ? account.token_expires_at : null, lastWebhookAt: account ? account.last_webhook_at : null, webhookUrl: 'https://twiga-api.twiga-ke.workers.dev/whatsapp/webhook', status: account ? account.status : 'not_connected'});
   } catch (error) {
     const message = String(error && error.message ? error.message : error);
     const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : message.indexOf('INACTIVE|') === 0 ? 403 : 500;
