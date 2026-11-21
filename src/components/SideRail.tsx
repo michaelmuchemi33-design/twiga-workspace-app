@@ -27,7 +27,7 @@ const groups: { title: string; items: TabDef[] }[] = [
   {
     title: "Front Desk",
     items: [
-      { id: "setup", label: "AI Desk", icon: IconSparkle },
+      { id: "setup", label: "Business", icon: IconHome },
       { id: "phone", label: "Calls", icon: IconChat },
       { id: "dashboard", label: "Home", icon: IconHome },
       { id: "outreach", label: "Outreach", icon: IconPhone },
@@ -95,7 +95,7 @@ export default function SideRail({
               expanded ? "opacity-100" : "w-0 overflow-hidden opacity-0"
             )}
           >
-            AI Front Desk
+            TWIGA
           </span>
         </div>
 
