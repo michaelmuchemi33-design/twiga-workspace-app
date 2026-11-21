@@ -29,7 +29,7 @@ async function authorisedBusiness(admin: any, userId: string, businessId: string
   return true;
 }
 
-async function validateAiKey(baseUrl: string, key: string) {
+async function validateAiKey(baseUrl: string, key: string, model: string) {
   const response = await fetch(baseUrl.replace(/\/+$/, "") + "/models", {
     method: "GET",
     headers: { Authorization: "Bearer " + key, Accept: "application/json" },
@@ -41,7 +41,12 @@ async function validateAiKey(baseUrl: string, key: string) {
       status === 403 ? "The AI provider accepted the account but denied model-list access. Check the key permissions." :
       "The AI provider connection test failed (HTTP " + status + ").");
   }
-  return "The AI API key was validated. TWIGA can use this model for this business.";
+  const catalog = await response.json().catch(() => ({}));
+  const models = Array.isArray(catalog?.data) ? catalog.data : Array.isArray(catalog?.models) ? catalog.models : [];
+  if (models.length && !models.some((item: any) => String(item?.id || item?.name || "") === model)) {
+    throw new Error("The API key is valid, but model '" + model + "' was not returned by this account's model list. Choose an available model ID from your provider.");
+  }
+  return "The API key and model access were validated. TWIGA can use " + model + " for this business.";
 }
 
 async function validateResendKey(key: string) {
@@ -165,6 +170,10 @@ Deno.serve(async (req: Request) => {
     if (action !== "save") return reply({ error: "Unknown business integration action." }, 400);
 
     const provider = clean(payload.provider, 48).toLowerCase();
+    const displayName = clean(payload.displayName, 100);
+    const providerSlug = provider === "custom"
+      ? "custom_" + (displayName.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "external_tool")
+      : provider;
     const credentials = payload.credentials;
     if (!isObject(credentials)) return reply({ error: "Enter the provider credentials in the secure fields." }, 400);
     const credentialEntries = Object.entries(credentials).filter(([key, value]) =>
@@ -180,8 +189,8 @@ Deno.serve(async (req: Request) => {
       credentialObject[key] = text;
     }
 
-    const displayName = clean(payload.displayName, 100);
     if (displayName.length < 2) return reply({ error: "Enter a name for this connection." }, 400);
+    if (!/^[a-z][a-z0-9_-]{1,47}$/.test(providerSlug)) return reply({ error: "Choose a connection name with at least two letters or numbers." }, 400);
 
     if (provider === "palpluss") {
       const apiKeyInput = credentialObject.api_key || "";
@@ -228,7 +237,7 @@ Deno.serve(async (req: Request) => {
       if (!model) return reply({ error: "Enter the model name from your AI provider." }, 400);
       integrationType = "ai_model";
       config = { provider, base_url: spec.baseUrl, model };
-      testMessage = await validateAiKey(spec.baseUrl, credentialObject.api_key);
+      testMessage = await validateAiKey(spec.baseUrl, credentialObject.api_key, model);
       status = "verified";
     } else if (provider === "resend") {
       if (Object.keys(credentialObject).length !== 1 || !credentialObject.api_key) {
@@ -248,7 +257,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: saved, error: saveError } = await admin.rpc("twiga_save_business_integration", {
       p_business_id: businessId,
-      p_provider_slug: provider,
+      p_provider_slug: providerSlug,
       p_display_name: displayName,
       p_integration_type: integrationType,
       p_config: config,
@@ -261,11 +270,11 @@ Deno.serve(async (req: Request) => {
     const now = new Date().toISOString();
     const { error: statusError } = await admin.from("twiga_business_integrations")
       .update({ status, last_test_at: status === "verified" ? now : null, last_test_message: testMessage, updated_at: now })
-      .eq("business_id", businessId).eq("provider_slug", provider);
+      .eq("business_id", businessId).eq("provider_slug", providerSlug);
     if (statusError) throw statusError;
 
     return reply({
-      saved: true, integration: saved, status, testMessage,
+      saved: true, integration: saved, providerSlug, status, testMessage,
       message: status === "verified" ? testMessage + " Credentials are encrypted in Supabase Vault and masked in TWIGA." : testMessage,
     });
   } catch (error) {
