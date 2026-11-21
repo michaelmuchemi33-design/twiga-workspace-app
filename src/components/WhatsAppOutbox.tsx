@@ -12,6 +12,8 @@ import { supabase } from "@/lib/supabase";
 import { useStore, uid, stamp } from "@/lib/store";
 import { IconChat, IconSend, IconCheck, IconClock } from "@/components/Icons";
 
+const API_WAHA = "https://twiga-api.twiga-ke.workers.dev";
+
 
 
 declare global {
@@ -130,7 +132,7 @@ export default function WhatsAppOutbox() {
     setWahaBusy(true);setWahaMessage("Starting a private WhatsApp session for this business…");setWahaQr("");setWahaPairingCode("");
     try{
       const result=await wahaFetch("/waha/connect","POST",{});
-      setWahaChannel((current)=>({...current,configured:true,connected:result.connected===true,status:String(result.status||"STARTING")} as WahaChannel));
+      setWahaChannel((current)=>({...((current || {}) as any),configured:true,connected:result.connected===true,status:String(result.status||"STARTING")} as WahaChannel));
       setWahaMessage(String(result.message||"WhatsApp session started."));
       await loadWahaQr();
       await refreshWahaChannel();
@@ -380,7 +382,7 @@ export default function WhatsAppOutbox() {
               )}
               <div className="grid gap-2 rounded-xl border border-neutral-200 p-3 sm:grid-cols-[1fr_auto] sm:items-end">
                 <div className="space-y-1.5"><Label>Phone number with country code</Label><Input value={wahaPhone} onChange={(event)=>setWahaPhone(event.target.value)} placeholder="2547XXXXXXXX" inputMode="tel" /><p className="text-[11px] text-neutral-500">Use digits only, including 254 for Kenya.</p></div>
-                <Button onClick={()=>void requestWahaPairingCode()} disabled={wahaBusy||wahaPhone.replace(/\\D/g,"").length<10} className="bg-neutral-950 text-white hover:bg-neutral-800">Get linking code</Button>
+                <Button onClick={()=>void requestWahaPairingCode()} disabled={wahaBusy||wahaPhone.replace(/\D/g,"").length<10} className="bg-neutral-950 text-white hover:bg-neutral-800">Get linking code</Button>
               </div>
               {wahaPairingCode && <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-center"><p className="text-xs font-semibold uppercase tracking-wide text-orange-800">Your WhatsApp linking code</p><p className="mt-1 text-2xl font-bold tracking-[.2em] text-neutral-950">{wahaPairingCode}</p><p className="mt-2 text-xs leading-5 text-neutral-600">On your phone: WhatsApp → Linked devices → Link with phone number, then enter this code.</p></div>}
             </>
