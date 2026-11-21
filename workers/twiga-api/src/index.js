@@ -909,6 +909,7 @@ async function wahaConnect(req, env) {
     try {
       session = await wahaRequest(env,'/api/sessions','POST',{
         name:sessionName,
+        start:true,
         config:{
           webhooks:[webhook],
           metadata:{'twiga.business_id':businessId,'twiga.workspace':'true'}
@@ -940,14 +941,30 @@ async function wahaQr(req, env) {
     const access = await authorisedWahaRequest(req,env);
     const row = await getWahaConnection(env,access.businessId);
     if (!row) return json({ok:false,error:'Start the WhatsApp connection first.'},409);
-    const result = await wahaRequest(env,'/api/' + encodeURIComponent(row.session_name) + '/auth/qr','GET',undefined,'application/json');
-    const image = String(result.data || result.qr || '');
-    if (!image) return json({ok:false,error:'WAHA has not produced a QR code yet. Refresh the connection status and try again.'},409);
-    return json({ok:true,qrDataUrl:image.startsWith('data:') ? image : 'data:' + String(result.mimetype || 'image/png') + ';base64,' + image,expiresInSeconds:60});
+    const base = String(env.WAHA_BASE_URL).trim().replace(/\/+$/, '');
+    const response = await fetch(base + '/api/' + encodeURIComponent(row.session_name) + '/auth/qr', {
+      headers: {'X-Api-Key': String(env.WAHA_API_KEY), 'Accept':'image/png'},
+      signal: AbortSignal.timeout(20000)
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      const detail = txt(body,180);
+      console.error('WAHA QR request failed',response.status,detail);
+      return json({ok:false,error:response.status === 422 ? 'The QR code is not ready yet. Wait a moment and refresh.' : 'WAHA could not provide a QR code. Check the session status and try again.'},response.status === 422 ? 409 : 502);
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!bytes.length || bytes.length > 2 * 1024 * 1024) return json({ok:false,error:'WAHA returned an invalid QR image.'},502);
+    let binary = '';
+    for (let offset=0; offset<bytes.length; offset+=0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(offset,Math.min(offset+0x8000,bytes.length)));
+    }
+    const base64 = btoa(binary);
+    const mime = response.headers.get('content-type')?.split(';')[0] || 'image/png';
+    return json({ok:true,qrDataUrl:'data:'+mime+';base64,'+base64,expiresInSeconds:60});
   } catch (error) {
     const message = String(error && error.message || error);
-    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : message.startsWith('INACTIVE|') ? 403 : Number(error && error.status) === 422 ? 409 : 502;
-    return json({ok:false,error:status === 401 ? 'Sign in again to load the WhatsApp QR code.' : status === 403 ? 'You do not have access to this business workspace.' : status === 409 ? 'The QR code is not ready yet. Wait a moment and refresh it.' : 'Could not load the WhatsApp QR code.'},status);
+    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : message.startsWith('INACTIVE|') ? 403 : 502;
+    return json({ok:false,error:status === 401 ? 'Sign in again to load the WhatsApp QR code.' : status === 403 ? 'You do not have access to this business workspace.' : 'Could not load the WhatsApp QR code. Check the private WAHA service.'},status);
   }
 }
 async function wahaPairingCode(req, env) {
