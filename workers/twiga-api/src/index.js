@@ -886,8 +886,15 @@ async function internalIntegrationRoute(req,env,kind) {
     const body=await req.json().catch(()=>({})),biz=txt(body.businessId||body.business_id,80),action=txt(body.action,40);
     if(kind!=='google' && action==='admin_list'){
       await ensureIntegrationSchema(env);
-      const rows=await env.DB.prepare("SELECT business_id,provider_slug,display_name,integration_type,credentials_last4_json,is_primary_ai,status,updated_at FROM business_integrations ORDER BY updated_at DESC LIMIT 2000").all();
-      return json({ok:true,integrations:rows.results||[]});
+      const [rows,googleRows]=await Promise.all([
+        env.DB.prepare("SELECT business_id,provider_slug,display_name,integration_type,credentials_last4_json,is_primary_ai,status,updated_at FROM business_integrations ORDER BY updated_at DESC LIMIT 2000").all(),
+        env.DB.prepare("SELECT business_id,updated_at FROM google_business_connections ORDER BY updated_at DESC LIMIT 2000").all()
+      ]);
+      const integrations=(rows.results||[]).concat((googleRows.results||[]).map(row=>({
+        business_id:row.business_id,provider_slug:"google_workspace",display_name:"Google Workspace",
+        integration_type:"oauth",credentials_last4_json:"{}",is_primary_ai:0,status:"connected",updated_at:row.updated_at
+      })));
+      return json({ok:true,integrations});
     }
     if(!/^[0-9a-f-]{36}$/i.test(biz))return json({ok:false,error:'Invalid business workspace.'},400);
     if(kind==='google'){
@@ -983,6 +990,32 @@ async function businessIntegrationsRoute(req,env) {
       const slug=provider==='custom'?'custom_'+integrationSlug(name).slice(0,40):provider;
       const saved=await saveIntegrationD1(env,{businessId:biz,provider:slug,displayName:name,integrationType:validation.type,config:validation.config,credentials,isPrimaryAI:body.isPrimaryAI===true,status:provider==='custom'?'saved':'verified',lastTestMessage:validation.message,actorUserId:actor.userId,actorRole:actor.role,assistedByAdmin:actor.admin,assistanceNote:note});
       return json({ok:true,saved:true,integration:saved,providerSlug:slug,message:validation.message+" Credentials are encrypted in this business's Cloudflare D1 workspace."});
+    }
+    if(action==='email.send'){
+      if(body.approved!==true)return json({ok:false,error:'The business owner must explicitly approve this email before TWIGA sends it.'},403);
+      const to=txt(body.to,254),subject=txt(body.subject,180),message=String(body.text||body.bodyText||'').trim().slice(0,12000);
+      const from=txt(body.from,180);
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to))return json({ok:false,error:'Enter a valid recipient email address.'},400);
+      if(!subject||!message)return json({ok:false,error:'Email subject and message are required.'},400);
+      const saved=await getIntegrationD1(env,biz,'resend');
+      if(!saved)return json({ok:false,error:'Connect Resend in this business workspace first.'},409);
+      const apiKey=txt(saved.credentials.api_key,500);
+      const defaultFrom=txt(saved.row && JSON.parse(saved.row.config_json||'{}').from_email,180);
+      const sender=from||defaultFrom;
+      if(!sender||!sender.includes('@'))return json({ok:false,error:'Set a verified default sender email in this business Resend connection.'},409);
+      const response=await fetch('https://api.resend.com/emails',{
+        method:'POST',
+        headers:{Authorization:'Bearer '+apiKey,'Content-Type':'application/json',Accept:'application/json'},
+        body:JSON.stringify({from:sender,to:[to],subject:subject,text:message}),
+        signal:AbortSignal.timeout(20000)
+      });
+      const result=await response.json().catch(()=>({}));
+      if(!response.ok){
+        console.error('TWIGA Resend send failed for business',biz,response.status);
+        return json({ok:false,error:response.status===401?'Resend rejected this business API key.':String(result.message||'Resend could not send this email.')},response.status===401?401:502);
+      }
+      await integrationAudit(env,biz,'resend','email.sent',actor,note,{to,subject,id:result.id||null});
+      return json({ok:true,sent:true,id:String(result.id||''),to,subject,message:'Resend accepted the owner-approved email.'});
     }
     if(action==='set_primary_ai'){
       const provider=integrationSlug(body.provider),found=await getIntegrationD1(env,biz,provider);
