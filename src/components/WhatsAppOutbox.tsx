@@ -248,57 +248,6 @@ export default function WhatsAppOutbox() {
       <Card className="rounded-2xl border-neutral-200 bg-white shadow-sm">
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <CardDescription>Link the number used by this business. Connect the business’s official WhatsApp Business number directly through Meta. Chat33 WhatsApp support is not available yet.</CardDescription>
-          </div>
-          <Badge className={cn("border-0",wahaChannel?.connected?"bg-orange-50 text-orange-800":"bg-neutral-100 text-neutral-700")}>
-            {wahaLoading?"Checking…":wahaChannel?.connected?"Connected":wahaChannel?.configured?(wahaChannel.status||"Not linked"):"Admin setup needed"}
-          </Badge>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {wahaChannel?.connected ? (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-orange-100 bg-orange-50/60 p-3">
-              <div><p className="text-sm font-semibold text-neutral-950">{wahaChannel.pushName||"WhatsApp"} · {wahaChannel.phoneNumber||"Linked number"}</p><p className="mt-1 text-xs text-neutral-600">This WhatsApp account is linked to this business workspace.</p></div>
-              <Button variant="outline" onClick={()=>void disconnectWaha()} disabled={wahaBusy} className="border-neutral-300 bg-white text-neutral-900">Disconnect</Button>
-            </div>
-          ) : !wahaChannel?.configured ? (
-            <div className="rounded-xl bg-neutral-50 p-3">
-              <p className="text-sm text-neutral-800">The QR and phone-number connection is ready in TWIGA, but the WAHA server has not been configured by the platform administrator.</p>
-              <p className="mt-2 text-xs leading-5 text-neutral-500">Admin adds WAHA_BASE_URL and WAHA_API_KEY as private Cloudflare Worker secrets. The service must have persistent session storage enabled.</p>
-            </div>
-          ) : (
-            <>
-              <p className="text-sm leading-5 text-neutral-600">Scan using WhatsApp on the phone that owns this number. You can also request a temporary linking code if QR scanning is inconvenient.</p>
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={()=>void startWahaConnection()} disabled={wahaBusy||wahaLoading||demoMode} className="bg-neutral-950 text-white hover:bg-neutral-800">{wahaBusy?"Starting…":"Start QR connection"}</Button>
-                <Button variant="outline" onClick={()=>void refreshWahaChannel()} disabled={wahaBusy} className="border-neutral-300 bg-white text-neutral-900">Check status</Button>
-              </div>
-              {wahaQr && !wahaChannel?.connected && (
-                <div className="flex flex-col items-center gap-3 rounded-xl border border-neutral-200 bg-white p-4 sm:flex-row sm:items-start">
-                  <img src={wahaQr} alt="WhatsApp link device QR code" className="h-52 w-52 rounded-lg border border-neutral-100 bg-white object-contain" />
-                  <div className="flex-1 space-y-2 text-sm text-neutral-700">
-                    <p className="font-semibold text-neutral-950">Scan with your phone</p>
-                    <ol className="list-decimal space-y-1 pl-4 text-sm leading-5">
-                      <li>Open WhatsApp on your phone.</li><li>Open Linked devices.</li><li>Choose Link a device, then scan this code.</li>
-                    </ol>
-                    <p className="text-xs text-neutral-500">QR codes expire quickly. Refresh the code if it stops working.</p>
-                    <Button size="sm" variant="outline" onClick={()=>void refreshWahaQr()} disabled={wahaBusy} className="border-neutral-300 bg-white text-neutral-900">Refresh QR code</Button>
-                  </div>
-                </div>
-              )}
-              <div className="grid gap-2 rounded-xl border border-neutral-200 p-3 sm:grid-cols-[1fr_auto] sm:items-end">
-                <div className="space-y-1.5"><Label>Phone number with country code</Label><Input value={wahaPhone} onChange={(event)=>setWahaPhone(event.target.value)} placeholder="2547XXXXXXXX" inputMode="tel" /><p className="text-[11px] text-neutral-500">Use digits only, including 254 for Kenya.</p></div>
-                <Button onClick={()=>void requestWahaPairingCode()} disabled={wahaBusy||wahaPhone.replace(/\D/g,"").length<10} className="bg-neutral-950 text-white hover:bg-neutral-800">Get linking code</Button>
-              </div>
-              {wahaPairingCode && <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-center"><p className="text-xs font-semibold uppercase tracking-wide text-orange-800">Your WhatsApp linking code</p><p className="mt-1 text-2xl font-bold tracking-[.2em] text-neutral-950">{wahaPairingCode}</p><p className="mt-2 text-xs leading-5 text-neutral-600">On your phone: WhatsApp → Linked devices → Link with phone number, then enter this code.</p></div>}
-            </>
-          )}
-          {wahaMessage && <p role="status" className="rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{wahaMessage}</p>}
-          <p className="text-[11px] leading-5 text-neutral-500">WAHA is an unofficial WhatsApp Web integration, not the official Meta Cloud API. Use a business-owned number, follow WhatsApp rules, and understand the possibility of account restrictions. The official Meta connection below is the recommended production option.</p>
-        </CardContent>
-      </Card>
-      <Card className="rounded-2xl border-neutral-200 bg-white shadow-sm">
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
             <CardTitle className="flex items-center gap-2 text-lg font-semibold">
               <IconChat className="h-5 w-5 text-orange-500" /> WhatsApp Business · Direct Meta connection
             </CardTitle>
