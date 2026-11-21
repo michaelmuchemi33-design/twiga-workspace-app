@@ -20,6 +20,8 @@ TWIGA uses Chat33 as its optional social media gateway. Each business can connec
 - Publishes or schedules a caption and uploaded image/video to selected channels across the connected Chat33 workspaces. Each destination workspace receives its own direct media upload.
 - Reads Instagram and Facebook Messenger DM conversations, loads conversation messages and sends owner-approved replies using the Chat33 API.
 - Stores social contact identities from Chat33 conversations/webhooks in the business-scoped social contacts table so the People screen can show them alongside phone/Google/CSV contacts.
+- The Inbox also merges messages from TWIGA's separate official Meta WhatsApp Business connection. WhatsApp is not a Chat33 channel; its reply action is gated by Meta's 24-hour customer-service window.
+- The People screen also includes senders from stored WhatsApp conversations and participants from the current business call history.
 - Verifies incoming Chat33 message webhooks using the timestamped HMAC-SHA256 `X-Chat33-Signature` header.
 
 ## Platform coverage limits
@@ -28,7 +30,7 @@ Publishing API coverage documented by Chat33 includes Instagram, Facebook, TikTo
 
 Chat33's documented inbox conversation tools currently list Instagram and Facebook Messenger DMs. Do not describe TikTok DMs, YouTube messages, X DMs, Threads DMs or Bluesky DMs as covered by the unified inbox unless Chat33 adds and documents those endpoints. Comment reading/replies are separate features and require the comments scopes and supported platform APIs.
 
-Chat33 lists WhatsApp Business as coming soon. TWIGA therefore retains a separate official Meta WhatsApp connection in the meantime; it is not a Chat33 inbox channel. WAHA is retired.
+Chat33 lists WhatsApp Business as coming soon. TWIGA therefore retains a separate official Meta WhatsApp connection in the meantime; its messages are merged into the TWIGA inbox using Meta's separate connector, not a Chat33 inbox endpoint. TikTok DMs and TikTok comment inbox are not claimed as supported by the current Chat33 integration. WAHA is retired.
 
 ## Security and operating rules
 
