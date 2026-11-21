@@ -150,21 +150,53 @@ async function authenticate(req: Request, businessId: string) {
   if (memberError || !member) throw new HttpError(403, "You do not have access to this TWIGA business.");
   return { user: data.user, role: String(member.role || "member").toLowerCase(), admin };
 }
+async function callCloudflareConnection(admin: any, businessId: string, action: string, extra: Record<string, unknown> = {}) {
+  const { data: workerSecret, error } = await admin.rpc("twiga_get_worker_internal_secret");
+  if (error || !workerSecret) throw new HttpError(503, "Cloudflare's private business connection service is not configured.");
+  const response = await fetch("https://twiga-api.twiga-ke.workers.dev/internal/google-connection", {
+    method: "POST",
+    headers: { "x-twiga-worker-secret": String(workerSecret), "Content-Type": "application/json" },
+    body: JSON.stringify({ action, businessId, ...extra }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.ok !== true) throw new HttpError(response.status || 502, String(data?.error || "Cloudflare could not access this business's Google connection."));
+  return data;
+}
 async function getConnection(admin: any, businessId: string): Promise<Conn | null> {
-  const { data, error } = await admin.from("twiga_google_connections").select("*")
+  const d1 = await callCloudflareConnection(admin, businessId, "get");
+  if (d1.connection) return d1.connection as Conn;
+  const { data: legacy, error } = await admin.from("twiga_google_connections").select("*")
     .eq("business_id", businessId).maybeSingle();
-  if (error) throw new HttpError(500, "Could not read the Google connection record.");
-  return data as Conn | null;
+  if (error) throw new HttpError(500, "Could not read the legacy Google connection record.");
+  if (!legacy) return null;
+  const accessToken = await decrypt(legacy.access_token_ciphertext);
+  const refreshToken = await decrypt(legacy.refresh_token_ciphertext);
+  if (!accessToken) throw new HttpError(409, "The old Google connection needs to be re-authorized.");
+  await callCloudflareConnection(admin, businessId, "save", { connection: {
+    connected_by: legacy.connected_by, google_email: legacy.google_email,
+    granted_scopes: legacy.granted_scopes, access_token: accessToken,
+    refresh_token: refreshToken, access_expires_at: legacy.access_expires_at,
+    spreadsheet_id: legacy.spreadsheet_id, spreadsheet_url: legacy.spreadsheet_url,
+    last_sync_at: legacy.last_sync_at,
+  }});
+  const { error: cleanupError } = await admin.from("twiga_google_connections").delete().eq("business_id", businessId);
+  if (cleanupError) console.warn("Legacy Google connection cleanup deferred after D1 migration", businessId);
+  const migrated = await callCloudflareConnection(admin, businessId, "get");
+  return migrated.connection as Conn || null;
 }
 async function saveConnection(admin: any, row: Partial<Conn> & { business_id: string }) {
-  const { error } = await admin.from("twiga_google_connections").upsert(
-    { ...row, updated_at: new Date().toISOString() }, { onConflict: "business_id" }
-  );
-  if (error) throw new HttpError(500, "Could not save the encrypted Google connection.");
+  await callCloudflareConnection(admin, row.business_id, "save", { connection: row });
+}
+async function patchConnection(admin: any, businessId: string, patch: Record<string, unknown>) {
+  await callCloudflareConnection(admin, businessId, "patch", { patch });
+}
+async function deleteConnection(admin: any, businessId: string) {
+  await callCloudflareConnection(admin, businessId, "delete");
 }
 async function tokenFor(admin: any, connection: Conn): Promise<string> {
-  const access = await decrypt(connection.access_token_ciphertext);
-  const refresh = await decrypt(connection.refresh_token_ciphertext);
+  const access = connection.access_token;
+  const refresh = connection.refresh_token;
   const expires = connection.access_expires_at ? new Date(connection.access_expires_at).getTime() : 0;
   if (access && expires > Date.now() + 90000) return access;
   if (!refresh) throw new HttpError(409, "Google access expired. Reconnect Google Workspace to continue.");
@@ -177,12 +209,7 @@ async function tokenFor(admin: any, connection: Conn): Promise<string> {
   const next = String(refreshed.access_token || "");
   if (!next) throw new HttpError(502, "Google did not return a refreshed access token. Reconnect Google Workspace.");
   const expiresAt = new Date(Date.now() + Math.max(60, Number(refreshed.expires_in || 3600)) * 1000).toISOString();
-  const { error } = await admin.from("twiga_google_connections").update({
-    access_token_ciphertext: (await encrypt(next))!,
-    access_expires_at: expiresAt,
-    updated_at: new Date().toISOString(),
-  }).eq("business_id", connection.business_id);
-  if (error) throw new HttpError(500, "Could not update the refreshed Google token.");
+  await saveConnection(admin, { ...connection, access_token: next, access_expires_at: expiresAt });
   return next;
 }
 function safeDriveText(value: unknown, max = 6000) {
@@ -287,15 +314,15 @@ async function connectGoogle(admin: any, userId: string, businessId: string, bod
   if (missing.length) return { connected: false, missingScopes: missing, message: "Google did not grant every requested permission. Reconnect and approve the missing access." };
   const profile = await googleJson(accessToken, "https://www.googleapis.com/oauth2/v3/userinfo").catch(() => ({}));
   const old = await getConnection(admin, businessId);
-  const refreshToken = exchangedRefreshToken || await decrypt(old?.refresh_token_ciphertext || null);
+  const refreshToken = exchangedRefreshToken || old?.refresh_token || "";
   const expiry = new Date(Date.now() + Math.max(60, Number(tokenInfo.expires_in || 3600)) * 1000).toISOString();
   await saveConnection(admin, {
     business_id: businessId,
     connected_by: userId,
     google_email: String(profile.email || body.googleEmail || "").slice(0, 254) || null,
     granted_scopes: Array.from(granted).join(" "),
-    access_token_ciphertext: (await encrypt(accessToken))!,
-    refresh_token_ciphertext: await encrypt(refreshToken),
+    access_token: accessToken,
+    refresh_token: refreshToken || null,
     access_expires_at: expiry,
   });
   return {
@@ -328,9 +355,7 @@ async function ensureSheet(admin: any, connection: Conn, token: string) {
       body: JSON.stringify({ values: [["Exported at", "Order ID", "Customer", "Phone", "Items / service", "Total (KSh)", "Paid (KSh)", "Payment method", "Status", "Created at"]] }),
     });
   }
-  await admin.from("twiga_google_connections").update({
-    spreadsheet_id: id, spreadsheet_url: url, updated_at: new Date().toISOString(),
-  }).eq("business_id", connection.business_id);
+  await patchConnection(admin, connection.business_id, { spreadsheet_id: id, spreadsheet_url: url });
   return { spreadsheetId: id, spreadsheetUrl: url };
 }
 
@@ -467,7 +492,7 @@ Deno.serve(async (req: Request) => {
           return reply(req, {
             connected: false, status: "needs_reconnect", reconnectRequired: true,
             googleEmail: connection.google_email, scopes: [], missingScopes: REQUIRED_SCOPES,
-            refreshReady: !!connection.refresh_token_ciphertext, verifiedAt: new Date().toISOString(),
+            refreshReady: !!connection.refresh_token, verifiedAt: new Date().toISOString(),
             message: "Google no longer accepts this connection. Reconnect to restore access.",
           });
         }
@@ -481,15 +506,12 @@ Deno.serve(async (req: Request) => {
           if (scope === REQUIRED_SCOPES[1]) return !hasContacts;
           return !liveSet.has(scope);
         });
-        await admin.from("twiga_google_connections").update({
-          granted_scopes: liveScopes.join(" "),
-          updated_at: new Date().toISOString(),
-        }).eq("business_id", businessId);
+        await patchConnection(admin, businessId, { granted_scopes: liveScopes.join(" ") });
         return reply(req, {
           connected: true, status: missingScopes.length ? "partial" : "connected",
           permissionsComplete: missingScopes.length === 0,
           googleEmail: connection.google_email, scopes: liveScopes, missingScopes,
-          refreshReady: !!connection.refresh_token_ciphertext,
+          refreshReady: !!connection.refresh_token,
           expiresAt: connection.access_expires_at,
           spreadsheetId: connection.spreadsheet_id, spreadsheetUrl: connection.spreadsheet_url,
           verifiedAt: new Date().toISOString(),
@@ -498,14 +520,13 @@ Deno.serve(async (req: Request) => {
         return reply(req, {
           connected: false, status: "needs_reconnect", reconnectRequired: true,
           googleEmail: connection.google_email, scopes: [], missingScopes: REQUIRED_SCOPES,
-          refreshReady: !!connection.refresh_token_ciphertext, verifiedAt: new Date().toISOString(),
+          refreshReady: !!connection.refresh_token, verifiedAt: new Date().toISOString(),
           message: "Google access could not be verified. Reconnect your Google account to continue.",
         });
       }
     }
     if (action === "disconnect") {
-      const { error } = await admin.from("twiga_google_connections").delete().eq("business_id", businessId);
-      if (error) throw new HttpError(500, "Could not disconnect Google Workspace.");
+      await deleteConnection(admin, businessId);
       return reply(req, { connected: false, disconnected: true });
     }
 
@@ -575,7 +596,7 @@ Deno.serve(async (req: Request) => {
         throw new HttpError(workerResponse.status === 401 ? 401 : 502,
           String(workerResult?.error || "Cloudflare could not save the imported contacts."));
       }
-      await admin.from("twiga_google_connections").update({ last_sync_at: new Date().toISOString() }).eq("business_id", businessId);
+      await patchConnection(admin, businessId, { last_sync_at: new Date().toISOString() });
       return reply(req, {
         imported: Number(workerResult.saved || 0),
         skipped: Math.max(0, collected.length - contacts.length),
@@ -724,9 +745,7 @@ Deno.serve(async (req: Request) => {
       if (!workerResponse.ok || workerResult?.ok !== true) {
         throw new HttpError(workerResponse.status || 502, String(workerResult?.error || "Cloudflare could not save the imported Google contacts."));
       }
-      const { error: syncError } = await admin.from("twiga_google_connections")
-        .update({ last_sync_at: new Date().toISOString() }).eq("business_id", businessId);
-      if (syncError) throw new HttpError(500, "Contacts were saved to Cloudflare but the sync timestamp could not be updated.");
+      await patchConnection(admin, businessId, { last_sync_at: new Date().toISOString() });
       const imported = Number(workerResult.saved || 0);
       return reply(req, {
         imported, skipped: skippedWithoutPhone, scanned: read, storage: "cloudflare_d1",
@@ -768,9 +787,7 @@ Deno.serve(async (req: Request) => {
         "/values/Sheet1!A1:J" + values.length + "?valueInputOption=RAW", {
         method: "PUT", body: JSON.stringify({ values }),
       });
-      const { error: syncError } = await admin.from("twiga_google_connections")
-        .update({ last_sync_at: new Date().toISOString() }).eq("business_id", businessId);
-      if (syncError) throw new HttpError(500, "The sheet was exported but the sync timestamp could not be saved.");
+      await patchConnection(admin, businessId, { last_sync_at: new Date().toISOString() });
       return reply(req, { exported: (orders || []).length, spreadsheetUrl: sheet.spreadsheetUrl });
     }
     if (action === "drive.export-calls") {
@@ -810,9 +827,7 @@ Deno.serve(async (req: Request) => {
         "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink",
         { method: "POST", headers: { authorization: "Bearer " + token, "content-type": "multipart/related; boundary=" + boundary }, body },
       ));
-      const { error: syncError } = await admin.from("twiga_google_connections")
-        .update({ last_sync_at: new Date().toISOString() }).eq("business_id", businessId);
-      if (syncError) throw new HttpError(500, "The call export was uploaded but TWIGA could not save the sync timestamp.");
+      await patchConnection(admin, businessId, { last_sync_at: new Date().toISOString() });
       return reply(req, {
         exported: calls?.length || 0, file: uploaded, transcriptIncluded: includeTranscript,
         note: includeTranscript ? "Transcript export was included because call-recording is enabled." :
