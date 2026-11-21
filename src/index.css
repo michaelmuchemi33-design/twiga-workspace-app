@@ -520,15 +520,17 @@ html:focus-within { scroll-behavior: auto !important; }
 }
 
 
-/* Contrast guard for white dashboard cards: prevent pale/white labels from disappearing. */
-.bg-white .text-white,
-.bg-white .text-neutral-500,
-.bg-white .text-neutral-600 {
-  color: #111827 !important;
+/* TWIGA light/dark theme: keep every foreground legible against its surface.
+   Do not recolour white labels inside dark action buttons. */
+
+/* Light mode uses the base semantic tokens declared above. */
+html:not(.dark),
+html:not(.dark) body,
+html:not(.dark) #root {
+  color-scheme: light;
 }
 
-
-/* Optional dark theme. Light remains the default; the header switch persists the choice. */
+/* Optional dark theme. The root class is toggled on <html> and saved per browser. */
 .dark {
   color-scheme: dark;
   --background: oklch(0.16 0 0);
@@ -537,51 +539,162 @@ html:focus-within { scroll-behavior: auto !important; }
   --card-foreground: oklch(0.94 0 0);
   --popover: oklch(0.20 0 0);
   --popover-foreground: oklch(0.94 0 0);
+  --primary: oklch(0.93 0 0);
+  --primary-foreground: oklch(0.20 0 0);
   --secondary: oklch(0.26 0 0);
   --secondary-foreground: oklch(0.94 0 0);
   --muted: oklch(0.25 0 0);
-  --muted-foreground: oklch(0.72 0 0);
+  --muted-foreground: oklch(0.74 0 0);
   --accent: oklch(0.27 0 0);
   --accent-foreground: oklch(0.94 0 0);
   --border: oklch(0.32 0 0);
   --input: oklch(0.32 0 0);
+  --ring: oklch(0.65 0.12 45);
 }
-.dark body { background: #171717; color: #f5f5f5; }
-.dark .bg-white { background-color: #202020 !important; }
-.dark .bg-neutral-50 { background-color: #171717 !important; }
-.dark .bg-neutral-100 { background-color: #292929 !important; }
-.dark .bg-neutral-200 { background-color: #353535 !important; }
+
+html.dark,
+html.dark body,
+html.dark #root {
+  min-height: 100%;
+  background-color: #111111 !important;
+  color: #f5f5f5 !important;
+}
+
+/* The workspace canvas is slightly lighter than the browser background. */
+html.dark #root > div.min-h-screen {
+  background-color: #171717 !important;
+}
+
+/* Cards and neutral panels remain visibly separate from the page background. */
+.dark .bg-white { background-color: #252525 !important; }
+.dark .bg-neutral-50,
+.dark .bg-gray-50,
+.dark .bg-slate-50,
+.dark .bg-zinc-50,
+.dark .bg-stone-50 { background-color: #202020 !important; }
+.dark .bg-neutral-100,
+.dark .bg-gray-100,
+.dark .bg-slate-100,
+.dark .bg-zinc-100,
+.dark .bg-stone-100 { background-color: #252525 !important; }
+.dark .bg-neutral-200,
+.dark .bg-gray-200,
+.dark .bg-slate-200,
+.dark .bg-zinc-200,
+.dark .bg-stone-200 { background-color: #303030 !important; }
+.dark .bg-neutral-300,
+.dark .bg-gray-300,
+.dark .bg-slate-300,
+.dark .bg-zinc-300,
+.dark .bg-stone-300 { background-color: #3b3b3b !important; }
+.dark .bg-neutral-800,
+.dark .bg-gray-800,
+.dark .bg-slate-800,
+.dark .bg-zinc-800,
+.dark .bg-stone-800 { background-color: #292929 !important; }
+
+/* Soft status panels become muted dark tints instead of near-white rectangles. */
+.dark .bg-orange-50 { background-color: #2b1c12 !important; }
+.dark .bg-orange-100 { background-color: #382416 !important; }
+.dark .bg-red-50,
+.dark .bg-rose-50 { background-color: #321b1b !important; }
+.dark .bg-green-50,
+.dark .bg-emerald-50 { background-color: #17291f !important; }
+.dark .bg-blue-50,
+.dark .bg-sky-50 { background-color: #172637 !important; }
+.dark .bg-purple-50,
+.dark .bg-violet-50 { background-color: #261d35 !important; }
+
+/* Dark mode foregrounds: headings, labels, and standard neutral copy stay readable. */
+.dark .text-black,
 .dark .text-neutral-950,
 .dark .text-neutral-900,
 .dark .text-neutral-800,
-.dark .text-neutral-700 { color: #f5f5f5 !important; }
+.dark .text-neutral-700,
+.dark .text-gray-950,
+.dark .text-gray-900,
+.dark .text-gray-800,
+.dark .text-gray-700,
+.dark .text-slate-950,
+.dark .text-slate-900,
+.dark .text-slate-800,
+.dark .text-slate-700,
+.dark .text-zinc-950,
+.dark .text-zinc-900,
+.dark .text-stone-900 { color: #f5f5f5 !important; }
+
 .dark .text-neutral-600,
 .dark .text-neutral-500,
-.dark .text-neutral-400 { color: #c4c4c4 !important; }
+.dark .text-neutral-400,
+.dark .text-gray-600,
+.dark .text-gray-500,
+.dark .text-gray-400,
+.dark .text-slate-600,
+.dark .text-slate-500,
+.dark .text-slate-400,
+.dark .text-zinc-600,
+.dark .text-zinc-500,
+.dark .text-stone-600,
+.dark .text-stone-500 { color: #c7c7c7 !important; }
+
+.dark .text-orange-600,
+.dark .text-orange-700 { color: #fdba74 !important; }
+.dark .text-red-600,
+.dark .text-red-700 { color: #fca5a5 !important; }
+.dark .text-green-600,
+.dark .text-green-700,
+.dark .text-emerald-600,
+.dark .text-emerald-700 { color: #86efac !important; }
+.dark .text-blue-600,
+.dark .text-blue-700,
+.dark .text-sky-600,
+.dark .text-sky-700 { color: #93c5fd !important; }
+
+/* Borders and form controls remain visible in either theme. */
 .dark .border-neutral-100,
 .dark .border-neutral-200,
-.dark .border-neutral-300 { border-color: #3b3b3b !important; }
+.dark .border-neutral-300,
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .border-gray-300,
+.dark .border-slate-100,
+.dark .border-slate-200,
+.dark .border-slate-300 { border-color: #3b3b3b !important; }
+.dark .border-orange-100,
+.dark .border-orange-200 { border-color: #654126 !important; }
+
 .dark input,
 .dark textarea,
-.dark select { background-color: #202020; color: #f5f5f5; border-color: #454545; }
-.dark .hover\\:bg-neutral-50:hover,
-.dark .hover\\:bg-neutral-100:hover { background-color: #303030 !important; }
-.dark .bg-white .text-white { color: #f5f5f5 !important; }
+.dark select {
+  background-color: #202020;
+  color: #f5f5f5;
+  border-color: #454545;
+}
+.dark input::placeholder,
+.dark textarea::placeholder { color: #9ca3af; opacity: 1; }
+.dark input:disabled,
+.dark textarea:disabled,
+.dark select:disabled { color: #a3a3a3; background-color: #292929; }
 
-
-/* TWIGA contrast guard: dark action buttons keep white labels, numbers and icons. */
+/* Explicit contrast for black action buttons in light and dark mode.
+   Keep the button black and all of its text, icons and nested labels white. */
 button[class*="bg-neutral-950"],
 button[class*="bg-neutral-900"],
 button[class*="bg-black"],
 button[class*="bg-gray-900"],
 button[class*="bg-zinc-900"],
 button[class*="bg-stone-900"],
+a[class*="bg-neutral-950"],
+a[class*="bg-neutral-900"],
+a[class*="bg-black"],
 a[role="button"][class*="bg-neutral-950"],
 a[role="button"][class*="bg-neutral-900"],
 a[role="button"][class*="bg-black"],
 [role="button"][class*="bg-neutral-950"],
 [role="button"][class*="bg-neutral-900"],
 [role="button"][class*="bg-black"] {
+  background-color: #0a0a0a !important;
+  border-color: #0a0a0a !important;
   color: #fff !important;
 }
 button[class*="bg-neutral-950"] *,
@@ -590,6 +703,9 @@ button[class*="bg-black"] *,
 button[class*="bg-gray-900"] *,
 button[class*="bg-zinc-900"] *,
 button[class*="bg-stone-900"] *,
+a[class*="bg-neutral-950"] *,
+a[class*="bg-neutral-900"] *,
+a[class*="bg-black"] *,
 a[role="button"][class*="bg-neutral-950"] *,
 a[role="button"][class*="bg-neutral-900"] *,
 a[role="button"][class*="bg-black"] *,
@@ -604,9 +720,18 @@ button[class*="bg-black"] svg,
 button[class*="bg-gray-900"] svg,
 button[class*="bg-zinc-900"] svg,
 button[class*="bg-stone-900"] svg,
+a[class*="bg-neutral-950"] svg,
+a[class*="bg-neutral-900"] svg,
+a[class*="bg-black"] svg,
 [role="button"][class*="bg-neutral-950"] svg,
 [role="button"][class*="bg-neutral-900"] svg,
 [role="button"][class*="bg-black"] svg {
   color: #fff !important;
   stroke: currentColor;
 }
+
+/* Hover treatments stay subtle while preserving the selected theme. */
+.dark .hover\\:bg-neutral-50:hover,
+.dark .hover\\:bg-neutral-100:hover,
+.dark .hover\\:bg-gray-50:hover,
+.dark .hover\\:bg-gray-100:hover { background-color: #303030 !important; }
