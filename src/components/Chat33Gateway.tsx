@@ -37,6 +37,11 @@ export function Chat33QuickPublisher({ compact=false }: { compact?:boolean }) {
   const [caption,setCaption]=useState("");
   const [file,setFile]=useState<File|null>(null);
   const [scheduledAt,setScheduledAt]=useState("");
+  const [youtubeMadeForKids,setYoutubeMadeForKids]=useState<""|"yes"|"no">("");
+  const [youtubePrivacy,setYoutubePrivacy]=useState<"public"|"unlisted"|"private">("public");
+  const [youtubeTitle,setYoutubeTitle]=useState("");
+  const [tiktokPublishMode,setTiktokPublishMode]=useState<"DIRECT_POST"|"MEDIA_UPLOAD">("DIRECT_POST");
+  const [tiktokPrivacy,setTiktokPrivacy]=useState<"PUBLIC_TO_EVERYONE"|"MUTUAL_FOLLOW_FRIENDS"|"SELF_ONLY">("PUBLIC_TO_EVERYONE");
   const [busy,setBusy]=useState(false);
   const [notice,setNotice]=useState("");
   const fileRef=useRef<HTMLInputElement|null>(null);
@@ -59,6 +64,25 @@ export function Chat33QuickPublisher({ compact=false }: { compact?:boolean }) {
     if(!caption.trim()&&!file){setNotice("Add a caption or select a photo/video.");return;}
     const targets=accounts.filter(a=>selected.includes(a.id));
     if(targets.length!==selected.length){setNotice("One or more selected social channels are no longer available. Refresh accounts.");return;}
+    const hasYouTube=targets.some(account=>account.platform.toLowerCase()==="youtube");
+    const hasTikTok=targets.some(account=>account.platform.toLowerCase()==="tiktok");
+    if(hasYouTube&&(!file||!file.type.startsWith("video/"))){setNotice("YouTube destinations require a video file, not a photo.");return;}
+    if(hasYouTube&&!youtubeTitle.trim()&&!caption.trim()){setNotice("Add a YouTube video title or a post caption.");return;}
+    if(hasYouTube&&!youtubeMadeForKids){setNotice("Select whether this YouTube video is made for kids. YouTube requires this declaration.");return;}
+    if(hasTikTok&&!file){setNotice("TikTok destinations require a photo or video.");return;}
+    const platformConfig:Record<string,any>={};
+    if(hasYouTube)platformConfig.youtube={
+      madeForKids:youtubeMadeForKids==="yes",
+      privacyStatus:youtubePrivacy,
+      title:(youtubeTitle.trim()||caption.trim()).slice(0,100),
+      description:caption.trim()
+    };
+    if(hasTikTok)platformConfig.tiktok={
+      text:caption.trim(),
+      consent:tiktokPublishMode==="DIRECT_POST"
+        ? {publishMode:"DIRECT_POST",privacyLevel:tiktokPrivacy,disableComment:false,disableDuet:false,disableStitch:false,aiGenerated:false}
+        : {publishMode:"MEDIA_UPLOAD"}
+    };
     const confirmText=(scheduledAt?"Schedule":"Publish")+" this content to "+targets.map(a=>platformNames[a.platform]||a.platform).join(", ")+":\n\n"+(caption.trim()||"[Media only]")+(scheduledAt?"\n\nScheduled: "+new Date(scheduledAt).toLocaleString():"");
     if(!window.confirm(confirmText))return;
     setBusy(true);setNotice(file?"Uploading media to each selected Chat33 workspace…":"Validating and publishing your post…");
@@ -83,7 +107,8 @@ export function Chat33QuickPublisher({ compact=false }: { compact?:boolean }) {
       const results=await workerRequest(businessId,"/chat33/publish","POST",{
         groups,text:caption.trim(),
         mediaType:file?(file.type.startsWith("video/")?"video":"image"):"",
-        scheduledAt:scheduledAt?new Date(scheduledAt).toISOString():""
+        scheduledAt:scheduledAt?new Date(scheduledAt).toISOString():"",
+        platformConfig
       });
       const failures=(results.results||[]).filter((item:any)=>!item.ok);
       setNotice(failures.length?("Some publishing groups need attention: "+failures.map((item:any)=>"account "+item.slot+": "+item.error).join(" · ")):(scheduledAt?"Your posts were accepted and scheduled by Chat33.":"Chat33 accepted your posts for publishing.") );
@@ -96,7 +121,7 @@ export function Chat33QuickPublisher({ compact=false }: { compact?:boolean }) {
     <Card className="rounded-2xl border-neutral-200 bg-white shadow-sm">
       <CardHeader className="pb-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div><CardTitle className="text-lg font-semibold text-neutral-950">Publish to your socials</CardTitle><CardDescription>One caption and media upload, delivered to the selected Chat33 channels.</CardDescription></div>
+          <div><CardTitle className="text-lg font-semibold text-neutral-950">Publish to your socials</CardTitle><CardDescription>Choose your caption and media once. TWIGA fans the same content out to every selected channel across your connected Chat33 workspaces.</CardDescription></div>
           <Badge className="border-neutral-200 bg-neutral-50 text-neutral-700">{selected.length} selected</Badge>
         </div>
       </CardHeader>
@@ -110,6 +135,20 @@ export function Chat33QuickPublisher({ compact=false }: { compact?:boolean }) {
             </label>)}
           </div>}
         <textarea value={caption} onChange={e=>setCaption(e.target.value)} rows={compact?3:4} placeholder="Write one post caption for your selected social accounts…" className="w-full rounded-xl border border-neutral-200 bg-white p-3 text-sm text-neutral-900 outline-none focus:border-orange-400" />
+        {(accounts.some(account=>selected.includes(account.id)&&account.platform.toLowerCase()==="youtube")||accounts.some(account=>selected.includes(account.id)&&account.platform.toLowerCase()==="tiktok"))&&<div className="grid gap-3 rounded-xl border border-orange-100 bg-orange-50/40 p-4 md:grid-cols-2">
+          {accounts.some(account=>selected.includes(account.id)&&account.platform.toLowerCase()==="youtube")&&<div className="space-y-2">
+            <p className="text-sm font-semibold text-neutral-950">YouTube publishing options</p>
+            <label className="block text-xs font-medium text-neutral-700">Audience declaration (required)<select value={youtubeMadeForKids} onChange={e=>setYoutubeMadeForKids(e.target.value as ""|"yes"|"no")} className="mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"><option value="">Choose one…</option><option value="yes">Made for kids</option><option value="no">Not made for kids</option></select></label>
+            <label className="block text-xs font-medium text-neutral-700">Video visibility<select value={youtubePrivacy} onChange={e=>setYoutubePrivacy(e.target.value as "public"|"unlisted"|"private")} className="mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></label>
+            <label className="block text-xs font-medium text-neutral-700">Video title (optional if caption is filled)<input value={youtubeTitle} onChange={e=>setYoutubeTitle(e.target.value)} maxLength={100} placeholder="YouTube video title" className="mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"/></label>
+          </div>}
+          {accounts.some(account=>selected.includes(account.id)&&account.platform.toLowerCase()==="tiktok")&&<div className="space-y-2">
+            <p className="text-sm font-semibold text-neutral-950">TikTok publishing options</p>
+            <label className="block text-xs font-medium text-neutral-700">Publishing method<select value={tiktokPublishMode} onChange={e=>setTiktokPublishMode(e.target.value as "DIRECT_POST"|"MEDIA_UPLOAD")} className="mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"><option value="DIRECT_POST">Publish directly</option><option value="MEDIA_UPLOAD">Send to TikTok drafts</option></select></label>
+            {tiktokPublishMode==="DIRECT_POST"&&<label className="block text-xs font-medium text-neutral-700">Who can view this post?<select value={tiktokPrivacy} onChange={e=>setTiktokPrivacy(e.target.value as "PUBLIC_TO_EVERYONE"|"MUTUAL_FOLLOW_FRIENDS"|"SELF_ONLY")} className="mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"><option value="PUBLIC_TO_EVERYONE">Everyone</option><option value="MUTUAL_FOLLOW_FRIENDS">Mutual followers</option><option value="SELF_ONLY">Only me</option></select></label>}
+            <p className="text-[11px] leading-5 text-neutral-500">TikTok direct posting requires explicit consent settings. Draft mode uploads the media to TikTok for you to finish there.</p>
+          </div>}
+        </div>}
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-neutral-300 p-3 text-sm font-semibold text-neutral-700 hover:border-orange-400">
             <input ref={fileRef} type="file" accept="image/*,video/*" className="sr-only" onChange={(e:ChangeEvent<HTMLInputElement>)=>setFile(e.target.files?.[0]||null)} />
@@ -170,7 +209,7 @@ export default function Chat33Gateway(){
           <div className="max-w-3xl">
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-orange-600">Social media gateway · optional</p>
             <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-950">The 10 core functions</h1>
-            <p className="mt-2 text-sm leading-6 text-neutral-700">Connect up to three Chat33 workspaces for this business. TWIGA uses their channels to publish content and bring supported social conversations into the business workspace. Social setup is optional; phone reception and the rest of TWIGA continue to work without it.</p>
+            <p className="mt-2 text-sm leading-6 text-neutral-700">Connect up to three Chat33 API workspaces. Each one can contain several social channels, and TWIGA can publish one selected post to channels across all three. This connection is optional; your calls, business workspace and other TWIGA tools continue to work without it.</p>
           </div>
           <div className="rounded-xl border border-orange-200 bg-white px-4 py-3 text-sm"><strong className="block text-xl text-neutral-950">{configuredCount}/3</strong><span className="text-neutral-500">Chat33 gateways</span></div>
         </div>
@@ -183,8 +222,10 @@ export default function Chat33Gateway(){
             <strong className="text-neutral-900">Create an API key in Chat33</strong>
             <ol className="mt-2 list-decimal space-y-1 pl-5">
               <li>Open Chat33 Settings → API Keys and create a new key.</li>
-              <li>Enable: accounts:read, posts:read, posts:write, media:write, inbox:read and inbox:write.</li>
-              <li>In Chat33, connect the social channels you want this business to use.</li>
+              <li>For publishing: enable <strong>accounts:read, posts:read, posts:write and media:write</strong>.</li>
+              <li>For Instagram/Facebook Messenger: enable <strong>inbox:read and inbox:write</strong>.</li>
+              <li>For supported post comments: enable <strong>comments:read and comments:write</strong>.</li>
+              <li>Connect the social profiles and Pages you want in Chat33. One Chat33 workspace can expose multiple social channels.</li>
               <li>Paste that API key into one of the slots below. TWIGA verifies it by reading the channel list.</li>
             </ol>
             <a href="https://chat33.io/settings" target="_blank" rel="noreferrer" className="mt-3 inline-flex font-semibold text-orange-700 underline">Open Chat33 Settings ↗</a>
@@ -217,7 +258,7 @@ export default function Chat33Gateway(){
       <Chat33QuickPublisher />
 
       <Card className="rounded-2xl border-neutral-200 shadow-sm">
-        <CardHeader><CardTitle>3. Message webhook (optional)</CardTitle><CardDescription>For new Instagram and Facebook Messenger messages to appear in TWIGA without waiting for an inbox refresh.</CardDescription></CardHeader>
+        <CardHeader><CardTitle>3. Message webhook (optional)</CardTitle><CardDescription>For new Instagram and Facebook Messenger DMs to arrive immediately. Post comments are read through Chat33’s comment tools when refreshed.</CardDescription></CardHeader>
         <CardContent className="space-y-2 text-sm text-neutral-700">
           <p>In Chat33 Settings → API Keys → Message webhook, set the endpoint below and enable new DMs. Copy its signing secret and save it in the matching gateway slot above.</p>
           <div className="flex flex-wrap items-center gap-2 rounded-xl bg-neutral-50 p-3"><code className="min-w-0 flex-1 break-all text-xs">https://twiga-api.twiga-ke.workers.dev/chat33/webhook</code><Button size="sm" variant="outline" onClick={()=>void navigator.clipboard?.writeText("https://twiga-api.twiga-ke.workers.dev/chat33/webhook")}>Copy URL</Button></div>

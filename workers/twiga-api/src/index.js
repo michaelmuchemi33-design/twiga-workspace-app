@@ -66,6 +66,8 @@ export default {
     if (path === '/chat33/inbox' && req.method === 'GET') return chat33Inbox(req, env);
     if (path === '/chat33/messages' && req.method === 'GET') return chat33Messages(req, env);
     if (path === '/chat33/reply' && req.method === 'POST') return chat33Reply(req, env);
+    if (path === '/chat33/comments' && req.method === 'GET') return chat33Comments(req, env);
+    if (path === '/chat33/comment-reply' && req.method === 'POST') return chat33CommentReply(req, env);
     if (path === '/chat33/media-upload-url' && req.method === 'POST') return chat33MediaUploadUrl(req, env);
     if (path === '/chat33/publish' && req.method === 'POST') return chat33Publish(req, env);
     if (path === '/chat33/people' && req.method === 'GET') return chat33People(req, env);
@@ -315,35 +317,49 @@ async function chat33Publish(req, env) {
   try {
     const body=await req.json().catch(()=>({}));
     const access=await chat33Auth(req,env,body);
-    const textValue=txt(body.text||'',5000), mediaUrls=Array.isArray(body.mediaUrls)?body.mediaUrls.map(value=>txt(value,1200)).filter(Boolean).slice(0,4):[];
+    const textValue=txt(body.text||'',5000);
+    const mediaUrls=Array.isArray(body.mediaUrls)?body.mediaUrls.map(value=>txt(value,1200)).filter(Boolean).slice(0,4):[];
     const mediaType=txt(body.mediaType||'',20).toLowerCase();
     const scheduledAt=body.scheduledAt?String(body.scheduledAt):'';
     const groups=Array.isArray(body.groups)?body.groups.slice(0,3):[];
     if(!groups.length||(!textValue&&!mediaUrls.length)) return json({ok:false,error:'Select at least one social account and add a caption or media.'},400);
     if(scheduledAt && (!Number.isFinite(Date.parse(scheduledAt)) || Date.parse(scheduledAt)<Date.now()+60000)) return json({ok:false,error:'Choose a future publishing time at least one minute from now.'},400);
     const results=[];
+    const seenSlots=new Set();
     for(const group of groups) {
-      const slot=Number(group.slot), ids=Array.isArray(group.accountIds)?group.accountIds.map(id=>txt(id,160)).filter(Boolean).slice(0,10):[];
+      const slot=Number(group.slot);
+      const ids=Array.isArray(group.accountIds)?Array.from(new Set(group.accountIds.map(id=>txt(id,160)).filter(Boolean))).slice(0,100):[];
       if(![1,2,3].includes(slot)||!ids.length) continue;
+      if(seenSlots.has(slot)) { results.push({slot,ok:false,error:'Send only one channel group per Chat33 account slot.'}); continue; }
+      seenSlots.add(slot);
       const record=await chat33GetSlot(env,access.businessId,slot);
       if(!record) { results.push({slot,ok:false,error:'Chat33 account not connected.'}); continue; }
       try {
         const accountsPayload=await chat33Api(record.key,'/accounts','GET');
-        const validIds=new Set(chat33Array(accountsPayload,['accounts','channels']).map(item=>String(item.id||item.accountId||item.channelId||'')));
-        if(ids.some(id=>!validIds.has(id))) throw new Error('One or more selected channels do not belong to this Chat33 account.');
+        const knownAccounts=chat33Array(accountsPayload,['accounts','channels']);
+        const accountNames=new Map(knownAccounts.map(item=>[String(item.id||item.accountId||item.channelId||''),txt(item.name||item.username||item.platform||'Social channel',100)]));
+        if(ids.some(id=>!accountNames.has(id))) throw new Error('One or more selected channels do not belong to this Chat33 account.');
         const groupMediaUrls=Array.isArray(group.mediaUrls)?group.mediaUrls.map(value=>txt(value,1200)).filter(Boolean).slice(0,4):mediaUrls;
-      const postBody={accountIds:ids,text:textValue,mediaUrls:groupMediaUrls,mediaType:mediaType||undefined,scheduledAt:scheduledAt||undefined};
-        if(body.platformConfig && typeof body.platformConfig==='object') postBody.platformConfig=body.platformConfig;
-        const validation=await chat33Api(record.key,'/posts/validate','POST',postBody);
-        if(validation && (validation.valid===false || validation.ok===false || validation.error)) throw new Error(txt(validation.error || validation.message || 'Chat33 rejected the post validation.',240));
-        const created=await chat33Api(record.key,'/posts','POST',postBody);
-        results.push({slot,ok:true,result:created});
+        for(let offset=0;offset<ids.length;offset+=10) {
+          const batchIds=ids.slice(offset,offset+10);
+          const postBody={accountIds:batchIds,text:textValue,mediaUrls:groupMediaUrls,mediaType:mediaType||undefined,scheduledAt:scheduledAt||undefined};
+          if(body.platformConfig && typeof body.platformConfig==='object') postBody.platformConfig=body.platformConfig;
+          try {
+            const validation=await chat33Api(record.key,'/posts/validate','POST',postBody);
+            if(validation && (validation.valid===false || validation.ok===false || validation.error)) throw new Error(txt(validation.error || validation.message || 'Chat33 rejected the post validation.',240));
+            const created=await chat33Api(record.key,'/posts','POST',postBody);
+            results.push({slot,ok:true,accountIds:batchIds,channels:batchIds.map(id=>accountNames.get(id)),result:created});
+          } catch(error) {
+            results.push({slot,ok:false,accountIds:batchIds,channels:batchIds.map(id=>accountNames.get(id)),error:txt(error && error.message || error,240)});
+          }
+        }
       } catch(error) {
         results.push({slot,ok:false,error:txt(error && error.message || error,240)});
       }
     }
     if(!results.length) return json({ok:false,error:'No valid Chat33 channel targets were supplied.'},400);
-    return json({ok:results.every(item=>item.ok),results},results.some(item=>item.ok)?200:502);
+    const successes=results.some(item=>item.ok);
+    return json({ok:successes,results,error:successes?undefined:'All selected Chat33 publishing groups failed.'},successes?200:502);
   } catch(error) {
     const message=String(error && error.message || error);
     const status=message==='LOGIN_REQUIRED'?401:message==='NO_ACCESS'||message.startsWith('INACTIVE|')?403:400;
@@ -420,6 +436,151 @@ async function chat33Webhook(req,env) {
       .bind(eventId,access.businessId,access.slot,conversationId,contactId,platform,txt(message.text || message.body || '',4000),message.sentAt || body.createdAt || now(),data.replyWindowEndsAt || null,JSON.stringify(body).slice(0,12000),now()).run();
   }
   return json({ok:true,accepted:true});
+}
+
+
+const CHAT33_MCP_URL = 'https://chat33.io/api/mcp/mcp';
+function chat33McpJson(raw, contentType) {
+  const value = String(raw || '').trim();
+  if (!value) return {};
+  if (String(contentType || '').includes('text/event-stream')) {
+    const lines = value.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) { try { return JSON.parse(lines[i]); } catch (_) {} }
+    return {};
+  }
+  try { return JSON.parse(value); } catch (_) { return {raw:value.slice(0,300)}; }
+}
+async function chat33McpRequest(key, sessionId, payload) {
+  const headers = {'x-api-key':String(key),'Content-Type':'application/json','Accept':'application/json, text/event-stream','MCP-Protocol-Version':'2025-03-26'};
+  if (sessionId) headers['Mcp-Session-Id'] = String(sessionId);
+  const response = await fetch(CHAT33_MCP_URL,{method:'POST',headers,body:JSON.stringify(payload),signal:AbortSignal.timeout(20000)});
+  const raw = await response.text();
+  const data = chat33McpJson(raw,response.headers.get('content-type'));
+  if (!response.ok || data.error) {
+    const errorText = data.error && (data.error.message || data.error) || data.message || raw || ('Chat33 MCP returned HTTP ' + response.status);
+    throw Object.assign(new Error(txt(errorText,260)),{status:response.status || 502});
+  }
+  return {data,sessionId:response.headers.get('Mcp-Session-Id') || response.headers.get('mcp-session-id') || sessionId || ''};
+}
+async function chat33McpInit(key) {
+  const init = await chat33McpRequest(key,'',{jsonrpc:'2.0',id:crypto.randomUUID(),method:'initialize',params:{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'TWIGA Social Workspace',version:'1.0.0'}}});
+  await chat33McpRequest(key,init.sessionId,{jsonrpc:'2.0',method:'notifications/initialized'});
+  const listing = await chat33McpRequest(key,init.sessionId,{jsonrpc:'2.0',id:crypto.randomUUID(),method:'tools/list',params:{}});
+  const tools = listing.data && listing.data.result && Array.isArray(listing.data.result.tools) ? listing.data.result.tools : [];
+  if (!tools.length) throw new Error('Chat33 did not return its MCP tools. Check the API key and scopes.');
+  return {sessionId:listing.sessionId || init.sessionId,tools};
+}
+function chat33McpToolResult(result) {
+  if (!result) return {};
+  if (result.isError) {
+    const message = Array.isArray(result.content) ? result.content.map(item=>item.text || '').join(' ') : '';
+    throw new Error(txt(message || 'Chat33 comment tool failed.',260));
+  }
+  if (result.structuredContent && typeof result.structuredContent === 'object') return result.structuredContent;
+  const texts = Array.isArray(result.content) ? result.content.filter(item=>item && item.type==='text').map(item=>String(item.text || '')) : [];
+  for (const value of texts) { try { return JSON.parse(value); } catch (_) {} }
+  return {text:texts.join('\n')};
+}
+function chat33McpToolArgs(tool, values) {
+  const schema = tool && tool.inputSchema || {};
+  const properties = schema.properties || {};
+  const args = {};
+  for (const [field, definition] of Object.entries(properties)) {
+    const key = String(field).toLowerCase().replace(/[^a-z0-9]/g,'');
+    let value;
+    if (key.includes('postid')) value = values.postId;
+    else if (key.includes('commentid')) value = values.commentId;
+    else if (key.includes('channelid') || key.includes('accountid')) value = values.channelId;
+    else if (key.includes('visibility') || key.includes('replytype') || key.includes('replymode')) {
+      const choices = Array.isArray(definition && definition.enum) ? definition.enum : [];
+      value = choices.find(item=>String(item).toLowerCase()===String(values.visibility || 'public').toLowerCase()) || values.visibility || 'public';
+    } else if (key.includes('private')) value = values.visibility === 'private';
+    else if (key.includes('message') || key.includes('commenttext') || key.includes('replytext') || key === 'text' || key === 'body') value = values.message;
+    else if (key === 'limit' || key.includes('pagesize') || key === 'perpage') value = values.limit;
+    else if (key === 'page' || key === 'pagenumber') value = values.page;
+    else if (key === 'status') value = values.status;
+    else if (key === 'platform') value = values.platform;
+    if (value !== undefined && value !== null && value !== '') args[field] = value;
+  }
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  const missing = required.filter(field=>args[field] === undefined);
+  if (missing.length) throw new Error('Chat33 tool ' + tool.name + ' needs fields TWIGA cannot infer: ' + missing.join(', '));
+  return args;
+}
+async function chat33McpCall(key, sessionId, tool, values) {
+  const args = chat33McpToolArgs(tool,values || {});
+  const called = await chat33McpRequest(key,sessionId,{jsonrpc:'2.0',id:crypto.randomUUID(),method:'tools/call',params:{name:tool.name,arguments:args}});
+  return chat33McpToolResult(called.data && called.data.result);
+}
+function chat33McpRows(value, names) {
+  if (Array.isArray(value)) return value;
+  for (const name of names) if (Array.isArray(value && value[name])) return value[name];
+  if (value && value.data && Array.isArray(value.data.items)) return value.data.items;
+  return [];
+}
+async function chat33Comments(req, env) {
+  try {
+    const access = await chat33Auth(req,env);
+    const slots = await chat33AllSlots(env,access.businessId);
+    await ensureChat33Schema(env);
+    const comments = [], errors = [];
+    for (const slot of slots) {
+      try {
+        const mcp = await chat33McpInit(slot.key);
+        const listPosts = mcp.tools.find(item=>item.name === 'list_posts');
+        const listComments = mcp.tools.find(item=>item.name === 'list_post_comments');
+        if (!listPosts || !listComments) throw new Error('Enable posts:read and comments:read in Chat33 Settings → API Keys.');
+        const postData = await chat33McpCall(slot.key,mcp.sessionId,listPosts,{status:'published',limit:5,page:1});
+        const posts = chat33McpRows(postData,['posts','items','results']).slice(0,5);
+        for (const post of posts) {
+          const postId = txt(post.id || post.postId || post.post_id,160);
+          if (!postId) continue;
+          const channel = post.channel || post.account || {};
+          const platform = txt(post.platform || channel.platform || '',40).toLowerCase();
+          const commentData = await chat33McpCall(slot.key,mcp.sessionId,listComments,{postId,channelId:txt(channel.id || post.channelId || post.accountId || '',160),platform,limit:50,page:1});
+          const rows = chat33McpRows(commentData,['comments','items','results']).slice(0,50);
+          for (const row of rows) {
+            const author = row.author || row.user || row.contact || row.from || {};
+            const commentId = txt(row.id || row.commentId || row.comment_id,160);
+            if (!commentId) continue;
+            const contact = {
+              id:author.id || author.userId || author.user_id || author.username || author.handle || row.authorId || row.username || commentId,
+              name:author.name || author.displayName || author.username || row.authorName || row.username || 'Social contact',
+              username:author.username || author.handle || row.username || ''
+            };
+            await chat33SaveContact(env,access.businessId,slot.slot,platform,contact,channel);
+            comments.push({id:commentId,commentId,postId,channelId:txt(channel.id || post.channelId || post.accountId || '',160),platform,slot:slot.slot,accountName:slot.name,authorName:txt(contact.name,120),username:txt(contact.username,120),text:txt(row.text || row.message || row.body || '',2500),createdAt:txt(row.createdAt || row.created_at || row.timestamp || '',80),postText:txt(post.text || post.caption || post.title || '',500),postUrl:txt(post.url || post.permalink || post.externalUrl || '',1000)});
+          }
+        }
+      } catch (error) { errors.push({slot:slot.slot,error:txt(error && error.message || error,240)}); }
+    }
+    comments.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
+    return json({ok:true,comments:comments.slice(0,300),errors});
+  } catch (error) {
+    const message = String(error && error.message || error);
+    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' || message.startsWith('INACTIVE|') ? 403 : Number(error && error.status) || 502;
+    return json({ok:false,error:status===401?'Sign in again.':status===403?'You do not have access to this business workspace.':message.startsWith('INACTIVE|')?message.slice(9):'Chat33 comments could not be loaded: '+txt(message,180)},status);
+  }
+}
+async function chat33CommentReply(req, env) {
+  try {
+    const body = await req.json().catch(()=>({}));
+    const access = await chat33Auth(req,env,body);
+    const slot = Number(body.slot), postId = txt(body.postId,160), commentId = txt(body.commentId,160);
+    const message = txt(body.message,2000), visibility = String(body.visibility || 'public').toLowerCase() === 'private' ? 'private' : 'public';
+    if (![1,2,3].includes(slot) || !postId || !commentId || !message) return json({ok:false,error:'Choose a comment and enter a reply.'},400);
+    const record = await chat33GetSlot(env,access.businessId,slot);
+    if (!record) return json({ok:false,error:'This Chat33 account is not connected.'},404);
+    const mcp = await chat33McpInit(record.key);
+    const tool = mcp.tools.find(item=>item.name === 'reply_to_comment');
+    if (!tool) return json({ok:false,error:'Enable comments:write in Chat33 Settings → API Keys.'},403);
+    const result = await chat33McpCall(record.key,mcp.sessionId,tool,{postId,commentId,message,visibility,channelId:txt(body.channelId,160)});
+    return json({ok:true,result,message:'Chat33 accepted the comment reply.'});
+  } catch (error) {
+    const message = String(error && error.message || error);
+    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' || message.startsWith('INACTIVE|') ? 403 : Number(error && error.status) || 502;
+    return json({ok:false,error:status===401?'Sign in again.':status===403?'You do not have access to this business workspace.':message.startsWith('INACTIVE|')?message.slice(9):'Chat33 could not send the comment reply: '+txt(message,160)},status);
+  }
 }
 
 async function ensureBusinessWorkerSchema(env) {

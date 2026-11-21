@@ -40,6 +40,13 @@ export default function Chat33Inbox({ onOpenCoreFunctions }: { onOpenCoreFunctio
   const [sending,setSending]=useState(false);
   const [notice,setNotice]=useState("");
   const [filter,setFilter]=useState("all");
+  const [comments,setComments]=useState<Record<string,any>[]>([]);
+  const [commentsLoading,setCommentsLoading]=useState(false);
+  const [commentsErrors,setCommentsErrors]=useState<{slot:number;error:string}[]>([]);
+  const [selectedComment,setSelectedComment]=useState<Record<string,any>|null>(null);
+  const [commentDraft,setCommentDraft]=useState("");
+  const [commentVisibility,setCommentVisibility]=useState<"public"|"private">("public");
+  const [commentSending,setCommentSending]=useState(false);
   const refresh=useCallback(async()=>{
     if(!businessId||demoMode){setConversations([]);setSelected(null);return;}
     setLoading(true);
@@ -58,6 +65,19 @@ export default function Chat33Inbox({ onOpenCoreFunctions }: { onOpenCoreFunctio
     }catch(error){setNotice(error instanceof Error?error.message:"Social inbox could not be loaded.");}
     finally{setLoading(false);}
   },[businessId,demoMode]);
+  const refreshComments=useCallback(async()=>{
+    if(!businessId||demoMode){setComments([]);setCommentsErrors([]);setSelectedComment(null);return;}
+    setCommentsLoading(true);
+    try{
+      const data=await request(businessId,"/chat33/comments");
+      const next=Array.isArray(data.comments)?data.comments as Record<string,any>[]:[];
+      setComments(next);
+      setCommentsErrors(Array.isArray(data.errors)?data.errors:[]);
+      setSelectedComment(current=>current?next.find(item=>item.id===current.id&&item.slot===current.slot)||null:next[0]||null);
+    }catch(error){
+      setCommentsErrors([{slot:0,error:error instanceof Error?error.message:"Comments could not be loaded."}]);
+    }finally{setCommentsLoading(false);}
+  },[businessId,demoMode]);
   const loadMessages=useCallback(async(c:Conversation)=>{
     const id=conversationIdOf(c);
     if(!businessId||!id){setMessages([]);return;}
@@ -75,6 +95,11 @@ export default function Chat33Inbox({ onOpenCoreFunctions }: { onOpenCoreFunctio
     return ()=>window.clearInterval(timer);
   },[refresh]);
   useEffect(()=>{if(selected)void loadMessages(selected);else setMessages([]);},[selected,loadMessages]);
+  useEffect(()=>{
+    void refreshComments();
+    const timer=window.setInterval(()=>{void refreshComments();},180000);
+    return ()=>window.clearInterval(timer);
+  },[refreshComments]);
   const filtered=useMemo(()=>conversations.filter(c=>filter==="all"||(c.platform||c.channel?.platform||"").toLowerCase()===filter),[conversations,filter]);
   const send=async()=>{
     if(!selected||!draft.trim()||sending)return;
@@ -88,14 +113,30 @@ export default function Chat33Inbox({ onOpenCoreFunctions }: { onOpenCoreFunctio
     }catch(error){setNotice(error instanceof Error?error.message:"Chat33 could not send the reply.");}
     finally{setSending(false);}
   };
+  const sendCommentReply=async()=>{
+    if(!selectedComment||!commentDraft.trim()||commentSending)return;
+    const mode=commentVisibility==="private"?"private DM":"public comment";
+    if(!window.confirm("Send this "+mode+" reply to "+String(selectedComment.authorName||selectedComment.username||"this person")+" on "+platformLabel(String(selectedComment.platform||"social"))+"?\n\n"+commentDraft.trim()))return;
+    setCommentSending(true);
+    try{
+      const data=await request(businessId||"","/chat33/comment-reply","POST",{
+        slot:Number(selectedComment.slot),postId:String(selectedComment.postId),commentId:String(selectedComment.commentId||selectedComment.id),
+        channelId:String(selectedComment.channelId||""),message:commentDraft.trim(),visibility:commentVisibility
+      });
+      setNotice(data.message||"Chat33 accepted the comment reply.");
+      setCommentDraft("");
+      await refreshComments();
+    }catch(error){setNotice(error instanceof Error?error.message:"Chat33 could not send the comment reply.");}
+    finally{setCommentSending(false);}
+  };
   const availablePlatforms=Array.from(new Set(conversations.map(c=>String(c.platform||c.channel?.platform||"").toLowerCase()).filter(Boolean)));
   return <div className="space-y-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Unified social inbox</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Unified Inbox</h1><p className="mt-1 text-sm text-neutral-500">Social conversations from all connected Chat33 workspaces, plus the separate official Meta WhatsApp connection for this business.</p></div>
+      <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Unified social inbox</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Unified Inbox</h1><p className="mt-1 text-sm text-neutral-500">Instagram and Facebook Messenger DMs from all three Chat33 slots, plus this business’s optional official Meta WhatsApp conversations.</p></div>
       <div className="flex flex-wrap items-center gap-2"><Badge className="border-neutral-200 bg-neutral-50 text-neutral-700">{conversations.length} conversations</Badge>{onOpenCoreFunctions&&<Button variant="outline" onClick={onOpenCoreFunctions}>Manage social accounts</Button>}<Button variant="outline" onClick={()=>void refresh()} disabled={loading}>{loading?"Refreshing…":"Refresh inbox"}</Button></div>
     </div>
     <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-950">
-      Chat33’s documented DM inbox currently covers Instagram and Facebook Messenger. This Inbox also merges TWIGA’s separate official Meta WhatsApp Business conversations when that number is connected. Publishing supports more social networks, but TikTok DMs and every social network’s inbox are not available through Chat33 at present.
+      Chat33 publishing covers Instagram, Facebook, TikTok, YouTube, X, LinkedIn, Bluesky and Threads. Its live DM inbox is Instagram and Facebook Messenger; its comment tools cover supported Meta post comments. WhatsApp Business remains the separate official Meta connection until Chat33 launches WhatsApp support. TikTok DMs and TikTok commenter identities are not currently exposed by Chat33.
     </div>
     <Card className="overflow-hidden rounded-2xl border-neutral-200 shadow-sm">
       <div className="grid min-h-[620px] lg:grid-cols-[340px_minmax(0,1fr)]">
@@ -136,6 +177,37 @@ export default function Chat33Inbox({ onOpenCoreFunctions }: { onOpenCoreFunctio
           </>}
         </div>
       </div>
+    </Card>
+    <Card className="rounded-2xl border-neutral-200 shadow-sm">
+      <CardHeader className="flex flex-wrap items-center justify-between gap-3">
+        <div><CardTitle>Social post comments</CardTitle><CardDescription>Recent comments on supported Instagram and Facebook posts across connected Chat33 workspaces.</CardDescription></div>
+        <div className="flex items-center gap-2"><Badge className="border-neutral-200 bg-neutral-50 text-neutral-700">{comments.length} comments</Badge><Button variant="outline" onClick={()=>void refreshComments()} disabled={commentsLoading}>{commentsLoading?"Loading…":"Refresh comments"}</Button></div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {commentsErrors.length>0&&<p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">{commentsErrors.map(item=>(item.slot?"Chat33 account "+item.slot+": ":"Comments: ")+item.error).join(" · ")}</p>}
+        {commentsLoading&&comments.length===0&&<p className="py-6 text-center text-sm text-neutral-500">Loading recent comments from Chat33…</p>}
+        {!commentsLoading&&comments.length===0&&commentsErrors.length===0&&<p className="rounded-xl border border-dashed border-neutral-200 p-6 text-center text-sm text-neutral-500">No recent comments were returned. Enable comments:read for connected Chat33 accounts and check whether supported posts have comments.</p>}
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.8fr)]">
+          <div className="max-h-[520px] space-y-2 overflow-y-auto">
+            {comments.map(item=>{
+              const active=selectedComment?.id===item.id&&selectedComment?.slot===item.slot;
+              return <button key={item.slot+":"+item.id} onClick={()=>setSelectedComment(item)} className={"w-full rounded-xl border p-3 text-left transition-colors "+(active?"border-orange-400 bg-orange-50":"border-neutral-200 hover:border-orange-200")}>
+                <div className="flex items-center justify-between gap-2"><p className="truncate text-sm font-semibold text-neutral-950">{item.authorName||item.username||"Social contact"}</p><span className="shrink-0 text-[10px] text-neutral-400">{item.createdAt?new Date(item.createdAt).toLocaleString():""}</span></div>
+                <p className="mt-1 text-xs text-orange-700">{platformLabel(String(item.platform||"social"))} · Chat33 account {item.slot}</p>
+                <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm leading-5 text-neutral-700">{item.text||"Comment"}</p>
+                {item.postText&&<p className="mt-2 line-clamp-1 text-[11px] text-neutral-400">On: {item.postText}</p>}
+              </button>;
+            })}
+          </div>
+          {selectedComment?<div className="space-y-3 rounded-xl border border-neutral-200 p-4">
+            <div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Reply to comment</p><p className="mt-1 text-sm font-semibold text-neutral-950">{selectedComment.authorName||selectedComment.username||"Social contact"}</p><p className="mt-1 whitespace-pre-wrap text-sm text-neutral-600">{selectedComment.text}</p>{selectedComment.postUrl&&<a href={selectedComment.postUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-semibold text-orange-700 underline">View original post</a>}</div>
+            <label className="block text-xs font-semibold text-neutral-700">Reply type<select value={commentVisibility} onChange={e=>setCommentVisibility(e.target.value as "public"|"private")} className="mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"><option value="public">Public reply under the comment</option><option value="private">Private reply by DM</option></select></label>
+            <textarea rows={4} value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} placeholder="Write a helpful reply…" className="w-full rounded-xl border border-neutral-200 p-3 text-sm outline-none focus:border-orange-400"/>
+            <Button onClick={()=>void sendCommentReply()} disabled={commentSending||!commentDraft.trim()} className="w-full bg-neutral-950 text-white">{commentSending?"Sending…":"Send comment reply"}</Button>
+            <p className="text-[10px] leading-5 text-neutral-500">Meta allows one private reply per comment within seven days. Other replies remain subject to platform rules.</p>
+          </div>:<div className="grid min-h-40 place-items-center rounded-xl border border-dashed border-neutral-200 p-6 text-center text-sm text-neutral-500">Select a comment to review and reply.</div>}
+        </div>
+      </CardContent>
     </Card>
     {notice&&<p role="status" className="rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{notice}</p>}
   </div>;
