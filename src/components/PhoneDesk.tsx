@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Model = { id: string; voices?: string[] };
@@ -54,6 +54,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const [placingTest, setPlacingTest] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const voiceTouched = useRef(false);
 
   const load = useCallback(async () => {
     if (demo || !businessId || !supabase) return;
@@ -69,7 +70,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
       setConfig(next);
       const settings = next.phoneLine?.settings || {};
       const savedGender = String(settings.voice_gender || next.voicePreference?.gender || "");
-      setVoice(savedGender === "male" ? "Man" : "Woman");
+      if (!voiceTouched.current) setVoice(savedGender === "male" ? "Man" : "Woman");
       setModel(String(settings.inbound_model_id || next.voicePreference?.model || next.agent?.model || "sautikit-flash"));
 
       const { data: records, error: recordsError } = await supabase
@@ -103,6 +104,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const outboundStatus = "Test only · campaigns off";
 
   const saveVoice = async (selectedVoice: "Woman" | "Man" = voice) => {
+    voiceTouched.current = true;
     setVoice(selectedVoice);
     if (!supabase || !businessId || demo) {
       setError("Sign in to save a business voice.");
