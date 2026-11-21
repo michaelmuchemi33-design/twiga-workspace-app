@@ -33,11 +33,11 @@ const providerNames: Record<Provider, string> = {
 };
 const aiProviders: Provider[] = ["openai", "openrouter", "xai", "groq", "deepseek"];
 const modelDefaults: Record<string, string> = {
-  openai: "gpt-4o-mini",
-  openrouter: "openai/gpt-4o-mini",
-  xai: "grok-3-mini",
-  groq: "llama-3.3-70b-versatile",
-  deepseek: "deepseek-chat",
+  openai: "gpt-6.2-sol",
+  openrouter: "openai/gpt-6.2-sol",
+  xai: "grok-4.7",
+  groq: "openai/gpt-oss-120b",
+  deepseek: "deepseek-flash",
 };
 const promptCopy: Record<Provider, string> = {
   openai: "Paste your OpenAI API key. TWIGA will test access to the model list, then store it in encrypted Vault. Choose the model you want this business to use.",
