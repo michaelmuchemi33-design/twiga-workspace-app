@@ -90,23 +90,27 @@ Deno.serve(async (req) => {
       if (vapiError) throw vapiError;
 
       const [{ data: phoneLines, error: phoneError }, { data: recentCalls, error: callsError },
-        { data: auditLogs, error: auditError }, { data: providerConnections, error: providerError }] = await Promise.all([
+        { data: auditLogs, error: auditError }, { data: providerConnections, error: providerError },
+        { data: vaultProviderConnections, error: vaultProviderError }] = await Promise.all([
         admin.from("twiga_phone_lines").select("id,business_id,line_number,provider,inbound_enabled,inbound_status,outbound_enabled,outbound_status,verified_at,updated_at").order("updated_at", { ascending: false }).limit(500),
         admin.from("twiga_call_records").select("id,business_id,provider,direction,status,created_at,duration_seconds").order("created_at", { ascending: false }).limit(100),
         admin.from("twiga_admin_audit_logs").select("id,admin_email,action,resource_type,resource_id,created_at").order("created_at", { ascending: false }).limit(100),
-        admin.from("twiga_business_provider_secret_refs").select("business_id,provider,updated_at").order("updated_at", { ascending: false }).limit(1000),
+        admin.from("twiga_business_provider_secret_refs").select("business_id,provider,secret_last4,updated_at").order("updated_at", { ascending: false }).limit(1000),
+        admin.from("twiga_provider_secret_refs").select("business_id,provider,secret_last4,updated_at").order("updated_at", { ascending: false }).limit(1000),
       ]);
       if (phoneError) throw phoneError;
       if (callsError) throw callsError;
       if (auditError) throw auditError;
       if (providerError) throw providerError;
+      if (vaultProviderError) throw vaultProviderError;
+      const allProviderConnections = [...(providerConnections || []), ...(vaultProviderConnections || [])];
 
       const paidTotal = (payments || []).reduce((n: number, payment: any) => n + Number(payment.amount || 0), 0);
       return reply({
         isAdmin: true, clients, totalClientCount: totalClientCount || clients.length,
         clientsLimit: 500, payments: payments || [], subscriptionIntents: subscriptionIntents || [], tickets: tickets || [], vapiAccounts: vapiAccounts || [],
         phoneLines: phoneLines || [], recentCalls: recentCalls || [], auditLogs: auditLogs || [],
-        providerConnections: providerConnections || [],
+        providerConnections: allProviderConnections,
         metrics: { clientCount: totalClientCount || clients.length, paymentCount: (payments || []).length,
           paidTotalKes: Number(paidTotal.toFixed(2)),
           openTickets: (tickets || []).filter((ticket: any) => ticket.status !== "resolved").length,
@@ -116,6 +120,85 @@ Deno.serve(async (req) => {
           recentCallCount: (recentCalls || []).length,
           failedCalls: (recentCalls || []).filter((call: any) => /fail|error/i.test(String(call.status || ""))).length,
           providerConnectionCount: (providerConnections || []).length }
+      });
+    }
+
+    if (action === "save_business_provider_secret") {
+      const businessId = String(payload.businessId || "").trim();
+      const provider = String(payload.provider || "").trim().toLowerCase();
+      const apiKey = String(payload.apiKey || "").trim();
+      if (!/^[0-9a-f-]{36}$/i.test(businessId)) return reply({ error: "Select a valid business workspace first." }, 400);
+      if (!["sautikit", "palpluss"].includes(provider)) return reply({ error: "Choose a supported business provider." }, 400);
+      if (apiKey.length < 20 || apiKey.length > 4000) return reply({ error: "Enter a valid provider API key." }, 400);
+
+      const { data: business, error: businessError } = await admin.from("businesses")
+        .select("id,name").eq("id", businessId).maybeSingle();
+      if (businessError) throw businessError;
+      if (!business) return reply({ error: "The selected business workspace was not found." }, 404);
+
+      let keyLast4 = "";
+      let validation: Record<string, unknown> = {};
+      if (provider === "sautikit") {
+        const request = async (path: string) => {
+          const response = await fetch("https://api.sautikit.com" + path, {
+            headers: { Authorization: "Bearer " + apiKey, Accept: "application/json" },
+            signal: AbortSignal.timeout(20000),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            const detail = String(data?.error?.message || data?.message || "SautiKit rejected the API key.");
+            throw new Error(response.status === 401 ? "SautiKit rejected this API key. Check the business workspace key." : detail.slice(0, 220));
+          }
+          return data;
+        };
+        const [models, numbers, agents] = await Promise.all([
+          request("/v1/models"), request("/v1/numbers"), request("/v1/agents"),
+        ]);
+        const modelCount = Array.isArray(models?.data) ? models.data.length : 0;
+        if (!modelCount) return reply({ error: "The SautiKit key authenticated but has no voice models. Check its workspace access and key scopes." }, 409);
+        const { data, error } = await admin.rpc("twiga_set_business_provider_secret", {
+          p_business_id: businessId, p_provider: "sautikit", p_secret: apiKey, p_updated_by: user.id,
+        });
+        if (error) throw error;
+        keyLast4 = String(data || "");
+        validation = {
+          models: modelCount,
+          numbers: Array.isArray(numbers?.data) ? numbers.data.length : 0,
+          agents: Array.isArray(agents?.data) ? agents.data.length : 0,
+        };
+      } else {
+        if (apiKey.length > 500) return reply({ error: "The PalPluss API key is too long." }, 400);
+        const response = await fetch("https://api.palpluss.com/v1/wallets/service/balance", {
+          headers: { Authorization: "Basic " + btoa(apiKey + ":"), Accept: "application/json" },
+          signal: AbortSignal.timeout(20000),
+        });
+        if (!response.ok) return reply({
+          error: response.status === 401
+            ? "PalPluss rejected this API key. Check the key and account."
+            : "Could not validate the PalPluss business account (HTTP " + response.status + ").",
+        }, 400);
+        const { data, error } = await admin.rpc("twiga_set_palpluss_secret", {
+          p_business_id: businessId, p_secret: apiKey, p_updated_by: user.id,
+        });
+        if (error) throw error;
+        keyLast4 = String(data || "");
+        validation = { accountValidated: true };
+      }
+
+      await admin.from("twiga_admin_audit_logs").insert({
+        admin_email: user.email || "unknown",
+        action: "business_provider_secret.saved",
+        resource_type: "business",
+        resource_id: businessId,
+        metadata: { provider, key_last4: keyLast4, validation },
+      });
+      return reply({
+        saved: true,
+        business: { id: business.id, name: business.name },
+        provider,
+        keyLast4,
+        validation,
+        message: (provider === "sautikit" ? "SautiKit workspace key validated and saved" : "PalPluss business key validated and saved") + " in encrypted Supabase Vault for " + business.name + ".",
       });
     }
 

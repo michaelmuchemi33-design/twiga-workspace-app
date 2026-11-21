@@ -26,6 +26,9 @@ export default function PlatformAdminConsole() {
   const [ticketDetail, setTicketDetail] = useState<Row | null>(null);
   const [ticketReply, setTicketReply] = useState("");
   const [ticketBusy, setTicketBusy] = useState(false);
+  const [providerToAssign, setProviderToAssign] = useState("sautikit");
+  const [providerApiKey, setProviderApiKey] = useState("");
+  const [providerMessage, setProviderMessage] = useState("");
 
   const callAdmin = useCallback(async (action: string, payload: Row = {}) => {
     if (!supabase) throw new Error("TWIGA is not connected to Supabase.");
@@ -68,6 +71,29 @@ export default function PlatformAdminConsole() {
     setAccessStatus(String(selectedClient.status || "TRIAL").toUpperCase());
     setPaidThrough(String(selectedClient.paidThrough || ""));
   }, [selectedClient]);
+
+  const saveBusinessProviderKey = async () => {
+    if (!selectedBusinessId || !providerApiKey.trim()) {
+      setProviderMessage("Select a business and enter its provider API key.");
+      return;
+    }
+    const providerLabel = providerToAssign === "sautikit" ? "SautiKit" : "PalPluss";
+    if (!window.confirm("Validate and save the " + providerLabel + " key for " + (selectedClient?.name || "the selected business") + "? It will be encrypted in Supabase Vault and will not be shown again.")) return;
+    setBusy(true); setError(""); setProviderMessage(""); setNotice("");
+    try {
+      const result = await callAdmin("save_business_provider_secret", {
+        businessId: selectedBusinessId,
+        provider: providerToAssign,
+        apiKey: providerApiKey.trim(),
+      });
+      setProviderApiKey("");
+      setProviderMessage(String(result.message || providerLabel + " connection key saved securely.") + (result.keyLast4 ? " Key ending " + result.keyLast4 + "." : ""));
+      setOverview(await callAdmin("overview"));
+      setNotice("Provider credentials were validated, encrypted and assigned to the selected workspace.");
+    } catch (cause) {
+      setProviderMessage(cause instanceof Error ? cause.message : "Could not save this provider key.");
+    } finally { setBusy(false); }
+  };
 
   const openTicket = async (ticketId: string) => {
     setSelectedTicketId(ticketId); setTicketBusy(true); setTicketDetail(null); setError("");
@@ -176,7 +202,7 @@ export default function PlatformAdminConsole() {
 
   const metrics = overview.metrics || {};
   const lineFor = (businessId: string) => phoneLines.filter((line) => line.business_id === businessId);
-  const providersFor = (businessId: string) => providerConnections.filter((item) => item.business_id === businessId).map((item) => item.provider).join(", ") || "None registered";
+  const providersFor = (businessId: string) => providerConnections.filter((item) => item.business_id === businessId).map((item) => String(item.provider || "provider") + (item.secret_last4 ? " · ••••" + String(item.secret_last4) : "")).join(", ") || "None registered";
 
   return <section className="space-y-5 rounded-2xl border border-neutral-300 bg-white p-5 shadow-sm">
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -221,6 +247,22 @@ export default function PlatformAdminConsole() {
       <div className="rounded-xl border border-neutral-200 p-4">
         <h3 className="font-semibold text-neutral-950">Manage selected client</h3>
         <p className="mt-1 text-xs text-neutral-500">{selectedClient ? selectedClient.name + " · " + (selectedClient.ownerEmail || "Owner email not set") : "Select a business from the directory."}</p>
+        <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3">
+          <p className="text-sm font-semibold text-neutral-950">Business connections & environment keys</p>
+          <p className="mt-1 text-xs leading-5 text-neutral-600">Assign a provider key to this business only. TWIGA validates it, stores it encrypted in Supabase Vault, and keeps it out of the customer’s browser and Worker environment.</p>
+          <label className="mt-3 block text-xs font-semibold text-neutral-700">Provider
+            <select value={providerToAssign} onChange={(event) => { setProviderToAssign(event.target.value); setProviderMessage(""); }} disabled={busy} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-2 text-sm text-neutral-900">
+              <option value="sautikit">SautiKit · voice and phone</option>
+              <option value="palpluss">PalPluss · payments</option>
+            </select>
+          </label>
+          <label className="mt-3 block text-xs font-semibold text-neutral-700">Business API key
+            <input type="password" autoComplete="new-password" spellCheck={false} value={providerApiKey} onChange={(event) => setProviderApiKey(event.target.value)} placeholder={providerToAssign === "sautikit" ? "Paste this business’s SautiKit key" : "Paste this business’s PalPluss key"} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-900"/>
+          </label>
+          <button onClick={() => void saveBusinessProviderKey()} disabled={busy || !selectedBusinessId || !providerApiKey.trim()} className="mt-3 w-full rounded-lg bg-neutral-950 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40">{busy ? "Validating & saving…" : "Validate and assign key"}</button>
+          {providerMessage && <p role="status" className="mt-2 rounded-lg bg-white p-2.5 text-xs leading-5 text-neutral-700">{providerMessage}</p>}
+          <p className="mt-2 text-[11px] leading-5 text-neutral-500">Only the last four characters are retained for display. The full key is never returned to this screen. Other integrations can be added through the same isolated workspace connection model.</p>
+        </div>
         <label className="mt-3 block text-xs font-semibold text-neutral-600">Access status<select value={accessStatus} onChange={(event) => setAccessStatus(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-2 text-sm"><option value="TRIAL">Trial</option><option value="ACTIVE">Active</option><option value="SUSPENDED">Suspended</option></select></label>
         <label className="mt-3 block text-xs font-semibold text-neutral-600">Paid through<input type="date" value={paidThrough} onChange={(event) => setPaidThrough(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label>
         <button onClick={() => void saveAccess()} disabled={busy || !selectedBusinessId} className="mt-3 w-full rounded-lg bg-neutral-950 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Save access status</button>

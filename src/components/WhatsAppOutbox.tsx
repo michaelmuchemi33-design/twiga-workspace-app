@@ -12,6 +12,8 @@ import { supabase } from "@/lib/supabase";
 import { useStore, uid, stamp } from "@/lib/store";
 import { IconChat, IconSend, IconCheck, IconClock } from "@/components/Icons";
 
+const API_WAHA = "https://twiga-api.twiga-ke.workers.dev";
+
 
 
 declare global {
@@ -23,6 +25,8 @@ declare global {
     fbAsyncInit?: () => void;
   }
 }
+
+type WahaChannel = { configured:boolean; connected:boolean; status:string; phoneNumber:string; pushName:string; lastEventAt?:string|null; lastError?:string|null };
 
 type WhatsAppChannel = {
   configured: boolean;
@@ -51,6 +55,13 @@ export default function WhatsAppOutbox() {
   const [connectingWhatsApp, setConnectingWhatsApp] = useState(false);
   const [channelMessage, setChannelMessage] = useState("");
   const signupRef = useRef({code:"",wabaId:"",phoneNumberId:"",busy:false});
+  const [wahaChannel,setWahaChannel] = useState<WahaChannel|null>(null);
+  const [wahaQr,setWahaQr] = useState("");
+  const [wahaPhone,setWahaPhone] = useState("");
+  const [wahaPairingCode,setWahaPairingCode] = useState("");
+  const [wahaBusy,setWahaBusy] = useState(false);
+  const [wahaLoading,setWahaLoading] = useState(true);
+  const [wahaMessage,setWahaMessage] = useState("");
 
 
 
@@ -73,6 +84,87 @@ export default function WhatsAppOutbox() {
     } finally {
       setChannelLoading(false);
     }
+  };
+
+  const wahaFetch = async (path:string,method:"GET"|"POST"="GET",payload?:Record<string,any>) => {
+    if(!supabase || !businessId) throw new Error("Choose a signed-in business workspace first.");
+    const session=await supabase.auth.getSession();
+    const token=session.data.session?.access_token||"";
+    const url=API_WAHA + path + (method==="GET" ? (path.includes("?")?"&":"?")+"business_id="+encodeURIComponent(businessId) : "");
+    const response=await fetch(url,{
+      method,
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},
+      ...(method==="POST"?{body:JSON.stringify({...payload,business_id:businessId,token})}:{})
+    });
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok || data.ok===false) throw new Error(data.error||"WhatsApp could not complete that step.");
+    return data;
+  };
+
+  const refreshWahaChannel = async () => {
+    if(!supabase || !businessId || demoMode){setWahaLoading(false);return;}
+    try{
+      const config=await wahaFetch("/waha/config");
+      if(config.configured){
+        const status=await wahaFetch("/waha/status");
+        setWahaChannel({...config,...status,configured:true});
+      }else{
+        setWahaChannel(config as WahaChannel);
+      }
+    }catch(error){
+      setWahaMessage(error instanceof Error?error.message:"WAHA status could not be loaded.");
+    }finally{setWahaLoading(false);}
+  };
+
+  const loadWahaQr = async () => {
+    try{
+      const result=await wahaFetch("/waha/qr");
+      setWahaQr(String(result.qrDataUrl||""));
+      setWahaMessage("Scan this QR code from WhatsApp → Linked devices → Link a device.");
+    }catch(error){
+      setWahaQr("");
+      setWahaMessage(error instanceof Error?error.message:"QR code is not ready. Refresh it in a moment.");
+    }
+  };
+
+  const startWahaConnection = async () => {
+    if(demoMode){setWahaMessage("Demo mode cannot connect a real WhatsApp account.");return;}
+    setWahaBusy(true);setWahaMessage("Starting a private WhatsApp session for this business…");setWahaQr("");setWahaPairingCode("");
+    try{
+      const result=await wahaFetch("/waha/connect","POST",{});
+      setWahaChannel((current)=>({...((current || {}) as any),configured:true,connected:result.connected===true,status:String(result.status||"STARTING")} as WahaChannel));
+      setWahaMessage(String(result.message||"WhatsApp session started."));
+      await loadWahaQr();
+      await refreshWahaChannel();
+    }catch(error){
+      setWahaMessage(error instanceof Error?error.message:"Could not start the WhatsApp session.");
+    }finally{setWahaBusy(false);}
+  };
+
+  const refreshWahaQr = async () => {
+    setWahaBusy(true);await loadWahaQr();setWahaBusy(false);
+  };
+
+  const requestWahaPairingCode = async () => {
+    if(!wahaPhone.trim())return;
+    setWahaBusy(true);setWahaMessage("");setWahaPairingCode("");
+    try{
+      const result=await wahaFetch("/waha/pairing-code","POST",{phoneNumber:wahaPhone});
+      setWahaPairingCode(String(result.code||""));
+      setWahaMessage(String(result.message||"Enter the code in WhatsApp under Linked devices."));
+    }catch(error){setWahaMessage(error instanceof Error?error.message:"Could not request a pairing code.");}
+    finally{setWahaBusy(false);}
+  };
+
+  const disconnectWaha = async () => {
+    if(!window.confirm("Disconnect this WhatsApp account from this business?"))return;
+    setWahaBusy(true);
+    try{
+      await wahaFetch("/waha/disconnect","POST",{});
+      setWahaQr("");setWahaPairingCode("");setWahaMessage("WhatsApp disconnected.");
+      await refreshWahaChannel();
+    }catch(error){setWahaMessage(error instanceof Error?error.message:"Could not disconnect WhatsApp.");}
+    finally{setWahaBusy(false);}
   };
 
   const completeEmbeddedSignup = async () => {
@@ -111,6 +203,8 @@ export default function WhatsAppOutbox() {
   useEffect(() => {
     void refreshWhatsAppChannel();
   }, [businessId, demoMode]);
+
+  useEffect(() => { void refreshWahaChannel(); }, [businessId, demoMode]);
 
   useEffect(() => {
     if (!whatsappChannel || !whatsappChannel.configured || !whatsappChannel.appId || demoMode) return;
@@ -245,6 +339,58 @@ export default function WhatsAppOutbox() {
 
   return (
     <div className="space-y-5">
+      <Card className="rounded-2xl border-neutral-200 bg-white shadow-sm">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-lg font-semibold"><IconChat className="h-5 w-5 text-orange-500" /> Connect a WhatsApp number</CardTitle>
+            <CardDescription>Link the number used by this business. Each workspace gets its own WAHA session.</CardDescription>
+          </div>
+          <Badge className={cn("border-0",wahaChannel?.connected?"bg-orange-50 text-orange-800":"bg-neutral-100 text-neutral-700")}>
+            {wahaLoading?"Checking…":wahaChannel?.connected?"Connected":wahaChannel?.configured?(wahaChannel.status||"Not linked"):"Admin setup needed"}
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {wahaChannel?.connected ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-orange-100 bg-orange-50/60 p-3">
+              <div><p className="text-sm font-semibold text-neutral-950">{wahaChannel.pushName||"WhatsApp"} · {wahaChannel.phoneNumber||"Linked number"}</p><p className="mt-1 text-xs text-neutral-600">This WhatsApp account is linked to this business workspace.</p></div>
+              <Button variant="outline" onClick={()=>void disconnectWaha()} disabled={wahaBusy} className="border-neutral-300 bg-white text-neutral-900">Disconnect</Button>
+            </div>
+          ) : !wahaChannel?.configured ? (
+            <div className="rounded-xl bg-neutral-50 p-3">
+              <p className="text-sm text-neutral-800">The QR and phone-number connection is ready in TWIGA, but the WAHA server has not been configured by the platform administrator.</p>
+              <p className="mt-2 text-xs leading-5 text-neutral-500">Admin adds WAHA_BASE_URL and WAHA_API_KEY as private Cloudflare Worker secrets. The service must have persistent session storage enabled.</p>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm leading-5 text-neutral-600">Scan using WhatsApp on the phone that owns this number. You can also request a temporary linking code if QR scanning is inconvenient.</p>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={()=>void startWahaConnection()} disabled={wahaBusy||wahaLoading||demoMode} className="bg-neutral-950 text-white hover:bg-neutral-800">{wahaBusy?"Starting…":"Start QR connection"}</Button>
+                <Button variant="outline" onClick={()=>void refreshWahaChannel()} disabled={wahaBusy} className="border-neutral-300 bg-white text-neutral-900">Check status</Button>
+              </div>
+              {wahaQr && !wahaChannel?.connected && (
+                <div className="flex flex-col items-center gap-3 rounded-xl border border-neutral-200 bg-white p-4 sm:flex-row sm:items-start">
+                  <img src={wahaQr} alt="WhatsApp link device QR code" className="h-52 w-52 rounded-lg border border-neutral-100 bg-white object-contain" />
+                  <div className="flex-1 space-y-2 text-sm text-neutral-700">
+                    <p className="font-semibold text-neutral-950">Scan with your phone</p>
+                    <ol className="list-decimal space-y-1 pl-4 text-sm leading-5">
+                      <li>Open WhatsApp on your phone.</li><li>Open Linked devices.</li><li>Choose Link a device, then scan this code.</li>
+                    </ol>
+                    <p className="text-xs text-neutral-500">QR codes expire quickly. Refresh the code if it stops working.</p>
+                    <Button size="sm" variant="outline" onClick={()=>void refreshWahaQr()} disabled={wahaBusy} className="border-neutral-300 bg-white text-neutral-900">Refresh QR code</Button>
+                  </div>
+                </div>
+              )}
+              <div className="grid gap-2 rounded-xl border border-neutral-200 p-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                <div className="space-y-1.5"><Label>Phone number with country code</Label><Input value={wahaPhone} onChange={(event)=>setWahaPhone(event.target.value)} placeholder="2547XXXXXXXX" inputMode="tel" /><p className="text-[11px] text-neutral-500">Use digits only, including 254 for Kenya.</p></div>
+                <Button onClick={()=>void requestWahaPairingCode()} disabled={wahaBusy||wahaPhone.replace(/\D/g,"").length<10} className="bg-neutral-950 text-white hover:bg-neutral-800">Get linking code</Button>
+              </div>
+              {wahaPairingCode && <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-center"><p className="text-xs font-semibold uppercase tracking-wide text-orange-800">Your WhatsApp linking code</p><p className="mt-1 text-2xl font-bold tracking-[.2em] text-neutral-950">{wahaPairingCode}</p><p className="mt-2 text-xs leading-5 text-neutral-600">On your phone: WhatsApp → Linked devices → Link with phone number, then enter this code.</p></div>}
+            </>
+          )}
+          {wahaMessage && <p role="status" className="rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{wahaMessage}</p>}
+          <p className="text-[11px] leading-5 text-neutral-500">WAHA is an unofficial WhatsApp Web integration, not the official Meta Cloud API. Use a business-owned number, follow WhatsApp rules, and understand the possibility of account restrictions. The official Meta connection below is the recommended production option.</p>
+        </CardContent>
+      </Card>
       <Card className="rounded-2xl border-neutral-200 bg-white shadow-sm">
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>

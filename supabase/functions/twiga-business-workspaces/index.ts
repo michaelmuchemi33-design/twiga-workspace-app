@@ -58,6 +58,81 @@ Deno.serve(async(req:Request)=>{
     }catch(e){await db.from("businesses").delete().eq("id",b.id);throw e;}
    return json({business:{...b,role:"owner"},created:true});
   }
+
+  if(body.action==="update_profile"){
+    const businessId=String(body.businessId||"");
+    const p=body.profile&&typeof body.profile==="object"?body.profile:{};
+    if(!/^[0-9a-f-]{36}$/i.test(businessId))return json({error:"Select a valid business workspace."},400);
+    const {data:member,error:memberError}=await db.from("business_members").select("role").eq("business_id",businessId).eq("user_id",user.id).maybeSingle();
+    if(memberError)throw memberError;
+    if(!member||!["owner","admin"].includes(String(member.role)))return json({error:"Only a business owner or administrator can save the business profile."},403);
+    const name=String(p.business_name||"").trim().slice(0,120);
+    const businessType=String(p.business_type||"general").trim().slice(0,80)||"general";
+    if(name.length<2)return json({error:"Add a business name before saving the receptionist profile."},400);
+    const {error:businessError}=await db.from("businesses").update({name,business_type:businessType}).eq("id",businessId);
+    if(businessError)throw businessError;
+    const setupDetails=p.setup_details&&typeof p.setup_details==="object"&&!Array.isArray(p.setup_details)?p.setup_details:{};
+    const profileRow={
+      business_id:businessId,
+      owner_name:String(p.owner_name||user.user_metadata?.full_name||user.user_metadata?.name||"").trim().slice(0,160),
+      owner_email:String(p.owner_email||user.email||"").trim().slice(0,254),
+      business_summary:String(p.business_summary||"").slice(0,12000),
+      what_they_sell:String(p.what_they_sell||"").slice(0,12000),
+      what_they_do:String(p.what_they_do||"").slice(0,12000),
+      products_and_services:String(p.products_and_services||"").slice(0,16000),
+      target_customers:String(p.target_customers||"").slice(0,8000),
+      unique_selling_points:String(p.unique_selling_points||"").slice(0,8000),
+      service_area:String(p.service_area||"").slice(0,4000),
+      opening_hours:String(p.opening_hours||"").slice(0,4000),
+      delivery_and_payment:String(p.delivery_and_payment||"").slice(0,8000),
+      returns_and_refunds:String(p.returns_and_refunds||"").slice(0,8000),
+      frequently_asked_questions:String(p.frequently_asked_questions||"").slice(0,12000),
+      brand_voice:String(p.brand_voice||"Warm, clear, helpful and professional").slice(0,500),
+      reply_language:String(p.reply_language||"match_customer").slice(0,100),
+      assistant_instructions:String(p.assistant_instructions||"").slice(0,16000),
+      setup_details:setupDetails,
+      updated_by:user.id,
+      updated_at:new Date().toISOString()
+    };
+    const {error:profileError}=await db.from("twiga_business_profiles").upsert(profileRow,{onConflict:"business_id"});
+    if(profileError)throw profileError;
+    const businessHours=setupDetails.business_hours&&typeof setupDetails.business_hours==="object"?setupDetails.business_hours:{};
+    const {error:settingsError}=await db.from("twiga_business_settings").upsert({
+      business_id:businessId,
+      timezone:String(setupDetails.timezone||"Africa/Nairobi"),
+      language_mode:"auto",
+      business_hours:businessHours,
+      followups_enabled:true
+    },{onConflict:"business_id"});
+    if(settingsError)throw settingsError;
+    const {data:oldVoice,error:voiceReadError}=await db.from("twiga_business_voice_configs").select("*").eq("business_id",businessId).maybeSingle();
+    if(voiceReadError)throw voiceReadError;
+    const greeting=String(p.receptionist_greeting||("Hello, thank you for contacting "+name+". How can I help you today?")).slice(0,1200);
+    const instructions=String(p.assistant_instructions||"Greet customers warmly, use verified business information, and pass requests needing confirmation to the business team.").slice(0,12000);
+    const {error:voiceError}=await db.from("twiga_business_voice_configs").upsert({
+      ...(oldVoice||{}),
+      business_id:businessId,
+      provider:oldVoice?.provider||"sautikit",
+      sautikit_agent_id:oldVoice?.sautikit_agent_id||null,
+      sautikit_model_id:oldVoice?.sautikit_model_id||"sautikit-flash",
+      sautikit_voice_id:oldVoice?.sautikit_voice_id||"Woman",
+      inbound_prompt:instructions,
+      outbound_prompt:oldVoice?.outbound_prompt||"Only call people when the business has authorised the follow-up.",
+      updated_by:user.id
+    },{onConflict:"business_id"});
+    if(voiceError)throw voiceError;
+    const {error:aiError}=await db.from("business_ai").upsert({
+      business_id:businessId,
+      greeting,
+      prompt:instructions,
+      faq:String(p.frequently_asked_questions||"").slice(0,12000),
+      rules:instructions,
+      updated_at:new Date().toISOString()
+    },{onConflict:"business_id"});
+    if(aiError)throw aiError;
+    return json({saved:true,business:{id:businessId,name,business_type:businessType},profile:profileRow});
+  }
+
   return json({error:"Unknown workspace action."},404);
  }catch(e){console.error("twiga-business-workspaces",e);return json({error:e instanceof Error?e.message:"Could not complete workspace action."},500);}
 });
