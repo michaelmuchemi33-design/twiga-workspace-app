@@ -30,6 +30,20 @@ async function skRequest(key: string, path: string, method = "GET", body?: unkno
   return payload as Row;
 }
 
+async function cloudflareIntegrationRequest(admin: any, businessId: string, body: Record<string, unknown>) {
+  const { data: workerSecret, error } = await admin.rpc("twiga_get_worker_internal_secret");
+  if (error || !workerSecret) throw new Error("Cloudflare's secure business integration service is not configured.");
+  const response = await fetch("https://twiga-api.twiga-ke.workers.dev/internal/integrations", {
+    method: "POST",
+    headers: { "x-twiga-worker-secret": String(workerSecret), "Content-Type": "application/json" },
+    body: JSON.stringify({ businessId, ...body }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data?.ok !== true) throw new Error(String(data?.error || "Cloudflare could not access this business's SautiKit credentials."));
+  return data;
+}
+
 
 async function attachOperationalTools(
   key: string, businessId: string, agentId: string, secret: string,
@@ -525,8 +539,7 @@ Deno.serve(async (req: Request) => {
     const canManage = isPlatformAdmin || ["owner", "admin"].includes(String(membership?.role || ""));
 
     if (action === "connect_business") {
-      if (!isPlatformAdmin) return json({ error: "SautiKit credentials are managed centrally by the TWIGA platform administrator. Ask TWIGA to connect the shared provider account." }, 403);
-      if (!canManage && !isPlatformAdmin) return json({ error: "Only an authorised administrator can manage this SautiKit connection." }, 403);
+      if (!canManage) return json({ error: "Only this business's owner or an authorised TWIGA administrator can manage its SautiKit connection." }, 403);
       const directKey = String(body.apiKey || "").trim();
       if (directKey.length < 20 || directKey.length > 4000) return json({ error: "Enter a SautiKit workspace API key from this business's SautiKit console." }, 400);
       let modelsResponse: Row, numbersResponse: Row, agentsResponse: Row;
@@ -555,10 +568,20 @@ Deno.serve(async (req: Request) => {
       const matchingNumber = savedNumberId ? numbers.find((n: Row) => String(n.id || n.number_id || "") === savedNumberId) : null;
       const savedAgentId = String(existingLine?.settings?.inbound_agent_id || "");
       const matchingAgent = savedAgentId ? agents.find((a: Row) => String(a.id || a.agent_id || "") === savedAgentId) : null;
-      const { data: keyLast4, error: saveError } = await admin.rpc("twiga_set_business_provider_secret", {
-        p_business_id: businessId, p_provider: "sautikit", p_secret: directKey, p_updated_by: user.id,
+      const saved = await cloudflareIntegrationRequest(admin, businessId, {
+        action: "save", provider: "sautikit",
+        displayName: "Business SautiKit workspace",
+        integrationType: "voice",
+        credentials: { api_key: directKey },
+        config: {},
+        status: "verified",
+        lastTestMessage: "SautiKit workspace validated against its models, numbers and agents endpoints.",
+        actorUserId: user.id,
+        actorRole: String(membership?.role || "platform_admin"),
+        assistedByAdmin: isPlatformAdmin,
+        assistanceNote: isPlatformAdmin ? "TWIGA administrator assisted this business with its phone provider connection." : "",
       });
-      if (saveError) throw saveError;
+      const keyLast4 = String(saved.integration?.credentials_last4?.api_key || directKey.slice(-4));
       return json({
         connected: true, direct: true, keyLast4,
         workspaceId: numbers[0]?.workspace_id || agents[0]?.workspace_id || null,
@@ -567,7 +590,7 @@ Deno.serve(async (req: Request) => {
         savedNumberMatched: !!matchingNumber, savedAgentMatched: !!matchingAgent,
         phoneNumber: matchingNumber?.e164 || matchingNumber?.phone_number || existingLine?.line_number || null,
         message: matchingNumber && matchingAgent
-          ? "This business's SautiKit workspace is connected directly. Its saved number and receptionist agent both belong to this workspace."
+          ? "This business's SautiKit workspace key is validated and saved in its encrypted Cloudflare D1 workspace. Its saved number and receptionist agent both belong to this workspace."
           : !numbers.length
             ? "The SautiKit workspace key is valid and saved securely, but this workspace has no phone numbers yet. Add or assign a number in this workspace before enabling calls."
             : "The SautiKit workspace key is valid and saved securely. The current TWIGA phone-line reference does not match a number in this workspace; choose a number owned by this workspace before enabling calls.",
@@ -582,14 +605,23 @@ Deno.serve(async (req: Request) => {
     const agentId = String(settings.inbound_agent_id || "");
     const numberId = String(line?.provider_reference || "");
 
+    let d1BusinessApiKey = "";
+    let d1BusinessKeyLast4 = "";
+    try {
+      const d1 = await cloudflareIntegrationRequest(admin, businessId, { action: "get_secret", provider: "sautikit" });
+      d1BusinessApiKey = String(d1.credentials?.api_key || "");
+      d1BusinessKeyLast4 = String(d1.credentials_last4?.api_key || d1BusinessApiKey.slice(-4));
+    } catch (error) {
+      console.warn("SautiKit Cloudflare D1 lookup unavailable; checking legacy keys.", safe(error instanceof Error ? error.message : error, 140));
+    }
     const { data: businessKeyRef, error: businessKeyRefError } = await admin
       .from("twiga_business_provider_secret_refs").select("secret_last4,updated_at")
       .eq("business_id", businessId).eq("provider", "sautikit").maybeSingle();
     if (businessKeyRefError) throw businessKeyRefError;
-    const { data: businessApiKey, error: businessSecretError } = await admin.rpc("twiga_get_business_provider_secret", {
+    const { data: legacyBusinessApiKey, error: businessSecretError } = await admin.rpc("twiga_get_business_provider_secret", {
       p_business_id: businessId, p_provider: "sautikit",
     });
-    if (businessSecretError) throw businessSecretError;
+    if (businessSecretError && !d1BusinessApiKey) throw businessSecretError;
     const { data: platformKeyRef, error: platformRefError } = await admin
       .from("twiga_platform_secret_refs").select("secret_last4,updated_at")
       .eq("provider", "sautikit_platform_api_key").maybeSingle();
@@ -598,12 +630,10 @@ Deno.serve(async (req: Request) => {
       p_provider: "sautikit_platform_api_key",
     });
     if (platformSecretError) throw platformSecretError;
-    // Shared platform credentials take priority so all customer workspaces use TWIGA's
-    // centrally managed provider account. A business credential is retained only as a
-    // migration fallback until the platform administrator connects the shared key.
-    const keySource = platformApiKey ? "platform" : businessApiKey ? "business" : "missing";
-    const key = String(platformApiKey || businessApiKey || "");
-    const keyRef = platformApiKey ? platformKeyRef : businessKeyRef;
+    const businessApiKey = d1BusinessApiKey || legacyBusinessApiKey;
+    const keySource = d1BusinessApiKey ? "business_cloudflare_d1" : legacyBusinessApiKey ? "business_legacy_vault" : platformApiKey ? "platform" : "missing";
+    const key = String(businessApiKey || platformApiKey || "");
+    const keyRef = d1BusinessApiKey ? { secret_last4: d1BusinessKeyLast4 } : legacyBusinessApiKey ? businessKeyRef : platformKeyRef;
 
     if (action === "assign_business_number") {
       if (!canManage) return json({ error: "Only this business's owner or administrator can assign its SautiKit number." }, 403);
