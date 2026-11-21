@@ -143,13 +143,17 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
   useEffect(() => {
     let active = true;
     if (!businessId) { setWorkerOverview(null); setWorkerLoading(false); return; }
+    const refresh = () => {
+      businessWorkerRequest(businessId, "overview")
+        .then((result) => { if (active) setWorkerOverview(result as WorkerOverview); })
+        .catch((error) => { if (active) setWorkerError(error instanceof Error ? error.message : "Worker status could not be loaded."); })
+        .finally(() => { if (active) setWorkerLoading(false); });
+    };
     setWorkerLoading(true);
     setWorkerError("");
-    void businessWorkerRequest(businessId, "overview")
-      .then((result) => { if (active) setWorkerOverview(result as WorkerOverview); })
-      .catch((error) => { if (active) setWorkerError(error instanceof Error ? error.message : "Worker status could not be loaded."); })
-      .finally(() => { if (active) setWorkerLoading(false); });
-    return () => { active = false; };
+    refresh();
+    const refreshInterval = window.setInterval(refresh, 60_000);
+    return () => { active = false; window.clearInterval(refreshInterval); };
   }, [businessId]);
 
   const runBusinessWorkerReview = async () => {
@@ -282,7 +286,7 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
             <div className="rounded-xl bg-neutral-50 px-3 py-2.5">
               <p className="text-xs text-neutral-500">Schedule</p>
               <p className="mt-1 text-sm font-semibold text-neutral-950">Every minute</p>
-              <p className="text-[11px] text-neutral-500">Up to 50 workspaces per tick</p>
+              <p className="text-[11px] text-neutral-500">Up to 50 workspaces · 10 tasks each</p>
             </div>
           </div>
           {workerOverview?.notifications?.length ? (
