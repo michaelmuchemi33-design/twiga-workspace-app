@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { supabase } from "@/lib/supabase";
 
 type FormState = {
@@ -77,7 +77,7 @@ export default function SetupPage({ demo = false, businessId = "", onDone, onBus
     setError("");
   };
 
-  const save = async (event: React.FormEvent<HTMLFormElement>) => {
+  const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (demo) {
       setNotice("This is a sample business. Changes in the demo are not saved.");
