@@ -15,6 +15,28 @@ Deno.serve(async(req:Request)=>{
  if(!adminRow) return json({isAdmin:false,error:"Platform administrator access required."},403);
  try{
   const body=await req.json().catch(()=>({})),action=String(body.action||"get_config");
+  if(action==="business.providers.status"){
+   const businessId=String(body.businessId||"");
+   if(!/^[0-9a-f-]{36}$/i.test(businessId)) return json({error:"Choose a valid business workspace."},400);
+   const {data:refs,error}=await admin.from("twiga_provider_secret_refs").select("provider,secret_last4,updated_at").eq("business_id",businessId).order("provider",{ascending:true});
+   if(error) throw error;
+   return json({isAdmin:true,businessId,providers:refs||[]});
+  }
+  if(action==="business.provider.save"){
+   const businessId=String(body.businessId||"");
+   const provider=String(body.provider||"");
+   const secret=String(body.secret||"").trim();
+   const allowed=["sautikit","palpluss","aisensy_project_api_key","aisensy_campaign_api_key","waha_r2_bucket","waha_r2_access_key_id","waha_r2_secret_access_key"];
+   if(!/^[0-9a-f-]{36}$/i.test(businessId)) return json({error:"Choose a valid business workspace."},400);
+   if(!allowed.includes(provider)) return json({error:"That provider field is not assignable."},400);
+   if(secret.length<3||secret.length>4000) return json({error:"Enter a valid provider value."},400);
+   if(provider==="waha_r2_bucket"&&!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(secret)) return json({error:"R2 bucket names must use lowercase letters, numbers and hyphens."},400);
+   if(provider!=="waha_r2_bucket"&&secret.length<16) return json({error:"This provider credential is too short."},400);
+   const {data:last4,error}=await admin.rpc("twiga_set_provider_secret",{p_business_id:businessId,p_provider:provider,p_secret:secret,p_updated_by:user.id});
+   if(error){console.error("Business provider assignment failed",provider,error.message);return json({error:"The provider credential could not be stored in encrypted Vault. Check the provider type and business assignment."},500);}
+   await admin.from("twiga_admin_audit_logs").insert({admin_email:user.email||"unknown",action:"provider.business.assign",resource_type:"business",resource_id:businessId,metadata:{provider:provider,secret_last4:last4}});
+   return json({isAdmin:true,saved:true,businessId,provider,last4:last4,message:"Provider setting securely assigned to this business. The value will never be shown again."});
+  }
   if(action==="get_config"){
    const {data:ref}=await admin.from("twiga_platform_secret_refs").select("secret_last4,updated_at").eq("provider","xai").maybeSingle();
    return json({isAdmin:true,keyConfigured:!!ref||!!Deno.env.get("XAI_API_KEY"),keySource:ref?"vault":Deno.env.get("XAI_API_KEY")?"environment":"missing",keyLast4:ref?.secret_last4||"",updatedAt:ref?.updated_at||null});
