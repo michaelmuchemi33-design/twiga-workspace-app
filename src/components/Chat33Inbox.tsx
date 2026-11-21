@@ -86,11 +86,11 @@ export default function Chat33Inbox(){
   const availablePlatforms=Array.from(new Set(conversations.map(c=>String(c.platform||c.channel?.platform||"").toLowerCase()).filter(Boolean)));
   return <div className="space-y-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Unified social inbox</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Inbox</h1><p className="mt-1 text-sm text-neutral-500">Conversations from all connected Chat33 workspaces in this business.</p></div>
+      <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Unified social inbox</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Inbox</h1><p className="mt-1 text-sm text-neutral-500">Social conversations from all connected Chat33 workspaces, plus the separate official Meta WhatsApp connection for this business.</p></div>
       <div className="flex items-center gap-2"><Badge className="border-neutral-200 bg-neutral-50 text-neutral-700">{conversations.length} conversations</Badge><Button variant="outline" onClick={()=>void refresh()} disabled={loading}>{loading?"Refreshing…":"Refresh inbox"}</Button></div>
     </div>
     <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-950">
-      Chat33’s documented DM inbox currently covers Instagram and Facebook Messenger. Publishing supports more social networks, but TikTok DMs and WhatsApp Business are not part of this inbox API at present. WhatsApp Business remains a separate direct Meta connection below.
+      Chat33’s documented DM inbox currently covers Instagram and Facebook Messenger. This Inbox also merges TWIGA’s separate official Meta WhatsApp Business conversations when that number is connected. Publishing supports more social networks, but TikTok DMs and every social network’s inbox are not available through Chat33 at present.
     </div>
     <Card className="overflow-hidden rounded-2xl border-neutral-200 shadow-sm">
       <div className="grid min-h-[620px] lg:grid-cols-[340px_minmax(0,1fr)]">
@@ -107,7 +107,7 @@ export default function Chat33Inbox(){
               const id=conversationIdOf(c), active=selected&&conversationIdOf(selected)===id&&selected._twigaSlot===c._twigaSlot;
               return <button key={c._twigaSlot+":"+id} onClick={()=>setSelected(c)} className={"block w-full border-b border-neutral-100 p-4 text-left transition-colors "+(active?"bg-orange-50":"hover:bg-neutral-50")}>
                 <div className="flex items-start justify-between gap-2"><p className="truncate text-sm font-semibold text-neutral-950">{contactName(c)}</p><span className="shrink-0 text-[10px] text-neutral-400">{timestamp(c)?new Date(timestamp(c)).toLocaleString():""}</span></div>
-                <div className="mt-1 flex items-center gap-1.5"><span className="text-[11px] font-semibold text-orange-700">{platformLabel(c.platform||c.channel?.platform||"social")}</span><span className="text-[10px] text-neutral-400">· Chat33 {c._twigaSlot}</span></div>
+                <div className="mt-1 flex items-center gap-1.5"><span className="text-[11px] font-semibold text-orange-700">{platformLabel(c.platform||c.channel?.platform||"social")}</span><span className="text-[10px] text-neutral-400">· {c._twigaSlot===0?"Meta WhatsApp":"Chat33 "+c._twigaSlot}</span></div>
                 <p className="mt-2 line-clamp-2 text-xs leading-5 text-neutral-500">{latestText(c)||"Open conversation"}</p>
               </button>;
             })}
@@ -117,7 +117,7 @@ export default function Chat33Inbox(){
           {!selected?<div className="grid flex-1 place-items-center p-8 text-center text-sm text-neutral-500">Select a conversation to read and reply.</div>:<>
             <div className="border-b border-neutral-100 p-4">
               <p className="font-semibold text-neutral-950">{contactName(selected)}</p>
-              <p className="mt-1 text-xs text-neutral-500">{platformLabel(selected.platform||selected.channel?.platform||"social")} · {selected._twigaAccountName} · account {selected._twigaSlot}</p>
+              <p className="mt-1 text-xs text-neutral-500">{platformLabel(selected.platform||selected.channel?.platform||"social")} · {selected._twigaSlot===0?"Official WhatsApp Business · Meta":selected._twigaAccountName+" · Chat33 account "+selected._twigaSlot}</p>
             </div>
             <div className="flex-1 space-y-3 overflow-y-auto bg-neutral-50/60 p-4">
               {messagesLoading&&<p className="text-center text-xs text-neutral-500">Loading messages…</p>}
