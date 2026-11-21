@@ -345,7 +345,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
     <section className="rounded-2xl border border-orange-200 bg-orange-50/40 p-4 dark:border-orange-900 dark:bg-orange-950/20">
       <p className="text-xs font-semibold uppercase tracking-wider text-orange-700 dark:text-orange-400">WhatsApp · visible connection controls</p>
       <h2 className="mt-1 text-lg font-bold text-neutral-950 dark:text-neutral-100">Connect your business WhatsApp number</h2>
-      <p className="mt-1 mb-3 text-sm leading-5 text-neutral-600 dark:text-neutral-300">Official Meta WhatsApp Cloud API, QR/linking-session status and the business WhatsApp outbox are shown here for the selected workspace.</p>
+      <p className="mt-1 mb-3 text-sm leading-5 text-neutral-600 dark:text-neutral-300">Connect this business to the official WhatsApp Business Platform. TWIGA manages the platform setup; no WAHA server or QR pairing service is required.</p>
       <WhatsAppOutbox />
     </section>
     <BringYourOwnAPI businessId={businessId} demo={demo} />
