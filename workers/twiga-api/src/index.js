@@ -884,6 +884,11 @@ async function internalIntegrationRoute(req,env,kind) {
   if(!await internalSecretValid(req,env))return json({ok:false,error:'Internal TWIGA authentication failed.'},401);
   try {
     const body=await req.json().catch(()=>({})),biz=txt(body.businessId||body.business_id,80),action=txt(body.action,40);
+    if(kind!=='google' && action==='admin_list'){
+      await ensureIntegrationSchema(env);
+      const rows=await env.DB.prepare("SELECT business_id,provider_slug,display_name,integration_type,credentials_last4_json,is_primary_ai,status,updated_at FROM business_integrations ORDER BY updated_at DESC LIMIT 2000").all();
+      return json({ok:true,integrations:rows.results||[]});
+    }
     if(!/^[0-9a-f-]{36}$/i.test(biz))return json({ok:false,error:'Invalid business workspace.'},400);
     if(kind==='google'){
       if(action==='get')return json({ok:true,connection:await getGoogleD1(env,biz)});
@@ -905,10 +910,6 @@ async function internalIntegrationRoute(req,env,kind) {
       const provider=integrationSlug(body.provider);
       const deleted=await deleteIntegrationD1(env,biz,provider,{userId:body.actorUserId,role:body.actorRole||'platform_admin',admin:true},body.assistanceNote);
       return json({ok:deleted});
-    }
-    if(action==='admin_list'){
-      const rows=await env.DB.prepare("SELECT business_id,provider_slug,display_name,integration_type,credentials_last4_json,is_primary_ai,status,updated_at FROM business_integrations ORDER BY updated_at DESC LIMIT 2000").all();
-      return json({ok:true,integrations:rows.results||[]});
     }
     return json({ok:false,error:'Unknown internal integration action.'},400);
   }catch(error){
