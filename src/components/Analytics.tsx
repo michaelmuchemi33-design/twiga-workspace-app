@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ComponentType, type SVGProps } from "react";
 import { useStore } from "@/lib/store";
 import {
   Card,
@@ -293,7 +293,7 @@ export default function Analytics() {
 }
 
 function OutcomeRow({ icon: Icon, label, value, tone }: {
-  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
   label: string;
   value: number;
   tone: "orange" | "neutral";
