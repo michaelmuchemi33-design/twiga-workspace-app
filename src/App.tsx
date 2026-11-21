@@ -52,6 +52,7 @@ const footerTabs = [
   { id: "phone", label: "Calls", icon: IconChat },
   { id: "dashboard", label: "Home", icon: IconHome },
   { id: "pos", label: "POS", icon: IconCart },
+  { id: "functions", label: "Social", icon: IconSparkle },
 ];
 
 const moreTabs = [
@@ -60,9 +61,9 @@ const moreTabs = [
   { id: "outreach", label: "Outreach", icon: IconPhone },
   { id: "connections", label: "Connections", icon: IconUsers },
   { id: "organizer", label: "Organize", icon: IconSwap },
-  { id: "functions", label: "Functions", icon: IconSparkle },
-  { id: "customers", label: "People", icon: IconUsers },
-  { id: "whatsapp", label: "Inbox", icon: IconChat },
+  { id: "functions", label: "The 10 core functions", icon: IconSparkle },
+  { id: "customers", label: "People & contacts", icon: IconUsers },
+  { id: "whatsapp", label: "Unified Inbox", icon: IconChat },
   { id: "analytics", label: "Stats", icon: IconChart },
   { id: "products", label: "Products", icon: IconBox },
   { id: "reports", label: "Reports", icon: IconFile },
@@ -210,7 +211,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
               {demo && <span className="rounded-full bg-orange-50 px-3 py-1 text-[11px] font-bold uppercase tracking-wide text-orange-700">Demo</span>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {!isCompactPwaLayout && <select aria-label="Navigate workspace" value={tab} onChange={(e) => go(e.target.value)} className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 outline-none focus:border-orange-400 lg:hidden"><option value="setup">Business</option><option value="billing">Plan & billing</option><option value="phone">Calls</option><option value="dashboard">Home</option><option value="pos">POS</option><option value="payments">Payments</option><option value="outreach">Outreach</option><option value="connections">Connections</option><option value="organizer">Organize</option><option value="functions">Functions</option><option value="customers">People</option><option value="whatsapp">Inbox</option><option value="analytics">Stats</option><option value="products">Products</option><option value="reports">Reports</option><option value="alerts">Alerts</option><option value="profile">Profile</option><option value="settings">Settings</option></select>}
+              {!isCompactPwaLayout && <select aria-label="Navigate workspace" value={tab} onChange={(e) => go(e.target.value)} className="h-10 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 outline-none focus:border-orange-400 lg:hidden"><option value="setup">Business</option><option value="billing">Plan & billing</option><option value="phone">Calls</option><option value="dashboard">Home</option><option value="pos">POS</option><option value="payments">Payments</option><option value="outreach">Outreach</option><option value="connections">Connections</option><option value="organizer">Organize</option><option value="functions">The 10 core functions</option><option value="customers">People &amp; contacts</option><option value="whatsapp">Unified Inbox</option><option value="analytics">Stats</option><option value="products">Products</option><option value="reports">Reports</option><option value="alerts">Alerts</option><option value="profile">Profile</option><option value="settings">Settings</option></select>}
               {!demo && googleAuth?.profile && <div className="mr-1 flex items-center gap-2 rounded-xl bg-neutral-50 py-1.5 pl-1.5 pr-2.5">
                 {googleAuth.profile.avatarUrl ? <img src={googleAuth.profile.avatarUrl} alt="" referrerPolicy="no-referrer" className="h-8 w-8 rounded-full border border-neutral-200 object-cover" /> : <span className="grid h-8 w-8 place-items-center rounded-full bg-orange-100 text-xs font-bold text-orange-800">{(googleAuth.profile.fullName || googleAuth.profile.email || "T").slice(0,1).toUpperCase()}</span>}
                 <span className="hidden max-w-[180px] sm:block"><span className="block truncate text-xs font-semibold text-neutral-800">{googleAuth.profile.fullName || "Your account"}</span><span className="block truncate text-[10px] text-neutral-500">{googleAuth.profile.email}</span></span>
@@ -240,8 +241,8 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           {tab === "pos" && <PointOfSale onManageProducts={() => go("products")} />}
           {tab === "billing" && <SubscriptionBilling businessId={businessId} demo={demo} />}
           {tab === "payments" && <Payments />}
-          {tab === "customers" && <Customers />}
-          {tab === "whatsapp" && <div className="space-y-8"><Chat33Inbox /><section className="space-y-3"><div><h2 className="text-xl font-bold text-neutral-950 dark:text-neutral-100">WhatsApp Business</h2><p className="text-sm text-neutral-500">Separate direct Meta connection. Chat33 currently lists WhatsApp Business as coming soon, so WhatsApp is not yet part of the Chat33 social inbox.</p></div><WhatsAppOutbox /></section></div>}
+          {tab === "customers" && <Customers onOpenCoreFunctions={() => go("functions")} />}
+          {tab === "whatsapp" && <div className="space-y-8"><Chat33Inbox onOpenCoreFunctions={() => go("functions")} /><section className="space-y-3"><div><h2 className="text-xl font-bold text-neutral-950 dark:text-neutral-100">WhatsApp Business</h2><p className="text-sm text-neutral-500">Separate direct Meta connection. Chat33 currently lists WhatsApp Business as coming soon, so WhatsApp is not yet part of the Chat33 social inbox.</p></div><WhatsAppOutbox /></section></div>}
           {tab === "analytics" && <Analytics />}
           {tab === "products" && <Products />}
           {tab === "reports" && <Reports />}
