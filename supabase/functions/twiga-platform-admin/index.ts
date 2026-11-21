@@ -90,23 +90,27 @@ Deno.serve(async (req) => {
       if (vapiError) throw vapiError;
 
       const [{ data: phoneLines, error: phoneError }, { data: recentCalls, error: callsError },
-        { data: auditLogs, error: auditError }, { data: providerConnections, error: providerError }] = await Promise.all([
+        { data: auditLogs, error: auditError }, { data: providerConnections, error: providerError },
+        { data: vaultProviderConnections, error: vaultProviderError }] = await Promise.all([
         admin.from("twiga_phone_lines").select("id,business_id,line_number,provider,inbound_enabled,inbound_status,outbound_enabled,outbound_status,verified_at,updated_at").order("updated_at", { ascending: false }).limit(500),
         admin.from("twiga_call_records").select("id,business_id,provider,direction,status,created_at,duration_seconds").order("created_at", { ascending: false }).limit(100),
         admin.from("twiga_admin_audit_logs").select("id,admin_email,action,resource_type,resource_id,created_at").order("created_at", { ascending: false }).limit(100),
-        admin.from("twiga_business_provider_secret_refs").select("business_id,provider,updated_at").order("updated_at", { ascending: false }).limit(1000),
+        admin.from("twiga_business_provider_secret_refs").select("business_id,provider,secret_last4,updated_at").order("updated_at", { ascending: false }).limit(1000),
+        admin.from("twiga_provider_secret_refs").select("business_id,provider,secret_last4,updated_at").order("updated_at", { ascending: false }).limit(1000),
       ]);
       if (phoneError) throw phoneError;
       if (callsError) throw callsError;
       if (auditError) throw auditError;
       if (providerError) throw providerError;
+      if (vaultProviderError) throw vaultProviderError;
+      const allProviderConnections = [...(providerConnections || []), ...(vaultProviderConnections || [])];
 
       const paidTotal = (payments || []).reduce((n: number, payment: any) => n + Number(payment.amount || 0), 0);
       return reply({
         isAdmin: true, clients, totalClientCount: totalClientCount || clients.length,
         clientsLimit: 500, payments: payments || [], subscriptionIntents: subscriptionIntents || [], tickets: tickets || [], vapiAccounts: vapiAccounts || [],
         phoneLines: phoneLines || [], recentCalls: recentCalls || [], auditLogs: auditLogs || [],
-        providerConnections: providerConnections || [],
+        providerConnections: allProviderConnections,
         metrics: { clientCount: totalClientCount || clients.length, paymentCount: (payments || []).length,
           paidTotalKes: Number(paidTotal.toFixed(2)),
           openTickets: (tickets || []).filter((ticket: any) => ticket.status !== "resolved").length,
