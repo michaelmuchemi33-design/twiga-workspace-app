@@ -109,13 +109,17 @@ export default function Customers({ onOpenCoreFunctions }: { onOpenCoreFunctions
   };
 
   useEffect(() => {
-    void Promise.all([loadCloudContacts(), loadSocialContacts(true)]).catch((error) => setContactsMessage(error instanceof Error ? error.message : "Could not load business contacts."));
+    void loadCloudContacts().catch((error) => setContactsMessage(error instanceof Error ? error.message : "Could not load saved contacts."));
+  }, [loadCloudContacts]);
+
+  useEffect(() => {
+    void loadSocialContacts(true).catch((error) => setContactsMessage(error instanceof Error ? error.message : "Could not load social contacts."));
     // Keep webhook-arriving Chat33 and Meta WhatsApp senders visible while People is open.
     const timer = window.setInterval(() => {
       void loadSocialContacts(false).catch((error) => setContactsMessage(error instanceof Error ? error.message : "Social contacts could not refresh."));
     }, 30000);
     return () => window.clearInterval(timer);
-  }, [loadCloudContacts, loadSocialContacts]);
+  }, [loadSocialContacts]);
 
   const importGoogleContacts = async () => {
     if (demoMode || !supabase || !businessId) { setContactsMessage("Sign in and select a live business workspace to import contacts."); return; }
