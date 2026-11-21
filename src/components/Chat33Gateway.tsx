@@ -37,6 +37,11 @@ export function Chat33QuickPublisher({ compact=false }: { compact?:boolean }) {
   const [caption,setCaption]=useState("");
   const [file,setFile]=useState<File|null>(null);
   const [scheduledAt,setScheduledAt]=useState("");
+  const [youtubeMadeForKids,setYoutubeMadeForKids]=useState<""|"yes"|"no">("");
+  const [youtubePrivacy,setYoutubePrivacy]=useState<"public"|"unlisted"|"private">("public");
+  const [youtubeTitle,setYoutubeTitle]=useState("");
+  const [tiktokPublishMode,setTiktokPublishMode]=useState<"DIRECT_POST"|"MEDIA_UPLOAD">("DIRECT_POST");
+  const [tiktokPrivacy,setTiktokPrivacy]=useState<"PUBLIC_TO_EVERYONE"|"MUTUAL_FOLLOW_FRIENDS"|"SELF_ONLY">("PUBLIC_TO_EVERYONE");
   const [busy,setBusy]=useState(false);
   const [notice,setNotice]=useState("");
   const fileRef=useRef<HTMLInputElement|null>(null);
@@ -59,6 +64,25 @@ export function Chat33QuickPublisher({ compact=false }: { compact?:boolean }) {
     if(!caption.trim()&&!file){setNotice("Add a caption or select a photo/video.");return;}
     const targets=accounts.filter(a=>selected.includes(a.id));
     if(targets.length!==selected.length){setNotice("One or more selected social channels are no longer available. Refresh accounts.");return;}
+    const hasYouTube=targets.some(account=>account.platform.toLowerCase()==="youtube");
+    const hasTikTok=targets.some(account=>account.platform.toLowerCase()==="tiktok");
+    if(hasYouTube&&!file){setNotice("YouTube destinations require a video file.");return;}
+    if(hasYouTube&&!youtubeTitle.trim()&&!caption.trim()){setNotice("Add a YouTube video title or a post caption.");return;}
+    if(hasYouTube&&!youtubeMadeForKids){setNotice("Select whether this YouTube video is made for kids. YouTube requires this declaration.");return;}
+    if(hasTikTok&&!file){setNotice("TikTok destinations require a photo or video.");return;}
+    const platformConfig:Record<string,any>={};
+    if(hasYouTube)platformConfig.youtube={
+      madeForKids:youtubeMadeForKids==="yes",
+      privacyStatus:youtubePrivacy,
+      title:(youtubeTitle.trim()||caption.trim()).slice(0,100),
+      description:caption.trim()
+    };
+    if(hasTikTok)platformConfig.tiktok={
+      text:caption.trim(),
+      consent:tiktokPublishMode==="DIRECT_POST"
+        ? {publishMode:"DIRECT_POST",privacyLevel:tiktokPrivacy,disableComment:false,disableDuet:false,disableStitch:false,aiGenerated:false}
+        : {publishMode:"MEDIA_UPLOAD"}
+    };
     const confirmText=(scheduledAt?"Schedule":"Publish")+" this content to "+targets.map(a=>platformNames[a.platform]||a.platform).join(", ")+":\n\n"+(caption.trim()||"[Media only]")+(scheduledAt?"\n\nScheduled: "+new Date(scheduledAt).toLocaleString():"");
     if(!window.confirm(confirmText))return;
     setBusy(true);setNotice(file?"Uploading media to each selected Chat33 workspace…":"Validating and publishing your post…");
@@ -83,7 +107,8 @@ export function Chat33QuickPublisher({ compact=false }: { compact?:boolean }) {
       const results=await workerRequest(businessId,"/chat33/publish","POST",{
         groups,text:caption.trim(),
         mediaType:file?(file.type.startsWith("video/")?"video":"image"):"",
-        scheduledAt:scheduledAt?new Date(scheduledAt).toISOString():""
+        scheduledAt:scheduledAt?new Date(scheduledAt).toISOString():"",
+        platformConfig
       });
       const failures=(results.results||[]).filter((item:any)=>!item.ok);
       setNotice(failures.length?("Some publishing groups need attention: "+failures.map((item:any)=>"account "+item.slot+": "+item.error).join(" · ")):(scheduledAt?"Your posts were accepted and scheduled by Chat33.":"Chat33 accepted your posts for publishing.") );
@@ -96,7 +121,7 @@ export function Chat33QuickPublisher({ compact=false }: { compact?:boolean }) {
     <Card className="rounded-2xl border-neutral-200 bg-white shadow-sm">
       <CardHeader className="pb-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div><CardTitle className="text-lg font-semibold text-neutral-950">Publish to your socials</CardTitle><CardDescription>One caption and media upload, delivered to the selected Chat33 channels.</CardDescription></div>
+          <div><CardTitle className="text-lg font-semibold text-neutral-950">Publish to your socials</CardTitle><CardDescription>Choose your caption and media once. TWIGA fans the same content out to every selected channel across your connected Chat33 workspaces.</CardDescription></div>
           <Badge className="border-neutral-200 bg-neutral-50 text-neutral-700">{selected.length} selected</Badge>
         </div>
       </CardHeader>
@@ -110,6 +135,20 @@ export function Chat33QuickPublisher({ compact=false }: { compact?:boolean }) {
             </label>)}
           </div>}
         <textarea value={caption} onChange={e=>setCaption(e.target.value)} rows={compact?3:4} placeholder="Write one post caption for your selected social accounts…" className="w-full rounded-xl border border-neutral-200 bg-white p-3 text-sm text-neutral-900 outline-none focus:border-orange-400" />
+        {(accounts.some(account=>selected.includes(account.id)&&account.platform.toLowerCase()==="youtube")||accounts.some(account=>selected.includes(account.id)&&account.platform.toLowerCase()==="tiktok"))&&<div className="grid gap-3 rounded-xl border border-orange-100 bg-orange-50/40 p-4 md:grid-cols-2">
+          {accounts.some(account=>selected.includes(account.id)&&account.platform.toLowerCase()==="youtube")&&<div className="space-y-2">
+            <p className="text-sm font-semibold text-neutral-950">YouTube publishing options</p>
+            <label className="block text-xs font-medium text-neutral-700">Audience declaration (required)<select value={youtubeMadeForKids} onChange={e=>setYoutubeMadeForKids(e.target.value as ""|"yes"|"no")} className="mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"><option value="">Choose one…</option><option value="yes">Made for kids</option><option value="no">Not made for kids</option></select></label>
+            <label className="block text-xs font-medium text-neutral-700">Video visibility<select value={youtubePrivacy} onChange={e=>setYoutubePrivacy(e.target.value as "public"|"unlisted"|"private")} className="mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></label>
+            <label className="block text-xs font-medium text-neutral-700">Video title (optional if caption is filled)<input value={youtubeTitle} onChange={e=>setYoutubeTitle(e.target.value)} maxLength={100} placeholder="YouTube video title" className="mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"/></label>
+          </div>}
+          {accounts.some(account=>selected.includes(account.id)&&account.platform.toLowerCase()==="tiktok")&&<div className="space-y-2">
+            <p className="text-sm font-semibold text-neutral-950">TikTok publishing options</p>
+            <label className="block text-xs font-medium text-neutral-700">Publishing method<select value={tiktokPublishMode} onChange={e=>setTiktokPublishMode(e.target.value as "DIRECT_POST"|"MEDIA_UPLOAD")} className="mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"><option value="DIRECT_POST">Publish directly</option><option value="MEDIA_UPLOAD">Send to TikTok drafts</option></select></label>
+            {tiktokPublishMode==="DIRECT_POST"&&<label className="block text-xs font-medium text-neutral-700">Who can view this post?<select value={tiktokPrivacy} onChange={e=>setTiktokPrivacy(e.target.value as "PUBLIC_TO_EVERYONE"|"MUTUAL_FOLLOW_FRIENDS"|"SELF_ONLY")} className="mt-1.5 h-10 w-full rounded-lg border border-neutral-200 bg-white px-3 text-sm"><option value="PUBLIC_TO_EVERYONE">Everyone</option><option value="MUTUAL_FOLLOW_FRIENDS">Mutual followers</option><option value="SELF_ONLY">Only me</option></select></label>}
+            <p className="text-[11px] leading-5 text-neutral-500">TikTok direct posting requires explicit consent settings. Draft mode uploads the media to TikTok for you to finish there.</p>
+          </div>}
+        </div>}
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-neutral-300 p-3 text-sm font-semibold text-neutral-700 hover:border-orange-400">
             <input ref={fileRef} type="file" accept="image/*,video/*" className="sr-only" onChange={(e:ChangeEvent<HTMLInputElement>)=>setFile(e.target.files?.[0]||null)} />
