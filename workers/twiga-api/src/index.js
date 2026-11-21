@@ -1007,7 +1007,7 @@ async function runBusinessAI(env,businessId,messages,options) {
   const integration=await getPrimaryAiD1(env,businessId);
   if(!integration)return runCloudflareAI(env,messages,options);
   const provider=integration.provider_slug,expected=BUSINESS_AI_ENDPOINTS[provider];
-  const base=String(integration.config&&integration.config.base_url||'').replace(/\\/+$/,'');
+  const base=String(integration.config&&integration.config.base_url||'').replace(/\/+$/,'');
   const apiKey=txt(integration.credentials&&integration.credentials.api_key,500),model=txt(integration.config&&integration.config.model,180);
   if(!expected||base!==expected||!apiKey||!model)throw new Error('BUSINESS_AI_CONFIGURATION_INVALID|Open Connections and repair this business AI model configuration.');
   const headers={Authorization:'Bearer '+apiKey,'Content-Type':'application/json',Accept:'application/json'};
