@@ -31,6 +31,10 @@ export default function PlatformAdminConsole() {
   const [providerValue, setProviderValue] = useState("");
   const [providerSaving, setProviderSaving] = useState(false);
   const [providerStatusMessage, setProviderStatusMessage] = useState("");
+  const [wahaPlatformKey, setWahaPlatformKey] = useState("");
+  const [wahaPlatformKeyLast4, setWahaPlatformKeyLast4] = useState("");
+  const [wahaPlatformKeyConfigured, setWahaPlatformKeyConfigured] = useState(false);
+  const [wahaPlatformBusy, setWahaPlatformBusy] = useState(false);
 
   const callAdmin = useCallback(async (action: string, payload: Row = {}) => {
     if (!supabase) throw new Error("TWIGA is not connected to Supabase.");
@@ -84,6 +88,34 @@ export default function PlatformAdminConsole() {
       .catch((cause) => { if (active) setProviderStatusMessage(cause instanceof Error ? cause.message : "Provider status could not be loaded."); });
     return () => { active = false; };
   }, [allowed, selectedBusinessId, callPlatformSecrets]);
+
+  useEffect(() => {
+    let active = true;
+    if (!allowed) return;
+    void callPlatformSecrets("waha.platform.status")
+      .then((data) => {
+        if (!active) return;
+        setWahaPlatformKeyConfigured(data.keyConfigured === true);
+        setWahaPlatformKeyLast4(String(data.keyLast4 || ""));
+      })
+      .catch((cause) => { if (active) setProviderStatusMessage(cause instanceof Error ? cause.message : "WAHA platform status could not be loaded."); });
+    return () => { active = false; };
+  }, [allowed,callPlatformSecrets]);
+
+  const saveWahaPlatformKey = async () => {
+    if (!wahaPlatformKey.trim()) return;
+    setWahaPlatformBusy(true);
+    setProviderStatusMessage("");
+    try {
+      const result = await callPlatformSecrets("waha.platform.save",{apiKey:wahaPlatformKey.trim()});
+      setWahaPlatformKey("");
+      setWahaPlatformKeyConfigured(true);
+      setWahaPlatformKeyLast4(String(result.keyLast4 || ""));
+      setProviderStatusMessage(result.message || "WAHA platform key saved.");
+    } catch (cause) {
+      setProviderStatusMessage(cause instanceof Error ? cause.message : "WAHA platform key could not be saved.");
+    } finally { setWahaPlatformBusy(false); }
+  };
 
   const saveBusinessProvider = async () => {
     if (!selectedBusinessId || !providerValue.trim()) return;
@@ -278,6 +310,21 @@ export default function PlatformAdminConsole() {
         <div className="mt-4 border-t border-neutral-100 pt-3"><p className="text-xs font-semibold text-neutral-700">Record an already verified offline payment</p><label className="mt-2 block text-xs text-neutral-600">Amount (KES)<input type="number" min="1" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label><label className="mt-2 block text-xs text-neutral-600">Method<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-2 text-sm"><option value="mpesa">M-Pesa</option><option value="bank">Bank</option><option value="cash">Cash</option><option value="card">Card</option><option value="other">Other</option></select></label><label className="mt-2 block text-xs text-neutral-600">Verified payment reference<input value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} placeholder="M-Pesa / bank reference" className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label><label className="mt-2 block text-xs text-neutral-600">Notes<input value={paymentNotes} onChange={(event) => setPaymentNotes(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label><button onClick={() => void recordPayment()} disabled={busy || !selectedBusinessId || !paymentReference.trim()} className="mt-3 w-full rounded-lg bg-orange-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Record verified payment & update access</button></div>
       </div>
     </div>
+
+    <section className="rounded-xl border border-neutral-200 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wide text-orange-600">Platform service</p>
+          <h3 className="mt-1 font-semibold text-neutral-950">WAHA internal service key</h3>
+          <p className="mt-1 text-xs leading-5 text-neutral-500">One private API key for TWIGA's WAHA Containers. This is separate from each business's own R2 bucket credentials.</p>
+        </div>
+        <span className={"rounded-full px-3 py-1.5 text-xs font-semibold "+(wahaPlatformKeyConfigured?"bg-orange-50 text-orange-800":"bg-neutral-100 text-neutral-700")}>{wahaPlatformKeyConfigured?"Configured · •••• "+wahaPlatformKeyLast4:"Not configured"}</span>
+      </div>
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+        <input type="password" autoComplete="new-password" value={wahaPlatformKey} onChange={(event)=>setWahaPlatformKey(event.target.value)} placeholder={wahaPlatformKeyConfigured?"Enter a new key to rotate the current one":"Create or enter the WAHA internal service key"} className="h-11 min-w-0 flex-1 rounded-xl border border-neutral-200 px-3 text-sm"/>
+        <button onClick={()=>void saveWahaPlatformKey()} disabled={!wahaPlatformKey.trim()||wahaPlatformBusy} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{wahaPlatformBusy?"Saving…":"Save platform key"}</button>
+      </div>
+    </section>
 
     <section className="rounded-xl border border-neutral-200 bg-white p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
