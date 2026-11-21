@@ -26,10 +26,23 @@ export default function PlatformAdminConsole() {
   const [ticketDetail, setTicketDetail] = useState<Row | null>(null);
   const [ticketReply, setTicketReply] = useState("");
   const [ticketBusy, setTicketBusy] = useState(false);
+  const [businessProviders, setBusinessProviders] = useState<Row[]>([]);
+  const [providerChoice, setProviderChoice] = useState("waha_r2_bucket");
+  const [providerValue, setProviderValue] = useState("");
+  const [providerSaving, setProviderSaving] = useState(false);
+  const [providerStatusMessage, setProviderStatusMessage] = useState("");
 
   const callAdmin = useCallback(async (action: string, payload: Row = {}) => {
     if (!supabase) throw new Error("TWIGA is not connected to Supabase.");
     const { data, error: invokeError } = await supabase.functions.invoke("twiga-platform-admin", { body: { action, ...payload } });
+    if (invokeError) throw new Error(invokeError.message);
+    if (data?.error) throw new Error(String(data.error));
+    return data || {};
+  }, []);
+
+  const callPlatformSecrets = useCallback(async (action: string, payload: Row = {}) => {
+    if (!supabase) throw new Error("TWIGA is not connected to Supabase.");
+    const { data, error: invokeError } = await supabase.functions.invoke("twiga-platform-secrets", { body: { action, ...payload } });
     if (invokeError) throw new Error(invokeError.message);
     if (data?.error) throw new Error(String(data.error));
     return data || {};
@@ -62,6 +75,36 @@ export default function PlatformAdminConsole() {
   const providerConnections: Row[] = overview.providerConnections || [];
   const auditLogs: Row[] = overview.auditLogs || [];
   const selectedClient = useMemo(() => clients.find((client) => client.id === selectedBusinessId), [clients, selectedBusinessId]);
+
+  useEffect(() => {
+    let active = true;
+    if (!allowed || !selectedBusinessId) { setBusinessProviders([]); return; }
+    void callPlatformSecrets("business.providers.status", { businessId: selectedBusinessId })
+      .then((data) => { if (active) setBusinessProviders(Array.isArray(data.providers) ? data.providers : []); })
+      .catch((cause) => { if (active) setProviderStatusMessage(cause instanceof Error ? cause.message : "Provider status could not be loaded."); });
+    return () => { active = false; };
+  }, [allowed, selectedBusinessId, callPlatformSecrets]);
+
+  const saveBusinessProvider = async () => {
+    if (!selectedBusinessId || !providerValue.trim()) return;
+    setProviderSaving(true);
+    setProviderStatusMessage("");
+    try {
+      const result = await callPlatformSecrets("business.provider.save", {
+        businessId: selectedBusinessId,
+        provider: providerChoice,
+        secret: providerValue.trim(),
+      });
+      setProviderValue("");
+      setProviderStatusMessage(result.message || "Provider setting assigned.");
+      const status = await callPlatformSecrets("business.providers.status", { businessId: selectedBusinessId });
+      setBusinessProviders(Array.isArray(status.providers) ? status.providers : []);
+    } catch (cause) {
+      setProviderStatusMessage(cause instanceof Error ? cause.message : "Provider setting could not be saved.");
+    } finally {
+      setProviderSaving(false);
+    }
+  };
 
   useEffect(() => {
     if (!selectedClient) return;
@@ -235,6 +278,39 @@ export default function PlatformAdminConsole() {
         <div className="mt-4 border-t border-neutral-100 pt-3"><p className="text-xs font-semibold text-neutral-700">Record an already verified offline payment</p><label className="mt-2 block text-xs text-neutral-600">Amount (KES)<input type="number" min="1" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label><label className="mt-2 block text-xs text-neutral-600">Method<select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-2 text-sm"><option value="mpesa">M-Pesa</option><option value="bank">Bank</option><option value="cash">Cash</option><option value="card">Card</option><option value="other">Other</option></select></label><label className="mt-2 block text-xs text-neutral-600">Verified payment reference<input value={paymentReference} onChange={(event) => setPaymentReference(event.target.value)} placeholder="M-Pesa / bank reference" className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label><label className="mt-2 block text-xs text-neutral-600">Notes<input value={paymentNotes} onChange={(event) => setPaymentNotes(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label><button onClick={() => void recordPayment()} disabled={busy || !selectedBusinessId || !paymentReference.trim()} className="mt-3 w-full rounded-lg bg-orange-500 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-40">Record verified payment & update access</button></div>
       </div>
     </div>
+
+    <section className="rounded-xl border border-neutral-200 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wide text-orange-600">Secure workspace configuration</p>
+          <h3 className="mt-1 font-semibold text-neutral-950">Assign providers to {selectedClient?.name || "selected business"}</h3>
+          <p className="mt-1 max-w-3xl text-xs leading-5 text-neutral-500">Each business gets its own encrypted provider references and R2 session bucket. Values are written to Supabase Vault; owners see only connection status and masked last four characters.</p>
+        </div>
+        <span className="rounded-full bg-neutral-100 px-3 py-1.5 text-xs font-semibold text-neutral-700">{businessProviders.length} assigned settings</span>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-[1fr_1.3fr_auto]">
+        <select value={providerChoice} onChange={(event) => setProviderChoice(event.target.value)} className="h-11 rounded-xl border border-neutral-200 bg-white px-3 text-sm">
+          <option value="waha_r2_bucket">WAHA · R2 bucket name</option>
+          <option value="waha_r2_access_key_id">WAHA · R2 access key ID</option>
+          <option value="waha_r2_secret_access_key">WAHA · R2 secret access key</option>
+          <option value="sautikit">SautiKit · business API key</option>
+          <option value="palpluss">PalPluss · business API key</option>
+          <option value="aisensy_project_api_key">AiSensy · Project API key</option>
+          <option value="aisensy_campaign_api_key">AiSensy · Campaign API key</option>
+        </select>
+        <input type={providerChoice === "waha_r2_bucket" ? "text" : "password"} autoComplete="new-password" value={providerValue} onChange={(event) => setProviderValue(event.target.value)} placeholder={providerChoice === "waha_r2_bucket" ? "e.g. twiga-wa-business-01" : "Paste credential here; it will not be displayed again"} className="h-11 min-w-0 rounded-xl border border-neutral-200 px-3 text-sm" />
+        <button onClick={() => void saveBusinessProvider()} disabled={!selectedBusinessId || !providerValue.trim() || providerSaving} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{providerSaving ? "Saving…" : "Assign securely"}</button>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {businessProviders.map((provider) => <div key={provider.provider} className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+          <p className="text-xs font-semibold text-neutral-800">{String(provider.provider).replace(/_/g," ")}</p>
+          <p className="mt-1 text-xs text-neutral-500">Vault · •••• {provider.secret_last4 || "saved"} · {provider.updated_at ? date(provider.updated_at) : "Assigned"}</p>
+        </div>)}
+        {!businessProviders.length && <p className="text-xs text-neutral-500">No per-business provider settings assigned yet.</p>}
+      </div>
+      {providerStatusMessage && <p role="status" className="mt-3 rounded-lg bg-neutral-50 p-3 text-sm text-neutral-700">{providerStatusMessage}</p>}
+      <p className="mt-3 text-[11px] leading-5 text-neutral-500">For WAHA, assign a separate R2 bucket plus bucket-scoped access key and secret to each business. The WAHA container receives those values only at startup; they are never returned to the browser.</p>
+    </section>
 
     <div className="grid gap-5 xl:grid-cols-2">
       <div className="rounded-xl border border-neutral-200 p-4">
