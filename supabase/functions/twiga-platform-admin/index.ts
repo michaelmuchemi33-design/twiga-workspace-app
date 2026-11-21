@@ -119,6 +119,85 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (action === "save_business_provider_secret") {
+      const businessId = String(payload.businessId || "").trim();
+      const provider = String(payload.provider || "").trim().toLowerCase();
+      const apiKey = String(payload.apiKey || "").trim();
+      if (!/^[0-9a-f-]{36}$/i.test(businessId)) return reply({ error: "Select a valid business workspace first." }, 400);
+      if (!["sautikit", "palpluss"].includes(provider)) return reply({ error: "Choose a supported business provider." }, 400);
+      if (apiKey.length < 20 || apiKey.length > 4000) return reply({ error: "Enter a valid provider API key." }, 400);
+
+      const { data: business, error: businessError } = await admin.from("businesses")
+        .select("id,name").eq("id", businessId).maybeSingle();
+      if (businessError) throw businessError;
+      if (!business) return reply({ error: "The selected business workspace was not found." }, 404);
+
+      let keyLast4 = "";
+      let validation: Record<string, unknown> = {};
+      if (provider === "sautikit") {
+        const request = async (path: string) => {
+          const response = await fetch("https://api.sautikit.com" + path, {
+            headers: { Authorization: "Bearer " + apiKey, Accept: "application/json" },
+            signal: AbortSignal.timeout(20000),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            const detail = String(data?.error?.message || data?.message || "SautiKit rejected the API key.");
+            throw new Error(response.status === 401 ? "SautiKit rejected this API key. Check the business workspace key." : detail.slice(0, 220));
+          }
+          return data;
+        };
+        const [models, numbers, agents] = await Promise.all([
+          request("/v1/models"), request("/v1/numbers"), request("/v1/agents"),
+        ]);
+        const modelCount = Array.isArray(models?.data) ? models.data.length : 0;
+        if (!modelCount) return reply({ error: "The SautiKit key authenticated but has no voice models. Check its workspace access and key scopes." }, 409);
+        const { data, error } = await admin.rpc("twiga_set_business_provider_secret", {
+          p_business_id: businessId, p_provider: "sautikit", p_secret: apiKey, p_updated_by: user.id,
+        });
+        if (error) throw error;
+        keyLast4 = String(data || "");
+        validation = {
+          models: modelCount,
+          numbers: Array.isArray(numbers?.data) ? numbers.data.length : 0,
+          agents: Array.isArray(agents?.data) ? agents.data.length : 0,
+        };
+      } else {
+        if (apiKey.length > 500) return reply({ error: "The PalPluss API key is too long." }, 400);
+        const response = await fetch("https://api.palpluss.com/v1/wallets/service/balance", {
+          headers: { Authorization: "Basic " + btoa(apiKey + ":"), Accept: "application/json" },
+          signal: AbortSignal.timeout(20000),
+        });
+        if (!response.ok) return reply({
+          error: response.status === 401
+            ? "PalPluss rejected this API key. Check the key and account."
+            : "Could not validate the PalPluss business account (HTTP " + response.status + ").",
+        }, 400);
+        const { data, error } = await admin.rpc("twiga_set_palpluss_secret", {
+          p_business_id: businessId, p_secret: apiKey, p_updated_by: user.id,
+        });
+        if (error) throw error;
+        keyLast4 = String(data || "");
+        validation = { accountValidated: true };
+      }
+
+      await admin.from("twiga_admin_audit_logs").insert({
+        admin_email: user.email || "unknown",
+        action: "business_provider_secret.saved",
+        resource_type: "business",
+        resource_id: businessId,
+        metadata: { provider, key_last4: keyLast4, validation },
+      });
+      return reply({
+        saved: true,
+        business: { id: business.id, name: business.name },
+        provider,
+        keyLast4,
+        validation,
+        message: (provider === "sautikit" ? "SautiKit workspace key validated and saved" : "PalPluss business key validated and saved") + " in encrypted Supabase Vault for " + business.name + ".",
+      });
+    }
+
     if (action === "ai_prompt_setup") {
       const businessId = String(payload.businessId || "").trim();
       const prompt = String(payload.prompt || "").trim().slice(0, 10000);
