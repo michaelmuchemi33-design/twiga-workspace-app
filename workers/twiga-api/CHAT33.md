@@ -9,7 +9,7 @@ TWIGA uses Chat33 as its optional social media gateway. Each business can connec
 3. Grant the scopes required for the features that business wants:
    - Posting: `accounts:read`, `posts:read`, `posts:write`, `media:write`.
    - Inbox: `inbox:read`, `inbox:write`.
-   - Comments, if enabled in the Chat33 account: `comments:read`, `comments:write`.
+   - Comment scopes are not required for this TWIGA release; comment reading/replies are not yet integrated into the TWIGA inbox.
 4. Connect the business's social profiles in Chat33 under its channel connections.
 5. Paste the API key into one of the three business slots in TWIGA. Keys are saved by the Worker as encrypted, business-scoped credentials in Cloudflare D1.
 6. To stream new Instagram/Facebook Messenger DMs into TWIGA immediately, configure the Chat33 message webhook at `https://twiga-api.twiga-ke.workers.dev/chat33/webhook` in Chat33 Settings → API Keys → Message webhook. Save the Chat33 signing secret in the matching TWIGA slot.
