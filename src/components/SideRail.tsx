@@ -50,7 +50,7 @@ const groups: { title: string; items: TabDef[] }[] = [
     title: "People",
     items: [
       { id: "customers", label: "People", icon: IconUsers },
-      { id: "whatsapp", label: "Inbox", icon: IconChat },
+      { id: "whatsapp", label: "WhatsApp", icon: IconChat },
     ],
   },
   {
