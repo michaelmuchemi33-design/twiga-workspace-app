@@ -129,14 +129,13 @@ Deno.serve(async (req) => {
       const apiKey = String(payload.apiKey || "").trim();
       if (!/^[0-9a-f-]{36}$/i.test(businessId)) return reply({ error: "Select a valid business workspace first." }, 400);
       if (!["sautikit", "palpluss"].includes(provider)) return reply({ error: "Choose a supported business provider." }, 400);
-      if (apiKey.length < 20 || apiKey.length > 4000) return reply({ error: "Enter a valid provider API key." }, 400);
+      if (apiKey.length < 20 || apiKey.length > 500) return reply({ error: "Enter a valid provider API key." }, 400);
 
       const { data: business, error: businessError } = await admin.from("businesses")
         .select("id,name").eq("id", businessId).maybeSingle();
       if (businessError) throw businessError;
       if (!business) return reply({ error: "The selected business workspace was not found." }, 404);
 
-      let keyLast4 = "";
       let validation: Record<string, unknown> = {};
       if (provider === "sautikit") {
         const request = async (path: string) => {
@@ -156,18 +155,12 @@ Deno.serve(async (req) => {
         ]);
         const modelCount = Array.isArray(models?.data) ? models.data.length : 0;
         if (!modelCount) return reply({ error: "The SautiKit key authenticated but has no voice models. Check its workspace access and key scopes." }, 409);
-        const { data, error } = await admin.rpc("twiga_set_business_provider_secret", {
-          p_business_id: businessId, p_provider: "sautikit", p_secret: apiKey, p_updated_by: user.id,
-        });
-        if (error) throw error;
-        keyLast4 = String(data || "");
         validation = {
           models: modelCount,
           numbers: Array.isArray(numbers?.data) ? numbers.data.length : 0,
           agents: Array.isArray(agents?.data) ? agents.data.length : 0,
         };
       } else {
-        if (apiKey.length > 500) return reply({ error: "The PalPluss API key is too long." }, 400);
         const response = await fetch("https://api.palpluss.com/v1/wallets/service/balance", {
           headers: { Authorization: "Basic " + btoa(apiKey + ":"), Accept: "application/json" },
           signal: AbortSignal.timeout(20000),
@@ -177,28 +170,56 @@ Deno.serve(async (req) => {
             ? "PalPluss rejected this API key. Check the key and account."
             : "Could not validate the PalPluss business account (HTTP " + response.status + ").",
         }, 400);
-        const { data, error } = await admin.rpc("twiga_set_palpluss_secret", {
-          p_business_id: businessId, p_secret: apiKey, p_updated_by: user.id,
-        });
-        if (error) throw error;
-        keyLast4 = String(data || "");
         validation = { accountValidated: true };
       }
 
-      await admin.from("twiga_admin_audit_logs").insert({
+      const { data: workerSecret, error: workerSecretError } = await admin.rpc("twiga_get_worker_internal_secret");
+      if (workerSecretError || !workerSecret) throw new Error("The Cloudflare integration service is not linked to TWIGA yet.");
+      const workerResponse = await fetch("https://twiga-api.twiga-ke.workers.dev/internal/integrations", {
+        method: "POST",
+        headers: {
+          "x-twiga-worker-secret": String(workerSecret),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "save",
+          businessId,
+          provider,
+          displayName: business.name + " · " + (provider === "sautikit" ? "SautiKit" : "PalPluss"),
+          integrationType: provider === "sautikit" ? "voice" : "payments",
+          credentials: { api_key: apiKey },
+          config: {},
+          status: "verified",
+          lastTestMessage: provider === "sautikit" ? "SautiKit workspace validated by a TWIGA platform administrator." : "PalPluss account validated by a TWIGA platform administrator.",
+          actorUserId: user.id,
+          actorRole: "platform_admin",
+          assistedByAdmin: true,
+          assistanceNote: "TWIGA administrator assisted the business during onboarding.",
+        }),
+      });
+      const workerResult = await workerResponse.json().catch(() => ({}));
+      if (!workerResponse.ok || workerResult?.ok !== true) {
+        console.error("Cloudflare business provider save failed", workerResult?.error || workerResponse.status);
+        throw new Error(String(workerResult?.error || "The key validated but could not be saved in this business's Cloudflare workspace."));
+      }
+      const keyLast4 = apiKey.slice(-4);
+
+      const { error: auditError } = await admin.from("twiga_admin_audit_logs").insert({
         admin_email: user.email || "unknown",
         action: "business_provider_secret.saved",
         resource_type: "business",
         resource_id: businessId,
-        metadata: { provider, key_last4: keyLast4, validation },
+        metadata: { provider, key_last4: keyLast4, validation, storage: "cloudflare_d1" },
       });
+      if (auditError) console.warn("Provider audit mirror failed", auditError.message);
+
       return reply({
         saved: true,
         business: { id: business.id, name: business.name },
         provider,
         keyLast4,
         validation,
-        message: (provider === "sautikit" ? "SautiKit workspace key validated and saved" : "PalPluss business key validated and saved") + " in encrypted Supabase Vault for " + business.name + ".",
+        message: (provider === "sautikit" ? "SautiKit workspace key validated and saved" : "PalPluss business key validated and saved") + " in encrypted Cloudflare D1 for " + business.name + ".",
       });
     }
 
