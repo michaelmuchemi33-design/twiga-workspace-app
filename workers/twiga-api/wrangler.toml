@@ -17,9 +17,9 @@ binding = "AI"
 name = "BUSINESS_AGENT"
 class_name = "BusinessAgent"
 
-[exports.BusinessAgent]
-type = "durable-object"
-storage = "sqlite"
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BusinessAgent"]
 
 [triggers]
 crons = ["* * * * *"]
