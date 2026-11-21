@@ -106,7 +106,11 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const saveVoice = async (selectedVoice: "Woman" | "Man" = voice) => {
     voiceTouched.current = true;
     setVoice(selectedVoice);
-    if (!supabase || !businessId || demo) {
+    if (demo) {
+      setMessage((selectedVoice === "Woman" ? "Female" : "Male") + " voice selected for this demo. Live calling is disabled in the sample workspace.");
+      return;
+    }
+    if (!supabase || !businessId) {
       setError("Sign in to save a business voice.");
       return;
     }
