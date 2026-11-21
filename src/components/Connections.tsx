@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import BringYourOwnAPI from "@/components/BringYourOwnAPI";
 
 const items = [
   { key: "calendar", title: "Google Calendar", detail: "Read and create appointments.", action: "calendar.list" },
@@ -337,6 +338,7 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
       </div>
       {!businessId && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Create or select a business in AI Setup first.</p>}
     </header>
+    <BringYourOwnAPI businessId={businessId} demo={demo} />
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <h2 className="text-lg font-semibold text-neutral-950">Google permissions</h2><p className="mt-1 text-sm text-neutral-500">Approve access in Google. You can revoke it from your Google Account at any time.</p>
       <div className="mt-4 divide-y divide-neutral-100">
@@ -417,11 +419,11 @@ export default function Connections({ businessId, demo = false, googleAuth }: { 
 
     <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Payments · business workspace</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">PalPluss · M-Pesa & payment tools</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Connect this business's PalPluss account, manage its Paylink and collection channels, check transactions and send a customer payment prompt when authorised.</p></div>
+        <div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700">Payments · business workspace</p><h2 className="mt-1 text-xl font-semibold text-neutral-950">PalPluss · M-Pesa & payment tools</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Connect this business's own PalPluss account or use a TWIGA-managed shared account. Manage its Paylink and collection channels, check transactions and send a customer payment prompt when authorised.</p></div>
         <span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${palplussConfig.keyConfigured ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600"}`}>{palplussConfig.keyConfigured ? (palplussConfig.keySource === "business" ? "Business account connected" : "Platform account available") : "Credential needed"}</span>
       </div>
       <div className="mt-4 rounded-xl border border-orange-100 bg-orange-50 p-3 text-xs leading-5 text-orange-950">
-        <strong>Shared provider account:</strong> the TWIGA platform administrator connects the PalPluss API key once in Profile → Platform settings. This business only manages its own public Paylink ID, registered Till/Paybill channels, and payment records. Private credentials are never entered by customer accounts.
+        <strong>Business-owned or shared connection:</strong> connect this business's own PalPluss API key or Base64 Basic Authorization in the secure BYOK section above. TWIGA also supports a centrally managed account when one has been assigned. Credentials are masked after saving and kept in encrypted Supabase Vault.
       </div>
       {palplussConfig.keyConfigured && <p className="mt-3 text-xs text-neutral-500">Shared PalPluss account connected · managed by TWIGA{palplussConfig.keyLast4 ? " · •••• " + palplussConfig.keyLast4 : ""}.</p>}
       {!palplussConfig.keyConfigured && <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">The central PalPluss API key has not been connected yet. Ask the TWIGA platform administrator to configure it in Profile.</p>}
