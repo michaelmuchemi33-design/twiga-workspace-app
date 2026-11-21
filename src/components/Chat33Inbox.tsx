@@ -29,7 +29,7 @@ function timestamp(c:Conversation){return String(c.lastMessageAt||c.last_message
 function normalMessage(m:ChatMessage){return String(m.text||m.body||m.message||m.content||m.caption||"");}
 function outgoing(m:ChatMessage){return m.fromMe===true||m.isOutgoing===true||m.direction==="outbound"||m.direction==="outgoing"||m.sender==="business";}
 
-export default function Chat33Inbox(){
+export default function Chat33Inbox({ onOpenCoreFunctions }: { onOpenCoreFunctions?: () => void }) {
   const {businessId,demoMode}=useStore();
   const [conversations,setConversations]=useState<Conversation[]>([]);
   const [selected,setSelected]=useState<Conversation|null>(null);
@@ -69,6 +69,11 @@ export default function Chat33Inbox(){
     finally{setMessagesLoading(false);}
   },[businessId]);
   useEffect(()=>{void refresh();},[refresh]);
+  useEffect(()=>{
+    // Keep conversations from all three Chat33 workspaces and official Meta WhatsApp current.
+    const timer=window.setInterval(()=>{void refresh();},30000);
+    return ()=>window.clearInterval(timer);
+  },[refresh]);
   useEffect(()=>{if(selected)void loadMessages(selected);else setMessages([]);},[selected,loadMessages]);
   const filtered=useMemo(()=>conversations.filter(c=>filter==="all"||(c.platform||c.channel?.platform||"").toLowerCase()===filter),[conversations,filter]);
   const send=async()=>{
@@ -86,8 +91,8 @@ export default function Chat33Inbox(){
   const availablePlatforms=Array.from(new Set(conversations.map(c=>String(c.platform||c.channel?.platform||"").toLowerCase()).filter(Boolean)));
   return <div className="space-y-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Unified social inbox</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Inbox</h1><p className="mt-1 text-sm text-neutral-500">Social conversations from all connected Chat33 workspaces, plus the separate official Meta WhatsApp connection for this business.</p></div>
-      <div className="flex items-center gap-2"><Badge className="border-neutral-200 bg-neutral-50 text-neutral-700">{conversations.length} conversations</Badge><Button variant="outline" onClick={()=>void refresh()} disabled={loading}>{loading?"Refreshing…":"Refresh inbox"}</Button></div>
+      <div><p className="text-xs font-semibold uppercase tracking-widest text-orange-600">Unified social inbox</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-neutral-950">Unified Inbox</h1><p className="mt-1 text-sm text-neutral-500">Social conversations from all connected Chat33 workspaces, plus the separate official Meta WhatsApp connection for this business.</p></div>
+      <div className="flex flex-wrap items-center gap-2"><Badge className="border-neutral-200 bg-neutral-50 text-neutral-700">{conversations.length} conversations</Badge>{onOpenCoreFunctions&&<Button variant="outline" onClick={onOpenCoreFunctions}>Manage social accounts</Button>}<Button variant="outline" onClick={()=>void refresh()} disabled={loading}>{loading?"Refreshing…":"Refresh inbox"}</Button></div>
     </div>
     <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-950">
       Chat33’s documented DM inbox currently covers Instagram and Facebook Messenger. This Inbox also merges TWIGA’s separate official Meta WhatsApp Business conversations when that number is connected. Publishing supports more social networks, but TikTok DMs and every social network’s inbox are not available through Chat33 at present.
