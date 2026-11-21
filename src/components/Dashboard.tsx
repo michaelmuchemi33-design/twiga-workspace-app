@@ -12,6 +12,32 @@ import { supabase } from "@/lib/supabase";
 import { useStore, type TaskStatus } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import AnimatedNumber from "@/components/AnimatedNumber";
+
+
+type WorkerTask = { id: string; title: string; detail: string; status: string; priority: string; };
+type WorkerNotification = { id: string; title: string; body: string; created_at: string; priority: string; };
+type WorkerOverview = {
+  worker: { enabled: boolean; schedule: string; nextReviewAt?: string | null; lastReviewAt?: string | null; };
+  tasks: WorkerTask[];
+  notifications: WorkerNotification[];
+  counts: { needsReview: number; failed: number; };
+};
+
+async function businessWorkerRequest(businessId: string, action: string, extra: Record<string, unknown> = {}) {
+  if (!supabase) throw new Error("TWIGA is not connected.");
+  const session = await supabase.auth.getSession();
+  const token = session.data.session?.access_token;
+  if (!token) throw new Error("Sign in again to use your business Worker.");
+  const response = await fetch("https://twiga-api.twiga-ke.workers.dev/ai/worker", {
+    method: "POST",
+    headers: {"Content-Type":"application/json", "Authorization":"Bearer " + token},
+    body: JSON.stringify({action:action,business_id:businessId,token:token,...extra})
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.ok === false) throw new Error(String(result.error || "The business Worker could not respond."));
+  return result;
+}
+
 import {
   IconSparkle,
   IconPhone,
@@ -75,6 +101,11 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
   } = useStore();
   const [ownerName, setOwnerName] = useState("");
   const [billingReminder, setBillingReminder] = useState<{ paid_through?: string | null; current_period_end?: string | null; status?: string } | null>(null);
+  const [workerOverview, setWorkerOverview] = useState<WorkerOverview | null>(null);
+  const [workerLoading, setWorkerLoading] = useState(true);
+  const [workerRunning, setWorkerRunning] = useState(false);
+  const [workerError, setWorkerError] = useState("");
+
 
   useEffect(() => {
     if (false || !supabase || !businessId) return;
@@ -107,6 +138,49 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
     });
     return () => { active = false; };
   }, [businessId]);
+
+
+  useEffect(() => {
+    let active = true;
+    if (!businessId) { setWorkerOverview(null); setWorkerLoading(false); return; }
+    const refresh = () => {
+      businessWorkerRequest(businessId, "overview")
+        .then((result) => { if (active) setWorkerOverview(result as WorkerOverview); })
+        .catch((error) => { if (active) setWorkerError(error instanceof Error ? error.message : "Worker status could not be loaded."); })
+        .finally(() => { if (active) setWorkerLoading(false); });
+    };
+    setWorkerLoading(true);
+    setWorkerError("");
+    refresh();
+    const refreshInterval = window.setInterval(refresh, 60_000);
+    return () => { active = false; window.clearInterval(refreshInterval); };
+  }, [businessId]);
+
+  const runBusinessWorkerReview = async () => {
+    if (!businessId || workerRunning) return;
+    setWorkerRunning(true);
+    setWorkerError("");
+    try {
+      await businessWorkerRequest(businessId, "run_review");
+      const result = await businessWorkerRequest(businessId, "overview");
+      setWorkerOverview(result as WorkerOverview);
+    } catch (error) {
+      setWorkerError(error instanceof Error ? error.message : "The Worker review failed.");
+    } finally {
+      setWorkerRunning(false);
+    }
+  };
+
+  const resolveWorkerTask = async (taskId: string) => {
+    if (!businessId) return;
+    try {
+      await businessWorkerRequest(businessId, "resolve_task", {task_id:taskId});
+      const result = await businessWorkerRequest(businessId, "overview");
+      setWorkerOverview(result as WorkerOverview);
+    } catch (error) {
+      setWorkerError(error instanceof Error ? error.message : "The task could not be updated.");
+    }
+  };
 
   const renewalDeadline = billingReminder?.current_period_end
     ? new Date(billingReminder.current_period_end).getTime()
@@ -185,6 +259,63 @@ export default function Dashboard({ onSetup, onPayments }: { onSetup: () => void
           </button>
         </div>
       </div>
+
+      <Card className="rounded-2xl border-neutral-200 bg-white shadow-sm">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+              <IconSparkle className="h-5 w-5 text-orange-500" /> TWIGA Worker
+              <Badge className="border-0 bg-orange-50 text-orange-800">{workerLoading ? "Checking" : workerOverview?.worker.enabled ? "On" : "Paused"}</Badge>
+            </CardTitle>
+            <CardDescription>Checks this business, prepares useful tasks and brings important work to your workspace.</CardDescription>
+          </div>
+          <Button onClick={() => void runBusinessWorkerReview()} disabled={workerLoading || workerRunning || !businessId} className="bg-neutral-950 text-white hover:bg-neutral-800">
+            {workerRunning ? "Reviewing…" : "Run review now"}
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <div className="rounded-xl bg-neutral-50 px-3 py-2.5">
+              <p className="text-xs text-neutral-500">Needs your review</p>
+              <p className="text-xl font-semibold text-neutral-950">{workerOverview?.counts.needsReview ?? "—"}</p>
+            </div>
+            <div className="rounded-xl bg-neutral-50 px-3 py-2.5">
+              <p className="text-xs text-neutral-500">Worker errors</p>
+              <p className="text-xl font-semibold text-neutral-950">{workerOverview?.counts.failed ?? "—"}</p>
+            </div>
+            <div className="rounded-xl bg-neutral-50 px-3 py-2.5">
+              <p className="text-xs text-neutral-500">Schedule</p>
+              <p className="mt-1 text-sm font-semibold text-neutral-950">Every minute</p>
+              <p className="text-[11px] text-neutral-500">Up to 50 workspaces · 10 tasks each</p>
+            </div>
+          </div>
+          {workerOverview?.notifications?.length ? (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Latest update</p>
+              <div className="rounded-xl border border-orange-100 bg-orange-50/60 p-3">
+                <p className="text-sm font-semibold text-neutral-950">{workerOverview.notifications[0].title}</p>
+                <p className="mt-1 text-sm leading-5 text-neutral-700">{workerOverview.notifications[0].body}</p>
+              </div>
+            </div>
+          ) : <p className="text-sm text-neutral-500">{workerLoading ? "Checking the business Worker…" : "No new updates yet. TWIGA will add a note when it finds something useful."}</p>}
+          {workerOverview?.tasks?.length ? (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Work waiting for you</p>
+              {workerOverview.tasks.slice(0,3).map((task) => (
+                <div key={task.id} className="flex flex-col gap-2 rounded-xl border border-neutral-200 p-3 sm:flex-row sm:items-center">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-neutral-950">{task.title}</p>
+                    <p className="mt-0.5 text-xs leading-5 text-neutral-600">{task.detail}</p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => void resolveWorkerTask(task.id)} className="border-neutral-300 text-neutral-800">Mark reviewed</Button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {workerError && <p role="alert" className="rounded-lg bg-neutral-50 px-3 py-2 text-xs text-red-700">{workerError}</p>}
+          <p className="text-[11px] leading-5 text-neutral-500">Cloudflare runs scheduled jobs and wakes this workspace’s Worker when work is due. Customer calls, messages, payments and purchases remain approval-controlled.</p>
+        </CardContent>
+      </Card>
 
       {renewalDaysLeft !== null && renewalDaysLeft <= 7 && (
         <div className={cn("flex flex-col gap-3 rounded-2xl border p-4 sm:flex-row sm:items-center sm:justify-between", renewalDaysLeft < 0 ? "border-red-200 bg-red-50" : "border-orange-200 bg-orange-50")}>

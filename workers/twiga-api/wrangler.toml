@@ -11,3 +11,18 @@ database_id = "77f5a69f-a2e7-4de6-a164-8e98beaedfd8"
 
 [ai]
 binding = "AI"
+
+
+[[durable_objects.bindings]]
+name = "BUSINESS_AGENT"
+class_name = "BusinessAgent"
+
+[exports.BusinessAgent]
+type = "durable-object"
+storage = "sqlite"
+
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+META_GRAPH_VERSION = "v27.0"

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Model = { id: string; voices?: string[] };
@@ -54,6 +54,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   const [placingTest, setPlacingTest] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const voiceTouched = useRef(false);
 
   const load = useCallback(async () => {
     if (demo || !businessId || !supabase) return;
@@ -69,7 +70,7 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
       setConfig(next);
       const settings = next.phoneLine?.settings || {};
       const savedGender = String(settings.voice_gender || next.voicePreference?.gender || "");
-      setVoice(savedGender === "male" ? "Man" : "Woman");
+      if (!voiceTouched.current) setVoice(savedGender === "male" ? "Man" : "Woman");
       setModel(String(settings.inbound_model_id || next.voicePreference?.model || next.agent?.model || "sautikit-flash"));
 
       const { data: records, error: recordsError } = await supabase
@@ -102,8 +103,14 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
       : String(line?.inbound_status || "Not configured").replace(/_/g, " ");
   const outboundStatus = "Test only · campaigns off";
 
-  const saveVoice = async () => {
-    if (!supabase || !businessId || demo) {
+  const saveVoice = async (selectedVoice: "Woman" | "Man" = voice) => {
+    voiceTouched.current = true;
+    setVoice(selectedVoice);
+    if (demo) {
+      setMessage((selectedVoice === "Woman" ? "Female" : "Male") + " voice selected for this demo. Live calling is disabled in the sample workspace.");
+      return;
+    }
+    if (!supabase || !businessId) {
       setError("Sign in to save a business voice.");
       return;
     }
@@ -112,20 +119,19 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
     setMessage("");
     try {
       const { data: saved, error: saveError } = await supabase.functions.invoke("twiga-sautikit", {
-        body: { action: "save_voice_preference", businessId, model, voice },
+        body: { action: "save_voice_preference", businessId, model, voice: selectedVoice },
       });
       if (saveError) throw new Error(await getFunctionError(saveError, "Voice preference could not be saved."));
       if (saved?.error) throw new Error(String(saved.error));
       if (!canPublish) {
-        setMessage("Voice preference saved. A verified phone number is still needed before it can be published to calls.");
-        await load();
+        setMessage((selectedVoice === "Woman" ? "Female" : "Male") + " voice selected and saved. Assign a business phone number to use it on live calls.");
         return;
       }
 
       const base = {
         businessId,
         model,
-        voice,
+        voice: selectedVoice,
         greeting: "Hello, thank you for calling. How can I help you today?",
         inboundPrompt: "Answer in clear English or Kiswahili using only this business's saved details and verified TWIGA records. Keep replies short. Do not invent prices, stock, appointments or payment status.",
         outboundPrompt: "Only place a one-off test call when the recipient has explicitly agreed. Identify TWIGA and the business, explain the reason for the test, keep it brief and end immediately if asked.",
@@ -226,22 +232,20 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
         <h2 className="text-lg font-semibold text-neutral-950">Receptionist voice</h2>
         <p className="mt-1 text-sm text-neutral-600">Choose one voice. TWIGA uses the same selected voice for inbound calls and one-off outbound tests.</p>
         <div className="mt-4 grid grid-cols-2 gap-3">
-          <button type="button" aria-pressed={voice === "Woman"} onClick={() => setVoice("Woman")} className={"rounded-xl border-2 p-4 text-left transition " + (voice === "Woman" ? "border-orange-500 bg-orange-50" : "border-neutral-200 hover:border-neutral-400")}>
-            <span className="block font-semibold text-neutral-950">Female voice</span>
+          <button type="button" aria-pressed={voice === "Woman"} onClick={() => void saveVoice("Woman")} className={"rounded-xl border-2 p-4 text-left transition " + (voice === "Woman" ? "border-orange-500 bg-orange-50" : "border-neutral-200 hover:border-neutral-400")}>
+            <span className="flex items-center justify-between gap-2"><span className="font-semibold text-neutral-950">Female voice</span>{voice === "Woman" && <span className="rounded-full bg-orange-500 px-2 py-0.5 text-[10px] font-bold text-white">Selected</span>}</span>
             <span className="mt-1 block text-xs text-neutral-600">Warm and clear</span>
           </button>
-          <button type="button" aria-pressed={voice === "Man"} onClick={() => setVoice("Man")} className={"rounded-xl border-2 p-4 text-left transition " + (voice === "Man" ? "border-orange-500 bg-orange-50" : "border-neutral-200 hover:border-neutral-400")}>
-            <span className="block font-semibold text-neutral-950">Male voice</span>
+          <button type="button" aria-pressed={voice === "Man"} onClick={() => void saveVoice("Man")} className={"rounded-xl border-2 p-4 text-left transition " + (voice === "Man" ? "border-orange-500 bg-orange-50" : "border-neutral-200 hover:border-neutral-400")}>
+            <span className="flex items-center justify-between gap-2"><span className="font-semibold text-neutral-950">Male voice</span>{voice === "Man" && <span className="rounded-full bg-orange-500 px-2 py-0.5 text-[10px] font-bold text-white">Selected</span>}</span>
             <span className="mt-1 block text-xs text-neutral-600">Clear and confident</span>
           </button>
         </div>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-neutral-500">Current model: {model === "sautikit-flash" ? "TWIGA Fast" : model}</p>
-          <button type="button" onClick={() => void saveVoice()} disabled={savingVoice || loading || demo} className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:opacity-50">
-            {savingVoice ? "Saving…" : "Save and publish voice"}
-          </button>
+          <span className="text-xs text-neutral-500">{savingVoice ? "Saving selected voice…" : "Voice saves when you select it."}</span>
         </div>
-        {!canPublish && !demo && <p className="mt-3 text-xs leading-5 text-neutral-500">Voice preference can be saved now. Publishing requires a verified phone number on this business.</p>}
+        {!canPublish && !demo && <p className="mt-3 text-xs leading-5 text-neutral-600">The selected voice is saved. A verified business phone number is needed before the receptionist can use it on live calls.</p>}
       </section>
 
       <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm sm:p-6">
@@ -257,10 +261,10 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
           <input type="checkbox" checked={recipientConsent} onChange={(event) => setRecipientConsent(event.target.checked)} className="mt-1 h-4 w-4 accent-orange-500" />
           <span>The person at this number has agreed to receive this one-off test call.</span>
         </label>
-        <button type="button" onClick={() => void placeTestCall()} disabled={placingTest || !canTest || demo} className="mt-4 w-full rounded-xl bg-neutral-950 px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50">
-          {placingTest ? "Calling…" : "Place one-off test call"}
+        <button type="button" onClick={() => canTest ? void placeTestCall() : onOpenProfile?.()} disabled={placingTest || demo} className="mt-4 w-full rounded-xl bg-neutral-950 px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50">
+          {placingTest ? "Calling…" : canTest ? "Place one-off test call" : "Connect phone to test"}
         </button>
-        {!canTest && !demo && <p className="mt-2 text-xs text-neutral-500">{config.providerError || "Testing is paused until the phone number is verified and a receptionist is published."}</p>}
+        {!canTest && !demo && <p className="mt-2 text-xs text-neutral-600">{phoneNumber === "Not assigned" ? "No business phone number is assigned yet. Connect a provider or assign a number in Connections before testing." : config.providerError || "The business phone number must be verified and a receptionist published before testing."}</p>}
         <p className="mt-2 text-xs text-neutral-500">No marketing, scheduled calls or automatic retries are sent from this test control. Provider call charges may apply.</p>
       </section>
 

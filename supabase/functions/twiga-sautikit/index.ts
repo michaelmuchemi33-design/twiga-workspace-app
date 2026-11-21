@@ -646,7 +646,7 @@ Deno.serve(async (req: Request) => {
 
     if (action === "get_config") {
       const { data: businessProfile } = await admin.from("twiga_business_profiles")
-        .select("setup_details").eq("business_id", businessId).maybeSingle();
+        .select("owner_name,owner_email,setup_details").eq("business_id", businessId).maybeSingle();
       const profileSetup: Row = businessProfile?.setup_details && typeof businessProfile.setup_details === "object" ? businessProfile.setup_details : {};
       const savedVoicePreference: Row = profileSetup.voice_preference && typeof profileSetup.voice_preference === "object" ? profileSetup.voice_preference : {};
       if (!line) {
@@ -849,13 +849,17 @@ Deno.serve(async (req: Request) => {
       const { data: profileRow, error: profileReadError } = await admin.from("twiga_business_profiles")
         .select("setup_details").eq("business_id", businessId).maybeSingle();
       if (profileReadError) throw profileReadError;
-      if (profileRow) {
-        const details: Row = profileRow.setup_details && typeof profileRow.setup_details === "object" ? profileRow.setup_details : {};
-        const { error: profileSaveError } = await admin.from("twiga_business_profiles")
-          .update({ setup_details: { ...details, voice_preference: { voice: providerVoice, gender: selectedVoice === "Man" ? "male" : "female", model: selectedModel, saved_at: savedAt } }, updated_at: savedAt, updated_by: user.id })
-          .eq("business_id", businessId);
-        if (profileSaveError) throw profileSaveError;
-      }
+      const details: Row = profileRow && profileRow.setup_details && typeof profileRow.setup_details === "object" ? profileRow.setup_details : {};
+      const { error: profileSaveError } = await admin.from("twiga_business_profiles")
+        .upsert({
+          business_id: businessId,
+          owner_name: profileRow?.owner_name || String(user.user_metadata?.full_name || user.user_metadata?.name || ""),
+          owner_email: profileRow?.owner_email || String(user.email || ""),
+          setup_details: { ...details, voice_preference: { voice: providerVoice, gender: selectedVoice === "Man" ? "male" : "female", model: selectedModel, saved_at: savedAt } },
+          updated_at: savedAt,
+          updated_by: user.id,
+        }, { onConflict: "business_id" });
+      if (profileSaveError) throw profileSaveError;
       return json({ saved: true, voice: providerVoice, gender: selectedVoice === "Man" ? "male" : "female", model: selectedModel, phoneLine: savedLine, message: "Your " + (selectedVoice === "Man" ? "male" : "female") + " voice preference has been saved." });
     }
 
