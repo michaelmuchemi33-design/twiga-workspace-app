@@ -1,7 +1,7 @@
 
 const QUOTA = 524288000;
 const AI_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
-const cors = {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info, x-business-id', 'Access-Control-Max-Age': '86400'};
+const cors = {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info, x-business-id, x-twiga-worker-secret', 'Access-Control-Max-Age': '86400'};
 const json = (o, s) => new Response(JSON.stringify(o), {status: s || 200, headers: Object.assign({'Content-Type': 'application/json'}, cors)});
 const cache = new Map();
 const today = () => new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
@@ -53,6 +53,9 @@ export default {
     if (req.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
     const path = new URL(req.url).pathname;
 
+    if (path === '/internal/integrations' && req.method === 'POST') return internalIntegrationRoute(req, env, 'integrations');
+    if (path === '/internal/google-connection' && req.method === 'POST') return internalIntegrationRoute(req, env, 'google');
+    if (path === '/integrations' && req.method === 'POST') return businessIntegrationsRoute(req, env);
     if (path === '/whatsapp/webhook' && req.method === 'GET') return verifyMetaWebhook(req, env);
     if (path === '/whatsapp/webhook' && req.method === 'POST') return whatsappWebhook(req, env, ctx);
     if (path === '/whatsapp/config' && req.method === 'GET') return whatsappConfig(req, env);
@@ -759,75 +762,249 @@ const BUSINESS_AI_ENDPOINTS = {
   deepseek: 'https://api.deepseek.com'
 };
 
-async function runBusinessAI(env, businessId, messages, options) {
-  // Read Vault-backed credentials only through the private Supabase Edge Function.
-  // The worker uses a dedicated server-to-server secret; its publishable key alone cannot read Vault.
-  if (!env.TWIGA_WORKER_SECRET) {
-    console.error('TWIGA internal AI credential binding is missing');
-    return runCloudflareAI(env, messages, options);
-  }
-  let response;
-  try {
-    response = await fetch(env.SUPABASE_URL + '/functions/v1/twiga-business-integrations', {
-      method: 'POST',
-      headers: {
-        apikey: env.SUPABASE_KEY,
-        'x-twiga-worker-secret': env.TWIGA_WORKER_SECRET,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({action: 'runtime', businessId: businessId})
-    });
-  } catch (error) {
-    console.error('TWIGA business AI configuration lookup failed', txt(error && error.message ? error.message : error, 180));
-    return runCloudflareAI(env, messages, options);
-  }
-  if (!response.ok) {
-    console.error('TWIGA business AI configuration lookup returned HTTP', response.status);
-    return runCloudflareAI(env, messages, options);
-  }
-  const integration = await response.json().catch(() => null);
-  if (!integration || !integration.provider_slug || !integration.credentials) {
-    return runCloudflareAI(env, messages, options);
-  }
 
-  const provider = String(integration.provider_slug);
-  const expectedBase = BUSINESS_AI_ENDPOINTS[provider];
-  const configuredBase = String(integration.config && integration.config.base_url || '').replace(/\/+$/, '');
-  const apiKey = txt(integration.credentials && integration.credentials.api_key, 500);
-  const model = txt(integration.config && integration.config.model, 160);
-  if (!expectedBase || configuredBase !== expectedBase || !apiKey || !model) {
-    throw new Error('BUSINESS_AI_CONFIGURATION_INVALID|Open the Connections screen and repair this AI provider setup.');
+const BUSINESS_AI_ENDPOINTS = {
+  openai: 'https://api.openai.com/v1',
+  openrouter: 'https://openrouter.ai/api/v1',
+  xai: 'https://api.x.ai/v1',
+  groq: 'https://api.groq.com/openai/v1',
+  deepseek: 'https://api.deepseek.com'
+};
+let integrationCryptoKeyPromise = null;
+async function integrationKey(env) {
+  if (!integrationCryptoKeyPromise) {
+    integrationCryptoKeyPromise = (async () => {
+      const raw = bytesFromBase64(env.TWIGA_INTEGRATION_ENCRYPTION_KEY || '');
+      if (raw.length !== 32) throw new Error('Cloudflare integration encryption key is not configured.');
+      return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt','decrypt']);
+    })().catch(e => { integrationCryptoKeyPromise=null; throw e; });
   }
-
-  const headers = {
-    Authorization: 'Bearer ' + apiKey,
-    'Content-Type': 'application/json',
-    Accept: 'application/json'
-  };
-  if (provider === 'openrouter') {
-    headers['HTTP-Referer'] = 'https://app.twiga.co.ke';
-    headers['X-Title'] = 'TWIGA Business AI';
-  }
-  const requestOptions = Object.assign({temperature: 0.25, max_tokens: 1800}, options || {});
-  const providerResponse = await fetch(expectedBase + '/chat/completions', {
-    method: 'POST',
-    headers: headers,
-    body: JSON.stringify(Object.assign({
-      model: model,
-      messages: messages
-    }, requestOptions))
+  return integrationCryptoKeyPromise;
+}
+async function encryptD1(env,businessId,scope,value) {
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const aad=new TextEncoder().encode(businessId+'|'+scope+'|v1');
+  const cipher=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:aad,tagLength:128},await integrationKey(env),new TextEncoder().encode(JSON.stringify(value)));
+  return {iv:base64FromBytes(iv),cipher:base64FromBytes(new Uint8Array(cipher))};
+}
+async function decryptD1(env,businessId,scope,iv,cipher) {
+  const aad=new TextEncoder().encode(businessId+'|'+scope+'|v1');
+  const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:bytesFromBase64(iv),additionalData:aad,tagLength:128},await integrationKey(env),bytesFromBase64(cipher));
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+function integrationSlug(v) { return String(v||'').toLowerCase().trim().replace(/[^a-z0-9_-]+/g,'_').replace(/^_+|_+$/g,'').slice(0,48); }
+async function integrationAudit(env,biz,provider,action,actor,note,metadata) {
+  await env.DB.prepare("INSERT INTO business_integration_audit (audit_id,business_id,provider_slug,action,actor_user_id,actor_role,assisted_by_admin,assistance_note,metadata_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+    .bind(crypto.randomUUID(),biz,provider,action,actor.userId||null,actor.role||'system',actor.admin?1:0,txt(note,500)||null,JSON.stringify(metadata||{}),now()).run();
+}
+async function saveIntegrationD1(env,d) {
+  const biz=String(d.businessId||''), provider=integrationSlug(d.provider), credentials=d.credentials;
+  if(!/^[0-9a-f-]{36}$/i.test(biz)||!/^[a-z][a-z0-9_-]{1,47}$/.test(provider))throw new Error('Invalid business or provider.');
+  if(!credentials||typeof credentials!=='object'||Array.isArray(credentials))throw new Error('Integration credentials are invalid.');
+  const entries=Object.entries(credentials).filter(([k,v])=>/^[a-z][a-z0-9_-]{0,47}$/.test(k)&&typeof v==='string'&&v.trim());
+  if(entries.length<1||entries.length>5)throw new Error('Enter between one and five credential fields.');
+  const values={};const last4={};
+  for(const [k,v] of entries){const value=String(v).trim();if(value.length<3||value.length>4000)throw new Error('A credential field is too short or too long.');values[k]=value;last4[k]=value.slice(-4);}
+  const name=txt(d.displayName||provider,100); if(name.length<2)throw new Error('Enter a connection name.');
+  const type=txt(d.integrationType||'custom_api',30);
+  if(!['ai_model','email','payments','voice','messaging','custom_api'].includes(type))throw new Error('Invalid integration category.');
+  const encrypted=await encryptD1(env,biz,'integration:'+provider,values), time=now(), config=d.config||{};
+  const primary=d.isPrimaryAI===true&&type==='ai_model'?1:0;
+  await env.DB.batch([
+    env.DB.prepare("UPDATE business_integrations SET is_primary_ai=0,updated_at=? WHERE business_id=? AND integration_type='ai_model' AND is_primary_ai=1 AND provider_slug<>?").bind(time,biz,provider),
+    env.DB.prepare("INSERT INTO business_integrations (business_id,provider_slug,display_name,integration_type,config_json,credentials_cipher,credentials_iv,credentials_last4_json,is_primary_ai,status,last_test_at,last_test_message,created_by,updated_by,assisted_by_admin,assistance_note,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(business_id,provider_slug) DO UPDATE SET display_name=excluded.display_name,integration_type=excluded.integration_type,config_json=excluded.config_json,credentials_cipher=excluded.credentials_cipher,credentials_iv=excluded.credentials_iv,credentials_last4_json=excluded.credentials_last4_json,is_primary_ai=excluded.is_primary_ai,status=excluded.status,last_test_at=excluded.last_test_at,last_test_message=excluded.last_test_message,updated_by=excluded.updated_by,assisted_by_admin=excluded.assisted_by_admin,assistance_note=excluded.assistance_note,updated_at=excluded.updated_at")
+      .bind(biz,provider,name,type,JSON.stringify(config),encrypted.cipher,encrypted.iv,JSON.stringify(last4),primary,txt(d.status||'saved',20),d.status==='verified'?time:null,txt(d.lastTestMessage||'',300),d.actorUserId||null,d.actorUserId||null,d.assistedByAdmin?1:0,txt(d.assistanceNote,500)||null,time,time),
+    env.DB.prepare("INSERT INTO business_integration_audit (audit_id,business_id,provider_slug,action,actor_user_id,actor_role,assisted_by_admin,assistance_note,metadata_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+      .bind(crypto.randomUUID(),biz,provider,'credentials.saved',d.actorUserId||null,d.actorRole||'owner',d.assistedByAdmin?1:0,txt(d.assistanceNote,500)||null,JSON.stringify({integration_type:type,credential_fields:entries.length,verified:d.status==='verified'}),time)
+  ]);
+  return {provider_slug:provider,display_name:name,integration_type:type,credentials_last4:last4,is_primary_ai:primary===1,status:txt(d.status||'saved',20),updated_at:time};
+}
+async function getIntegrationD1(env,biz,provider) {
+  const row=await env.DB.prepare("SELECT provider_slug,display_name,integration_type,config_json,credentials_cipher,credentials_iv FROM business_integrations WHERE business_id=? AND provider_slug=?").bind(biz,provider).first();
+  if(!row)return null;
+  return {row,credentials:await decryptD1(env,biz,'integration:'+provider,row.credentials_iv,row.credentials_cipher)};
+}
+async function listIntegrationsD1(env,biz) {
+  const rows=await env.DB.prepare("SELECT provider_slug,display_name,integration_type,config_json,credentials_last4_json,is_primary_ai,status,last_test_at,last_test_message,updated_at FROM business_integrations WHERE business_id=? ORDER BY updated_at DESC").bind(biz).all();
+  return (rows.results||[]).map(r=>({provider_slug:r.provider_slug,display_name:r.display_name,integration_type:r.integration_type,config:JSON.parse(r.config_json||'{}'),credentials_last4:JSON.parse(r.credentials_last4_json||'{}'),is_primary_ai:Number(r.is_primary_ai)===1,status:r.status,last_test_at:r.last_test_at,last_test_message:r.last_test_message,updated_at:r.updated_at}));
+}
+async function deleteIntegrationD1(env,biz,provider,actor,note) {
+  const row=await env.DB.prepare("SELECT provider_slug FROM business_integrations WHERE business_id=? AND provider_slug=?").bind(biz,provider).first();
+  if(!row)return false;
+  await env.DB.prepare("DELETE FROM business_integrations WHERE business_id=? AND provider_slug=?").bind(biz,provider).run();
+  await integrationAudit(env,biz,provider,'credentials.deleted',actor,note,{});
+  return true;
+}
+async function getPrimaryAiD1(env,biz) {
+  const row=await env.DB.prepare("SELECT provider_slug,config_json,credentials_cipher,credentials_iv FROM business_integrations WHERE business_id=? AND integration_type='ai_model' AND is_primary_ai=1 AND status IN ('saved','verified') LIMIT 1").bind(biz).first();
+  if(!row)return null;
+  return {provider_slug:row.provider_slug,config:JSON.parse(row.config_json||'{}'),credentials:await decryptD1(env,biz,'integration:'+row.provider_slug,row.credentials_iv,row.credentials_cipher)};
+}
+async function getGoogleD1(env,biz) {
+  const row=await env.DB.prepare("SELECT * FROM google_business_connections WHERE business_id=?").bind(biz).first();
+  if(!row)return null;
+  return Object.assign(await decryptD1(env,biz,'google-oauth',row.connection_iv,row.connection_cipher),{
+    business_id:biz,connected_by:row.connected_by,google_email:row.google_email,granted_scopes:row.granted_scopes,
+    access_expires_at:row.access_expires_at,spreadsheet_id:row.spreadsheet_id,spreadsheet_url:row.spreadsheet_url,
+    last_sync_at:row.last_sync_at,created_at:row.created_at,updated_at:row.updated_at
   });
-  if (!providerResponse.ok) {
-    console.error('TWIGA business AI provider request failed', provider, providerResponse.status);
-    throw new Error('BUSINESS_AI_PROVIDER_FAILED|The connected ' + provider + ' account could not complete this AI request (HTTP ' + providerResponse.status + '). Check its key, model access and billing in Connections.');
+}
+async function saveGoogleD1(env,biz,connection) {
+  const old=await env.DB.prepare("SELECT created_at FROM google_business_connections WHERE business_id=?").bind(biz).first();
+  const time=now(), tokenPayload={access_token:String(connection.access_token||''),refresh_token:connection.refresh_token?String(connection.refresh_token):null};
+  if(!tokenPayload.access_token)throw new Error('Google did not return an access token.');
+  const encrypted=await encryptD1(env,biz,'google-oauth',tokenPayload);
+  await env.DB.prepare("INSERT INTO google_business_connections (business_id,connected_by,google_email,granted_scopes,connection_cipher,connection_iv,access_expires_at,spreadsheet_id,spreadsheet_url,last_sync_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(business_id) DO UPDATE SET connected_by=excluded.connected_by,google_email=excluded.google_email,granted_scopes=excluded.granted_scopes,connection_cipher=excluded.connection_cipher,connection_iv=excluded.connection_iv,access_expires_at=excluded.access_expires_at,spreadsheet_id=excluded.spreadsheet_id,spreadsheet_url=excluded.spreadsheet_url,last_sync_at=excluded.last_sync_at,updated_at=excluded.updated_at")
+    .bind(biz,String(connection.connected_by||''),connection.google_email||null,String(connection.granted_scopes||''),encrypted.cipher,encrypted.iv,connection.access_expires_at||null,connection.spreadsheet_id||null,connection.spreadsheet_url||null,connection.last_sync_at||null,old?.created_at||time,time).run();
+  return {saved:true,business_id:biz,google_email:connection.google_email||null};
+}
+async function patchGoogleD1(env,biz,patch) {
+  const current=await getGoogleD1(env,biz); if(!current)return null;
+  return saveGoogleD1(env,biz,Object.assign({},current,patch));
+}
+async function internalSecretValid(req,env) {
+  const a=req.headers.get('x-twiga-worker-secret')||'',b=String(env.TWIGA_WORKER_SECRET||'');
+  if(!a||!b||a.length!==b.length)return false;
+  const x=new TextEncoder().encode(a),y=new TextEncoder().encode(b);let diff=0;
+  for(let i=0;i<x.length;i++)diff|=x[i]^y[i];return diff===0;
+}
+async function internalIntegrationRoute(req,env,kind) {
+  if(!await internalSecretValid(req,env))return json({ok:false,error:'Internal TWIGA authentication failed.'},401);
+  try {
+    const body=await req.json().catch(()=>({})),biz=txt(body.businessId||body.business_id,80),action=txt(body.action,40);
+    if(!/^[0-9a-f-]{36}$/i.test(biz))return json({ok:false,error:'Invalid business workspace.'},400);
+    if(kind==='google'){
+      if(action==='get')return json({ok:true,connection:await getGoogleD1(env,biz)});
+      if(action==='save')return json({ok:true,...await saveGoogleD1(env,biz,body.connection||{})});
+      if(action==='patch')return json({ok:true,...(await patchGoogleD1(env,biz,body.patch||{})||{})});
+      if(action==='delete'){await env.DB.prepare("DELETE FROM google_business_connections WHERE business_id=?").bind(biz).run();return json({ok:true,disconnected:true});}
+      return json({ok:false,error:'Unknown Google connection action.'},400);
+    }
+    if(action==='list')return json({ok:true,integrations:await listIntegrationsD1(env,biz)});
+    if(action==='save'){
+      const saved=await saveIntegrationD1(env,{businessId:biz,provider:body.provider,displayName:body.displayName,integrationType:body.integrationType,config:body.config,credentials:body.credentials,isPrimaryAI:body.isPrimaryAI===true,status:body.status||'verified',lastTestMessage:body.lastTestMessage,actorUserId:body.actorUserId,actorRole:body.actorRole||'platform_admin',assistedByAdmin:body.assistedByAdmin===true,assistanceNote:body.assistanceNote});
+      return json({ok:true,integration:saved});
+    }
+    if(action==='get_secret'){
+      const provider=integrationSlug(body.provider),found=await getIntegrationD1(env,biz,provider);
+      return found?json({ok:true,provider,credentials:found.credentials,displayName:found.row.display_name}):json({ok:false,error:'Integration was not found.'},404);
+    }
+    if(action==='delete'){
+      const provider=integrationSlug(body.provider);
+      const deleted=await deleteIntegrationD1(env,biz,provider,{userId:body.actorUserId,role:body.actorRole||'platform_admin',admin:true},body.assistanceNote);
+      return json({ok:deleted});
+    }
+    if(action==='admin_list'){
+      const rows=await env.DB.prepare("SELECT business_id,provider_slug,display_name,integration_type,credentials_last4_json,is_primary_ai,status,updated_at FROM business_integrations ORDER BY updated_at DESC LIMIT 2000").all();
+      return json({ok:true,integrations:rows.results||[]});
+    }
+    return json({ok:false,error:'Unknown internal integration action.'},400);
+  }catch(error){
+    const message=txt(error&&error.message?error.message:error,300);
+    console.error('TWIGA internal integrations failed',message);
+    return json({ok:false,error:message},500);
   }
-  const result = await providerResponse.json().catch(() => ({}));
-  const content = aiReplyText(
-    result && (result.choices && result.choices[0] && result.choices[0].message && result.choices[0].message.content || result.output_text || result.response),
-    '',
-    12000
-  );
-  if (!content) throw new Error('BUSINESS_AI_EMPTY_RESPONSE|The connected AI provider returned no readable text.');
+}
+async function platformAdminForToken(env,token) {
+  const r=await fetch(env.SUPABASE_URL+'/functions/v1/twiga-platform-admin',{method:'POST',headers:{apikey:env.SUPABASE_KEY,Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({action:'whoami'}),signal:AbortSignal.timeout(12000)});
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok||data.isAdmin!==true)return null;
+  const userResponse=await fetch(env.SUPABASE_URL+'/auth/v1/user',{headers:{apikey:env.SUPABASE_KEY,Authorization:'Bearer '+token}});
+  const user=userResponse.ok?await userResponse.json().catch(()=>null):null;
+  return user&&user.id?user:null;
+}
+async function validateBusinessIntegration(provider,credentials,model,fromEmail,purpose) {
+  if(BUSINESS_AI_ENDPOINTS[provider]){
+    const endpoint=BUSINESS_AI_ENDPOINTS[provider];
+    const r=await fetch(endpoint+'/models',{headers:{Authorization:'Bearer '+credentials.api_key,Accept:'application/json'},signal:AbortSignal.timeout(15000)});
+    if(!r.ok)throw new Error(r.status===401?'The AI provider rejected this API key.':'The AI provider connection test failed (HTTP '+r.status+').');
+    const data=await r.json().catch(()=>({})),models=Array.isArray(data.data)?data.data:Array.isArray(data.models)?data.models:[];
+    if(models.length&&!models.some(x=>String(x.id||x.name||'')===model))throw new Error('The selected model ID is not available on this account.');
+    return {type:'ai_model',config:{provider,base_url:endpoint,model},message:'AI API key and selected model validated.'};
+  }
+  if(provider==='resend'){
+    const r=await fetch('https://api.resend.com/domains?limit=1',{headers:{Authorization:'Bearer '+credentials.api_key,Accept:'application/json'},signal:AbortSignal.timeout(15000)});
+    if(!r.ok)throw new Error(r.status===401?'Resend rejected this API key.':'Resend validation failed (HTTP '+r.status+').');
+    return {type:'email',config:{from_email:txt(fromEmail,180)},message:'Resend API key validated.'};
+  }
+  if(provider==='palpluss'){
+    const r=await fetch('https://api.palpluss.com/v1/wallets/service/balance',{headers:{Authorization:'Basic '+btoa(credentials.api_key+':'),Accept:'application/json'},signal:AbortSignal.timeout(15000)});
+    if(!r.ok)throw new Error(r.status===401?'PalPluss rejected this API key.':'PalPluss validation failed (HTTP '+r.status+').');
+    return {type:'payments',config:{},message:'PalPluss account validated.'};
+  }
+  if(provider==='sautikit'){
+    const r=await fetch('https://api.sautikit.com/v1/models',{headers:{Authorization:'Bearer '+credentials.api_key,Accept:'application/json'},signal:AbortSignal.timeout(15000)});
+    if(!r.ok)throw new Error(r.status===401?'SautiKit rejected this API key.':'SautiKit validation failed (HTTP '+r.status+').');
+    return {type:'voice',config:{},message:'SautiKit API key validated.'};
+  }
+  return {type:'custom_api',config:{purpose:txt(purpose,500)},message:'Credentials will be encrypted. A dedicated connector is required before TWIGA can execute this custom tool.'};
+}
+async function businessIntegrationsRoute(req,env) {
+  try {
+    const body=await req.json().catch(()=>({})),biz=txt(body.businessId||body.business_id,80),action=txt(body.action||'list',40);
+    const token=String((req.headers.get('Authorization')||'').replace(/^Bearer\\s+/i,'')||body.token||'');
+    if(!token||!/^[0-9a-f-]{36}$/i.test(biz))return json({ok:false,error:'Sign in and choose a business workspace.'},401);
+    const adminUser=await platformAdminForToken(env,token);
+    let actor;
+    if(adminUser)actor={userId:adminUser.id,role:'platform_admin',admin:true};
+    else{const ctx=await authorize(env,token,biz);actor={userId:ctx.userId,role:ctx.role,admin:false};}
+    if(action==='list'){
+      const integrations=await listIntegrationsD1(env,biz);
+      const google=await env.DB.prepare("SELECT google_email,granted_scopes,access_expires_at,spreadsheet_id,spreadsheet_url,last_sync_at,updated_at FROM google_business_connections WHERE business_id=?").bind(biz).first();
+      return json({ok:true,integrations,google:google?Object.assign({connected:true},google):{connected:false}});
+    }
+    if(!actor.admin&&!['owner','admin'].includes(actor.role))return json({ok:false,error:'Only the business owner or administrator can change integrations.'},403);
+    const note=txt(body.assistanceNote,500);
+    if(actor.admin&&action==='save'&&note.length<8)return json({ok:false,error:'Add a note explaining why the administrator is helping this business.'},400);
+    if(action==='save'){
+      const provider=txt(body.provider,48).toLowerCase(),name=txt(body.displayName,100);
+      let credentials=body.credentials;
+      if(!credentials||typeof credentials!=='object'||Array.isArray(credentials))return json({ok:false,error:'Enter credentials in the secure form.'},400);
+      if(provider==='palpluss'&&credentials.basic_authorization){
+        const encoded=String(credentials.basic_authorization).replace(/^Basic\\s+/i,'').replace(/\\s+/g,'');let decoded='';
+        try{decoded=atob(encoded);}catch(_){return json({ok:false,error:'PalPluss Base64 Basic credential is invalid.'},400);}
+        if(!decoded.endsWith(':')||decoded.length<22)return json({ok:false,error:'PalPluss Basic Authorization must decode to API_KEY: with an empty password.'},400);
+        credentials={api_key:decoded.slice(0,-1)};
+      }
+      const model=txt(body.model,180),validation=await validateBusinessIntegration(provider,credentials,model,body.fromEmail,body.purpose);
+      const slug=provider==='custom'?'custom_'+integrationSlug(name).slice(0,40):provider;
+      const saved=await saveIntegrationD1(env,{businessId:biz,provider:slug,displayName:name,integrationType:validation.type,config:validation.config,credentials,isPrimaryAI:body.isPrimaryAI===true,status:provider==='custom'?'saved':'verified',lastTestMessage:validation.message,actorUserId:actor.userId,actorRole:actor.role,assistedByAdmin:actor.admin,assistanceNote:note});
+      return json({ok:true,saved:true,integration:saved,providerSlug:slug,message:validation.message+" Credentials are encrypted in this business's Cloudflare D1 workspace."});
+    }
+    if(action==='set_primary_ai'){
+      const provider=integrationSlug(body.provider),found=await getIntegrationD1(env,biz,provider);
+      if(!found||found.row.integration_type!=='ai_model')return json({ok:false,error:'Choose a saved AI model connection.'},404);
+      await env.DB.batch([
+        env.DB.prepare("UPDATE business_integrations SET is_primary_ai=0,updated_at=? WHERE business_id=? AND integration_type='ai_model'").bind(now(),biz),
+        env.DB.prepare("UPDATE business_integrations SET is_primary_ai=1,updated_at=? WHERE business_id=? AND provider_slug=?").bind(now(),biz,provider)
+      ]);
+      await integrationAudit(env,biz,provider,'ai_model.primary_changed',actor,note,{});
+      return json({ok:true,message:'This is now the primary AI model for this business.'});
+    }
+    if(action==='delete'){
+      const provider=integrationSlug(body.provider),deleted=await deleteIntegrationD1(env,biz,provider,actor,note);
+      return deleted?json({ok:true,deleted:true}):json({ok:false,error:'Integration not found.'},404);
+    }
+    return json({ok:false,error:'Unknown integration action.'},400);
+  }catch(error){
+    const message=txt(error&&error.message?error.message:error,300),status=message==='LOGIN_REQUIRED'?401:message==='NO_ACCESS'?403:400;
+    return json({ok:false,error:message},status);
+  }
+}
+async function runBusinessAI(env,businessId,messages,options) {
+  const integration=await getPrimaryAiD1(env,businessId);
+  if(!integration)return runCloudflareAI(env,messages,options);
+  const provider=integration.provider_slug,expected=BUSINESS_AI_ENDPOINTS[provider];
+  const base=String(integration.config&&integration.config.base_url||'').replace(/\\/+$/,'');
+  const apiKey=txt(integration.credentials&&integration.credentials.api_key,500),model=txt(integration.config&&integration.config.model,180);
+  if(!expected||base!==expected||!apiKey||!model)throw new Error('BUSINESS_AI_CONFIGURATION_INVALID|Open Connections and repair this business AI model configuration.');
+  const headers={Authorization:'Bearer '+apiKey,'Content-Type':'application/json',Accept:'application/json'};
+  if(provider==='openrouter'){headers['HTTP-Referer']='https://app.twiga.co.ke';headers['X-Title']='TWIGA Business AI';}
+  const optionsForRequest=Object.assign({temperature:0.25,max_tokens:1800},options||{});
+  const response=await fetch(expected+'/chat/completions',{method:'POST',headers,body:JSON.stringify(Object.assign({model,messages},optionsForRequest)),signal:AbortSignal.timeout(60000)});
+  if(!response.ok){console.error('TWIGA business AI provider request failed',provider,response.status);throw new Error('BUSINESS_AI_PROVIDER_FAILED|The connected '+provider+' account could not complete this AI request (HTTP '+response.status+'). Check its key, model access and account usage.');}
+  const data=await response.json().catch(()=>({})),content=aiReplyText(data&&data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content,'',12000);
+  if(!content)throw new Error('BUSINESS_AI_EMPTY_RESPONSE|The connected AI provider returned no readable text.');
   return content;
 }
 
