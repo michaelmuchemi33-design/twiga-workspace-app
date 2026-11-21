@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from "@/components/ui/card";
@@ -12,6 +12,31 @@ import { supabase } from "@/lib/supabase";
 import { useStore, uid, stamp } from "@/lib/store";
 import { IconChat, IconSend, IconCheck, IconClock } from "@/components/Icons";
 
+
+
+declare global {
+  interface Window {
+    FB?: {
+      init: (options: {appId:string; cookie:boolean; xfbml:boolean; version:string}) => void;
+      login: (callback:(response:any)=>void, options:Record<string,unknown>) => void;
+    };
+    fbAsyncInit?: () => void;
+  }
+}
+
+type WhatsAppChannel = {
+  configured: boolean;
+  appId: string;
+  configId: string;
+  graphVersion: string;
+  connected: boolean;
+  phoneNumber: string;
+  verifiedName: string;
+  webhookUrl: string;
+  lastWebhookAt?: string | null;
+  tokenExpiresAt?: string | null;
+};
+
 export default function WhatsAppOutbox() {
   const { messages, addMessage, businessId, demoMode } = useStore();
   const [to, setTo] = useState("");
@@ -20,6 +45,153 @@ export default function WhatsAppOutbox() {
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [whatsappChannel, setWhatsappChannel] = useState<WhatsAppChannel | null>(null);
+  const [channelLoading, setChannelLoading] = useState(true);
+  const [facebookReady, setFacebookReady] = useState(false);
+  const [connectingWhatsApp, setConnectingWhatsApp] = useState(false);
+  const [channelMessage, setChannelMessage] = useState("");
+  const signupRef = useRef({code:"",wabaId:"",phoneNumberId:"",busy:false});
+
+
+
+  const refreshWhatsAppChannel = async () => {
+    if (!supabase || !businessId || demoMode) {
+      setChannelLoading(false);
+      return;
+    }
+    try {
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token || "";
+      const response = await fetch("https://twiga-api.twiga-ke.workers.dev/whatsapp/config?business_id=" + encodeURIComponent(businessId), {
+        headers: {"Authorization":"Bearer " + token, "x-business-id":businessId}
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) throw new Error(data.error || "WhatsApp status could not be loaded.");
+      setWhatsappChannel(data as WhatsAppChannel);
+    } catch (error) {
+      setChannelMessage(error instanceof Error ? error.message : "WhatsApp status could not be loaded.");
+    } finally {
+      setChannelLoading(false);
+    }
+  };
+
+  const completeEmbeddedSignup = async () => {
+    const pending = signupRef.current;
+    if (!pending.code || !pending.wabaId || !pending.phoneNumberId || pending.busy) return;
+    pending.busy = true;
+    setConnectingWhatsApp(true);
+    setChannelMessage("Securing your WhatsApp Business connection…");
+    try {
+      if (!supabase || !businessId) throw new Error("Sign in to this business workspace first.");
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token || "";
+      const response = await fetch("https://twiga-api.twiga-ke.workers.dev/whatsapp/connect", {
+        method: "POST",
+        headers: {"Content-Type":"application/json","Authorization":"Bearer " + token},
+        body: JSON.stringify({
+          business_id:businessId,
+          token:token,
+          code:pending.code,
+          waba_id:pending.wabaId,
+          phone_number_id:pending.phoneNumberId
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) throw new Error(data.error || "WhatsApp Business could not be connected.");
+      setChannelMessage(data.message || "WhatsApp Business connected.");
+      await refreshWhatsAppChannel();
+    } catch (error) {
+      setChannelMessage(error instanceof Error ? error.message : "WhatsApp connection failed.");
+    } finally {
+      signupRef.current = {code:"",wabaId:"",phoneNumberId:"",busy:false};
+      setConnectingWhatsApp(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshWhatsAppChannel();
+  }, [businessId, demoMode]);
+
+  useEffect(() => {
+    if (!whatsappChannel || !whatsappChannel.configured || !whatsappChannel.appId || demoMode) return;
+    const init = () => {
+      if (!window.FB) return;
+      window.FB.init({
+        appId:whatsappChannel.appId,
+        cookie:true,
+        xfbml:false,
+        version:whatsappChannel.graphVersion || "v27.0"
+      });
+      setFacebookReady(true);
+    };
+    if (window.FB) {
+      init();
+      return;
+    }
+    window.fbAsyncInit = init;
+    if (!document.getElementById("facebook-jssdk")) {
+      const script = document.createElement("script");
+      script.id = "facebook-jssdk";
+      script.async = true;
+      script.defer = true;
+      script.crossOrigin = "anonymous";
+      script.src = "https://connect.facebook.net/en_US/sdk.js";
+      document.body.appendChild(script);
+    }
+  }, [whatsappChannel?.configured, whatsappChannel?.appId, whatsappChannel?.graphVersion, demoMode]);
+
+  useEffect(() => {
+    const receiveSignupMessage = (event: MessageEvent) => {
+      if (!event.origin || !/facebook\\.com$/i.test(new URL(event.origin).hostname)) return;
+      let payload: any = event.data;
+      if (typeof payload === "string") {
+        try { payload = JSON.parse(payload); } catch { return; }
+      }
+      if (!payload || payload.type !== "WA_EMBEDDED_SIGNUP") return;
+      const data = payload.data || payload;
+      const eventType = String(payload.event || data.event || "").toUpperCase();
+      if (eventType === "CANCEL") {
+        setChannelMessage("WhatsApp setup was cancelled. No changes were made.");
+        return;
+      }
+      const wabaId = String(data.waba_id || data.wabaId || data.whatsapp_business_account_id || "");
+      const phoneNumberId = String(data.phone_number_id || data.phoneNumberId || "");
+      if (wabaId && phoneNumberId) {
+        signupRef.current.wabaId = wabaId;
+        signupRef.current.phoneNumberId = phoneNumberId;
+        void completeEmbeddedSignup();
+      }
+    };
+    window.addEventListener("message", receiveSignupMessage);
+    return () => window.removeEventListener("message", receiveSignupMessage);
+  }, [businessId]);
+
+  const connectWhatsAppWithMeta = () => {
+    if (demoMode) {
+      setChannelMessage("Demo mode cannot connect a real WhatsApp account.");
+      return;
+    }
+    if (!whatsappChannel?.configured || !whatsappChannel.configId || !window.FB || !facebookReady) {
+      setChannelMessage("TWIGA admin must finish the Meta app and Embedded Signup v4 configuration first.");
+      return;
+    }
+    setChannelMessage("Opening Meta to connect your WhatsApp Business account…");
+    window.FB.login((response:any) => {
+      const code = String(response?.authResponse?.code || response?.code || "");
+      if (!code) {
+        setChannelMessage("Meta did not return a connection code. Check that this Meta app uses Embedded Signup v4 with response type Code.");
+        return;
+      }
+      signupRef.current.code = code;
+      void completeEmbeddedSignup();
+      setChannelMessage("Meta approved access. Finishing the secure number connection…");
+    }, {
+      config_id:whatsappChannel.configId,
+      response_type:"code",
+      override_default_response_type:true,
+      extras:{}
+    });
+  };
 
   const send = async () => {
     if (!to.trim() || !phone.trim() || !consentConfirmed) return;
@@ -66,7 +238,45 @@ export default function WhatsAppOutbox() {
   };
 
   return (
-    <div className="grid gap-6 lg:grid-cols-3">
+    <div className="space-y-5">
+      <Card className="rounded-2xl border-neutral-200 bg-white shadow-sm">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+              <IconChat className="h-5 w-5 text-orange-500" /> WhatsApp receptionist
+            </CardTitle>
+            <CardDescription>Connect the business’s official WhatsApp number to TWIGA.</CardDescription>
+          </div>
+          <Badge className={cn("border-0",whatsappChannel?.connected ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-700")}>
+            {channelLoading ? "Checking…" : whatsappChannel?.connected ? "Connected" : "Not connected"}
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {whatsappChannel?.connected ? (
+            <div className="rounded-xl border border-orange-100 bg-orange-50/60 p-3">
+              <p className="text-sm font-semibold text-neutral-950">{whatsappChannel.verifiedName || "WhatsApp Business"} · {whatsappChannel.phoneNumber}</p>
+              <p className="mt-1 text-xs text-neutral-600">{whatsappChannel.lastWebhookAt ? "Meta has delivered a webhook to TWIGA." : "Waiting for the first webhook from Meta."}</p>
+            </div>
+          ) : (
+            <p className="text-sm leading-5 text-neutral-600">
+              Once connected, TWIGA can answer incoming text messages and voice notes, and notify your team when a person asks for help.
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={connectWhatsAppWithMeta} disabled={channelLoading || connectingWhatsApp || demoMode || !whatsappChannel?.configured || !facebookReady} className="bg-neutral-950 text-white hover:bg-neutral-800">
+              {connectingWhatsApp ? "Connecting…" : whatsappChannel?.connected ? "Connect another number" : "Connect with Meta"}
+            </Button>
+            {whatsappChannel?.webhookUrl && <Button variant="outline" onClick={() => { void navigator.clipboard?.writeText(whatsappChannel.webhookUrl); setChannelMessage("Webhook URL copied. Add it in Meta Developer settings and subscribe to WhatsApp messages and calls."); }}>Copy webhook URL</Button>}
+          </div>
+          {!whatsappChannel?.configured && !demoMode && <p className="text-xs leading-5 text-neutral-500">Meta setup is not complete yet. TWIGA admin must add the Meta App ID, Embedded Signup v4 configuration, webhook verification token, app secret and encrypted-token key.</p>}
+          {whatsappChannel?.configured && !whatsappChannel.connected && <p className="text-xs leading-5 text-neutral-500">After connecting, add the callback URL in Meta Developer settings and subscribe this app to WhatsApp message and call webhooks.</p>}
+          {whatsappChannel?.connected && !whatsappChannel.lastWebhookAt && <p className="text-xs leading-5 text-neutral-500">The number is connected. Incoming replies start after the Meta webhook is verified and the WhatsApp webhook field is subscribed.</p>}
+          {channelMessage && <p role="status" className="rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{channelMessage}</p>}
+          <p className="text-[11px] leading-5 text-neutral-500">TWIGA uses Meta’s official Cloud API. Free-form replies are limited to the customer service window; approved templates are needed outside it. Automated replies must support human handover.</p>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-6 lg:grid-cols-3">
       <Card className="rounded-2xl border-neutral-200 shadow-sm lg:col-span-2">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>
@@ -113,6 +323,7 @@ export default function WhatsAppOutbox() {
           <p className="text-[11px] leading-5 text-neutral-500">AiSensy API acceptance means submitted, not delivered. Check AiSensy for the final delivery/read status. Do not use marketing lists or cold contacts without valid consent.</p>
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }
