@@ -137,7 +137,8 @@ async function dispatchDueBusinessWorkers(env) {
       .bind(nextNairobiReviewAt(), timestamp, businessId).run();
     return await dispatchBusinessAgent(env, businessId);
   }));
-  const pending = await env.DB.prepare("SELECT DISTINCT business_id FROM business_worker_tasks WHERE status = 'pending' AND due_at <= ? ORDER BY business_id LIMIT 50").bind(now()).all();
+  const staleBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const pending = await env.DB.prepare("SELECT DISTINCT business_id FROM business_worker_tasks WHERE (status = 'pending' AND due_at <= ?) OR (status = 'processing' AND updated_at <= ?) ORDER BY business_id LIMIT 50").bind(now(), staleBefore).all();
   await Promise.allSettled((pending.results || []).map((row) => dispatchBusinessAgent(env, String(row.business_id))));
   const failed = outcomes.filter((result) => result.status === 'rejected').length;
   if (failed) console.error('TWIGA business worker scheduler had failures', {businesses: businesses.length, failed});
@@ -216,6 +217,10 @@ async function runBusinessReview(env, businessId, taskId) {
 }
 
 async function runBusinessAgentTasks(env, businessId) {
+  // Recover queued work interrupted by an isolate restart or a waitUntil deadline.
+  const staleBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  await env.DB.prepare("UPDATE business_worker_tasks SET status = 'pending', updated_at = ? WHERE business_id = ? AND status = 'processing' AND updated_at <= ?")
+    .bind(now(), businessId, staleBefore).run();
   const tasks = await env.DB.prepare("SELECT id, task_type, detail FROM business_worker_tasks WHERE business_id = ? AND status = 'pending' AND due_at <= ? ORDER BY priority DESC, due_at LIMIT 10")
     .bind(businessId, now()).all();
   const outcomes = [];
@@ -414,6 +419,7 @@ async function whatsappConnect(req, env) {
     await env.DB.prepare("INSERT INTO whatsapp_accounts (business_id, waba_id, phone_number_id, display_phone_number, verified_name, token_cipher, token_iv, token_expires_at, status, updated_at) VALUES (?,?,?,?,?,?,?,?, 'connected', ?) ON CONFLICT(business_id) DO UPDATE SET waba_id=excluded.waba_id, phone_number_id=excluded.phone_number_id, display_phone_number=excluded.display_phone_number, verified_name=excluded.verified_name, token_cipher=excluded.token_cipher, token_iv=excluded.token_iv, token_expires_at=excluded.token_expires_at, status='connected', updated_at=excluded.updated_at")
       .bind(ctx.biz.id,wabaId,phoneNumberId,txt(phone.display_phone_number,40),txt(phone.verified_name,120),encrypted.cipher,encrypted.iv,expiresAt,now()).run();
     await syncBusinessWorkerProfile(env, ctx, token);
+    await ensureBusinessWorkerSettings(env, ctx.biz.id);
     return json({ok:true,connected:true,phoneNumber:txt(phone.display_phone_number,40),verifiedName:txt(phone.verified_name,120),message:'WhatsApp Business is connected. Incoming messages are now routed to this business Worker.'});
   } catch (error) {
     const message = String(error && error.message ? error.message : error);
@@ -481,6 +487,17 @@ async function processWhatsAppMessage(env, businessId, detail) {
   const messageId = txt(message.id, 200);
   const timestamp = Number(message.timestamp || Math.floor(Date.now()/1000));
   const inboundAt = new Date(timestamp * 1000).toISOString();
+  try {
+    await metaGraph(env, token, account.phone_number_id + '/messages', 'POST', {
+      messaging_product:'whatsapp',
+      status:'read',
+      message_id:messageId,
+      typing_indicator:{type:'text'}
+    });
+  } catch (error) {
+    console.error('TWIGA WhatsApp read/typing signal failed', txt(error && error.message ? error.message : error, 160));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 2000));
   let incomingText = '';
   if (message.type === 'text') incomingText = txt(message.text && message.text.body, 3500);
   else if (message.type === 'audio') incomingText = await transcribeWhatsAppAudio(env, token, String(message.audio && message.audio.id || ''));
@@ -526,7 +543,6 @@ async function processWhatsAppMessage(env, businessId, detail) {
     const raw = await runCloudflareAI(env,[{role:'system',content:system},...previous],{max_tokens:420});
     reply = txt(raw,1500);
   }
-  await new Promise((resolve) => setTimeout(resolve,1500));
   const sent = await sendWhatsAppText(env,account,token,from,reply);
   const outboundId = sent && sent.messages && sent.messages[0] ? sent.messages[0].id : 'reply-' + messageId;
   await env.DB.prepare("INSERT OR REPLACE INTO whatsapp_messages (message_id, business_id, phone_number_id, wa_id, direction, message_type, body, status, created_at) VALUES (?,?,?,?, 'outbound', 'text', ?, 'submitted', ?)")
@@ -576,6 +592,13 @@ async function handleWhatsAppWebhook(env, body) {
             .bind(taskId,account.business_id,JSON.stringify({phoneNumberId:phoneNumberId,from:from,message:message}),now(),now(),now()).run();
           dispatch.add(account.business_id);
         }
+      }
+      for (const statusEvent of (Array.isArray(value.statuses) ? value.statuses : [])) {
+        const messageId = txt(statusEvent.id, 200);
+        const status = txt(statusEvent.status, 40).toLowerCase();
+        if (!messageId || !status) continue;
+        await env.DB.prepare('UPDATE whatsapp_messages SET status = ? WHERE business_id = ? AND message_id = ?')
+          .bind(status, account.business_id, messageId).run();
       }
       for (const call of (Array.isArray(value.calls) ? value.calls : [])) {
         const callId = txt(call.id || crypto.randomUUID(),160);
