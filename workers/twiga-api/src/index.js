@@ -803,6 +803,7 @@ async function integrationAudit(env,biz,provider,action,actor,note,metadata) {
     .bind(crypto.randomUUID(),biz,provider,action,actor.userId||null,actor.role||'system',actor.admin?1:0,txt(note,500)||null,JSON.stringify(metadata||{}),now()).run();
 }
 async function saveIntegrationD1(env,d) {
+  await ensureIntegrationSchema(env);
   const biz=String(d.businessId||''), provider=integrationSlug(d.provider), credentials=d.credentials;
   if(!/^[0-9a-f-]{36}$/i.test(biz)||!/^[a-z][a-z0-9_-]{1,47}$/.test(provider))throw new Error('Invalid business or provider.');
   if(!credentials||typeof credentials!=='object'||Array.isArray(credentials))throw new Error('Integration credentials are invalid.');
@@ -836,6 +837,7 @@ async function listIntegrationsD1(env,biz) {
   return (rows.results||[]).map(r=>({provider_slug:r.provider_slug,display_name:r.display_name,integration_type:r.integration_type,config:JSON.parse(r.config_json||'{}'),credentials_last4:JSON.parse(r.credentials_last4_json||'{}'),is_primary_ai:Number(r.is_primary_ai)===1,status:r.status,last_test_at:r.last_test_at,last_test_message:r.last_test_message,updated_at:r.updated_at}));
 }
 async function deleteIntegrationD1(env,biz,provider,actor,note) {
+  await ensureIntegrationSchema(env);
   const row=await env.DB.prepare("SELECT provider_slug FROM business_integrations WHERE business_id=? AND provider_slug=?").bind(biz,provider).first();
   if(!row)return false;
   await env.DB.prepare("DELETE FROM business_integrations WHERE business_id=? AND provider_slug=?").bind(biz,provider).run();
