@@ -9,7 +9,8 @@ TWIGA uses Chat33 as its optional social media gateway. Each business can connec
 3. Grant the scopes required for the features that business wants:
    - Posting: `accounts:read`, `posts:read`, `posts:write`, `media:write`.
    - Inbox: `inbox:read`, `inbox:write`.
-   - Comment scopes are not required for this TWIGA release; comment reading/replies are not yet integrated into the TWIGA inbox.
+   - Post comments: `comments:read`, `comments:write`.
+   - Use the workspace API key with these scopes. The separate developer `connect:write` flow is publish-only and is not used for TWIGA's three API-key slots.
 4. Connect the business's social profiles in Chat33 under its channel connections.
 5. Paste the API key into one of the three business slots in TWIGA. Keys are saved by the Worker as encrypted, business-scoped credentials in Cloudflare D1.
 6. To stream new Instagram/Facebook Messenger DMs into TWIGA immediately, configure the Chat33 message webhook at `https://twiga-api.twiga-ke.workers.dev/chat33/webhook` in Chat33 Settings → API Keys → Message webhook. Save the Chat33 signing secret in the matching TWIGA slot.
@@ -19,6 +20,8 @@ TWIGA uses Chat33 as its optional social media gateway. Each business can connec
 - Reads connected social channels from each of the business's Chat33 workspaces.
 - Publishes or schedules a caption and uploaded image/video to selected channels across the connected Chat33 workspaces. Each destination workspace receives its own direct media upload.
 - Reads Instagram and Facebook Messenger DM conversations, loads conversation messages and sends owner-approved replies using the Chat33 API.
+- Reads recent supported post comments through Chat33's documented `list_posts`, `list_post_comments` and `reply_to_comment` MCP tools; saves comment authors into the same tenant-scoped People directory.
+- Lets the owner review and approve a public reply or a permitted private comment reply.
 - Stores social contact identities from Chat33 conversations/webhooks in the business-scoped social contacts table so the People screen can show them alongside phone/Google/CSV contacts.
 - The Inbox also merges messages from TWIGA's separate official Meta WhatsApp Business connection. WhatsApp is not a Chat33 channel; its reply action is gated by Meta's 24-hour customer-service window.
 - The People screen also includes senders from stored WhatsApp conversations and participants from the current business call history.
@@ -30,7 +33,7 @@ Publishing API coverage documented by Chat33 includes Instagram, Facebook, TikTo
 
 Chat33's documented inbox conversation tools currently list Instagram and Facebook Messenger DMs. Do not describe TikTok DMs, YouTube messages, X DMs, Threads DMs or Bluesky DMs as covered by the unified inbox unless Chat33 adds and documents those endpoints. Comment reading/replies are separate features and require the comments scopes and supported platform APIs.
 
-Chat33 lists WhatsApp Business as coming soon. TWIGA therefore retains a separate official Meta WhatsApp connection in the meantime; its messages are merged into the TWIGA inbox using Meta's separate connector, not a Chat33 inbox endpoint. TikTok DMs and TikTok comment inbox are not claimed as supported by the current Chat33 integration. WAHA is retired.
+Chat33 lists WhatsApp Business as coming soon. TWIGA therefore retains a separate optional official Meta WhatsApp connection in the meantime; its messages are merged into TWIGA's inbox using Meta's separate connector, not Chat33. TikTok DMs and TikTok commenter identities are not claimed as supported by Chat33. WAHA is retired.
 
 ## Security and operating rules
 
