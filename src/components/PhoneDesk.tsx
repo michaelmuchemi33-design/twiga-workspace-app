@@ -91,7 +91,6 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
   useEffect(() => { void load(); }, [load]);
 
   const line = config.phoneLine;
-  const lineSettings = line?.settings || {};
   const phoneNumber = String(config.providerNumber || config.number?.phone_number || config.number?.number_e164 || line?.line_number || "Not assigned");
   const serverReady = config.serverDirectReady === true || config.serverProxyReady === true || config.keyConfigured === true;
   const canPublish = !demo && !!supabase && serverReady && config.numberVerified === true && !!line;
@@ -194,8 +193,6 @@ export default function PhoneDesk({ businessId, onOpenProfile, demo = false }: {
       setPlacingTest(false);
     }
   };
-
-  const statusTone = (ready: boolean) => ready ? "text-orange-700 bg-orange-50" : "text-neutral-600 bg-neutral-100";
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
