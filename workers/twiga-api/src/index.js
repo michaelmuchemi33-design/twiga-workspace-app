@@ -309,7 +309,7 @@ async function aiWorker(req, env) {
     const message = String(error && error.message ? error.message : error);
     const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : message.indexOf('INACTIVE|') === 0 ? 403 : 500;
     const reference = crypto.randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase();
-    const profileFailure = message.match(/^TWIGA_PROFILE_READ_FAILED\\|(\\d{3})$/);
+    const profileFailure = message.match(/^TWIGA_PROFILE_READ_FAILED\|(\d{3})$/);
     const publicError = status === 401
       ? 'Sign in again to use the TWIGA Worker.'
       : message.indexOf('INACTIVE|') === 0
@@ -322,8 +322,8 @@ async function aiWorker(req, env) {
               ? 'The TWIGA Business Worker is not provisioned for this workspace yet.'
               : 'TWIGA Worker could not finish this request. Reference: ' + reference;
     const safeDiagnostic = message
-      .replace(/Bearer\\s+[^\\s"'\\x60]+/gi, 'Bearer [redacted]')
-      .replace(/\\b(?:sb_secret|sb_publishable|sk_live|pk_live)_[A-Za-z0-9_-]+/g, '[redacted-key]')
+      .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+      .replace(/\b(?:sb_secret|sb_publishable|sk_live|pk_live)_[A-Za-z0-9_-]+/g, '[redacted-key]')
       .slice(0, 500);
     console.error('[TWIGA Worker] request failed', {
       reference: reference,
