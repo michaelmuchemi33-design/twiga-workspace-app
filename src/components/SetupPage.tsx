@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from "react";
+import * as pdfjsLib from "pdfjs-dist";
+import * as XLSX from "xlsx";
+import * as mammoth from "mammoth";
 import { supabase } from "@/lib/supabase";
 import { useStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { IconSparkle, IconSend, IconCheck } from "@/components/Icons";
+import { IconSparkle, IconSend, IconCheck, IconFile, IconClose } from "@/components/Icons";
 import { cn } from "@/lib/utils";
 
 type ChatMessage = { role: "assistant" | "user"; content: string };
 type ProfileDraft = Record<string, any>;
+type SetupDocument = { id: string; name: string; contentType: string; fileId: string; extractedText: string; extractionStatus: string; sizeBytes: number };
 const API = "https://twiga-api.twiga-ke.workers.dev";
 
 const firstMessage = "Hi! Let’s set up your receptionist. I already have your business name. What do you sell or do, and what do customers usually come to you for? We’ll build this together one step at a time.";
@@ -50,6 +54,7 @@ export default function SetupPage({ demo = false, onDone }: {
   businessId?: string;
   onDone: () => void;
   onBusinessCreated: (id: string) => void;
+  onOpenConnections: () => void;
 }) {
   const { businessId } = useStore();
   const [messages, setMessages] = useState<ChatMessage[]>([{role:"assistant",content:firstMessage}]);
@@ -60,6 +65,9 @@ export default function SetupPage({ demo = false, onDone }: {
   const [draft, setDraft] = useState<ProfileDraft | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [documents, setDocuments] = useState<SetupDocument[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -74,7 +82,18 @@ export default function SetupPage({ demo = false, onDone }: {
     const response = await fetch(API + "/ai/setup", {
       method:"POST",
       headers:{"Content-Type":"application/json","Authorization":"Bearer " + token},
-      body:JSON.stringify({token,business_id:businessId,action,messages:history})
+      body:JSON.stringify({
+        token,
+        business_id:businessId,
+        action,
+        messages:history,
+        documents:documents.map((document) => ({
+          name:document.name,
+          contentType:document.contentType,
+          extractedText:document.extractedText,
+          extractionStatus:document.extractionStatus
+        }))
+      })
     });
     const raw = await response.text();
     let data: any = {};
@@ -86,6 +105,78 @@ export default function SetupPage({ demo = false, onDone }: {
       throw new Error([message || `TWIGA Worker request failed (HTTP ${response.status}). Please try again.`, reference ? `Reference: ${reference}` : ""].filter(Boolean).join(" "));
     }
     return data;
+  };
+
+  const extractDocumentText = async (file: File) => {
+    const extension = file.name.toLowerCase().split(".").pop() || "";
+    if (["txt", "csv", "tsv", "md", "json"].includes(extension) || file.type.startsWith("text/")) {
+      return { text: (await file.text()).slice(0, 12000), status: "Text extracted" };
+    }
+    if (["xlsx", "xls"].includes(extension)) {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellText: true, cellDates: true });
+      const sheets = workbook.SheetNames.slice(0, 8).map((name) => {
+        const sheet = workbook.Sheets[name];
+        return "SHEET: " + name + "\n" + XLSX.utils.sheet_to_csv(sheet, { FS: "\t" });
+      });
+      return { text: sheets.join("\n\n").slice(0, 12000), status: "Spreadsheet tables extracted" };
+    }
+    if (extension === "docx") {
+      const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+      return { text: String(result.value || "").slice(0, 12000), status: "Word document text extracted" };
+    }
+    if (extension === "pdf" || file.type === "application/pdf") {
+      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+      const pages: string[] = [];
+      for (let pageNumber = 1; pageNumber <= Math.min(pdf.numPages, 30); pageNumber += 1) {
+        const page = await pdf.getPage(pageNumber);
+        const content = await page.getTextContent();
+        pages.push("PAGE " + pageNumber + "\n" + content.items.map((item: any) => String(item.str || "")).join(" "));
+      }
+      const text = pages.join("\n\n").slice(0, 12000);
+      return { text, status: text.trim() ? "PDF text extracted" : "PDF stored; no selectable text found (scanned PDFs need OCR)" };
+    }
+    return { text: "", status: "File stored in Cloudflare; text extraction is not available for this format yet" };
+  };
+
+  const uploadDocuments = async (files: FileList | null) => {
+    if (!files || !files.length || uploading || demo || !businessId || !supabase) return;
+    setUploading(true); setError(""); setNotice("");
+    try {
+      const session = await supabase.auth.getSession();
+      const token = session.data.session?.access_token || "";
+      if (!token) throw new Error("Sign in again before uploading business files.");
+      const uploaded: SetupDocument[] = [];
+      for (const file of Array.from(files).slice(0, 8)) {
+        if (file.size > 25 * 1024 * 1024) throw new Error(file.name + " is larger than the 25 MB file limit.");
+        const extracted = await extractDocumentText(file);
+        const form = new FormData();
+        form.append("file", file, file.name);
+        const response = await fetch("https://twiga-business-files.twiga-ke.workers.dev/v1/files/" + encodeURIComponent(businessId), {
+          method: "POST",
+          headers: { Authorization: "Bearer " + token },
+          body: form
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.error || payload.uploaded !== true) throw new Error(String(payload.error || ("Could not upload " + file.name + " (HTTP " + response.status + ").")));
+        uploaded.push({
+          id: crypto.randomUUID(),
+          name: file.name,
+          contentType: file.type || "application/octet-stream",
+          fileId: String(payload.file?.file_id || ""),
+          extractedText: extracted.text,
+          extractionStatus: extracted.status,
+          sizeBytes: Number(payload.file?.size_bytes || file.size)
+        });
+      }
+      setDocuments((current) => [...current, ...uploaded].slice(-8));
+      const readableCount = uploaded.filter((item) => item.extractedText.trim()).length;
+      setNotice(uploaded.length + " file(s) saved to this business's private Cloudflare storage. " + readableCount + " file(s) have readable text for the setup AI.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Business documents could not be uploaded.");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
   };
 
   const sendMessage = async (value = input) => {
@@ -185,6 +276,14 @@ export default function SetupPage({ demo = false, onDone }: {
           <div ref={endRef} />
         </div>
         <div className="border-t border-neutral-100 bg-white p-3 sm:p-4 dark:border-neutral-800 dark:bg-neutral-900">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div><p className="text-xs font-semibold text-neutral-800 dark:text-neutral-200">Business documents & data</p><p className="text-[11px] text-neutral-500">Upload Excel, CSV, PDF, Word, text, images and PowerPoint. Readable tables/text are sent to setup AI; other supported files are stored privately.</p></div>
+            <Button type="button" variant="outline" onClick={() => fileRef.current?.click()} disabled={demo || uploading || documents.length >= 8} className="h-9 rounded-lg border-neutral-300 bg-white text-xs text-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"><IconFile className="mr-1.5 h-4 w-4" />{uploading ? "Uploading…" : "Add files"}</Button>
+            <input ref={fileRef} type="file" multiple className="hidden" accept=".xlsx,.xls,.csv,.tsv,.pdf,.docx,.txt,.md,.json,.png,.jpg,.jpeg,.webp,.gif,.pptx" onChange={(event) => void uploadDocuments(event.target.files)} />
+          </div>
+          {documents.length > 0 && <div className="mb-3 flex flex-wrap gap-2">
+            {documents.map((document) => <span key={document.id} className="inline-flex max-w-full items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-2.5 py-1.5 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200"><IconFile className="h-3.5 w-3.5 shrink-0 text-orange-500" /><span className="min-w-0"><span className="block truncate font-semibold">{document.name}</span><span className="block text-[10px] text-neutral-500">{document.extractionStatus} · {Math.ceil(document.sizeBytes / 1024)} KB</span></span><button type="button" onClick={() => setDocuments((current) => current.filter((item) => item.id !== document.id))} className="rounded p-1 hover:bg-neutral-200 dark:hover:bg-neutral-800" aria-label={"Remove " + document.name}><IconClose className="h-3 w-3" /></button></span>)}
+          </div>}
           <div className="flex items-end gap-2">
             <Textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder="Describe your business, services, prices, or how you work…" rows={2} className="min-h-[54px] resize-y rounded-xl border-neutral-200 text-sm" disabled={demo || sending || building} />
             <Button onClick={() => void sendMessage()} disabled={demo || sending || building || !input.trim()} className="h-[54px] rounded-xl bg-neutral-950 px-4 text-white hover:bg-neutral-800 dark:bg-black dark:text-white"><IconSend className="h-4 w-4" /><span className="sr-only">Send</span></Button>
@@ -196,10 +295,13 @@ export default function SetupPage({ demo = false, onDone }: {
       </section>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="max-w-xl text-xs leading-5 text-neutral-500 dark:text-neutral-400">TWIGA may ask about voice, WhatsApp, bookings, payments, SMS and Google tools. API keys and passwords are never needed in this chat — connect them securely under Connections & permissions.</p>
-        <Button onClick={() => void buildProfile()} disabled={demo || building || sending || messages.every((item) => item.role !== "user")} variant="outline" className="rounded-xl border-neutral-300 bg-white text-neutral-900 hover:bg-neutral-50">
+        <p className="max-w-xl text-xs leading-5 text-neutral-500 dark:text-neutral-400">TWIGA will identify the apps and API keys required for the workflows you describe, then prompt you to connect each missing provider through secure forms. Never send keys or PINs in the chat.</p>
+        <div className="flex flex-wrap gap-2">
+        <Button type="button" onClick={onOpenConnections} disabled={demo} variant="outline" className="rounded-xl border-orange-300 bg-orange-50 text-orange-900 hover:bg-orange-100">Connect services & API keys</Button>
+        <Button onClick={() => void buildProfile()} disabled={demo || building || sending || uploading || (messages.every((item) => item.role !== "user") && documents.length === 0)} variant="outline" className="rounded-xl border-neutral-300 bg-white text-neutral-900 hover:bg-neutral-50">
           <IconSparkle className="mr-2 h-4 w-4 text-orange-500" /> {building ? "Preparing…" : "Build my receptionist"}
         </Button>
+        </div>
       </div>
 
       {draft && (
@@ -219,7 +321,8 @@ export default function SetupPage({ demo = false, onDone }: {
               ["Receptionist tone",draft.brand_voice]
             ].filter((item) => String(item[1] || "").trim()).map(([label,value]) => <div key={String(label)} className="rounded-xl bg-neutral-50 p-3 dark:bg-neutral-800"><p className="text-xs font-semibold text-neutral-500">{label}</p><p className="mt-1 whitespace-pre-wrap text-sm text-neutral-800 dark:text-neutral-200">{readableText(value)}</p></div>)}
           </div>
-          {Array.isArray(draft.setup_details?.integration_requests) && draft.setup_details.integration_requests.length > 0 && <p className="text-xs text-neutral-600 dark:text-neutral-300">Requested connections: {draft.setup_details.integration_requests.map((value: unknown) => readableText(value)).filter(Boolean).join(", ")}. These will be connected separately in the secure Connections screen.</p>}
+          {Array.isArray(draft.setup_details?.integration_requests) && draft.setup_details.integration_requests.length > 0 && <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 dark:border-orange-900 dark:bg-orange-950/30"><p className="text-sm font-semibold text-orange-950 dark:text-orange-100">Connections TWIGA identified</p><ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-orange-950 dark:text-orange-100">{draft.setup_details.integration_requests.map((value: unknown, index: number) => <li key={index}>{readableText(value)}</li>)}</ul><Button type="button" onClick={onOpenConnections} disabled={demo} className="mt-3 rounded-xl bg-neutral-950 text-white hover:bg-neutral-800">Add the requested keys & connections</Button></div>}
+          {Array.isArray(draft.setup_details?.workflow_requests) && draft.setup_details.workflow_requests.length > 0 && <div className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-700"><p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">{draft.setup_details.workflow_requests.length} workflows mapped for this business</p><ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-neutral-600 dark:text-neutral-300">{draft.setup_details.workflow_requests.slice(0,12).map((value: unknown, index: number) => <li key={index}>{readableText(value)}</li>)}</ul><p className="mt-2 text-[11px] text-neutral-500">These are planned workflows, not a claim that every provider action is already deployed.</p></div>}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-neutral-100 pt-3 dark:border-neutral-800">
             <p className="text-xs text-neutral-500 dark:text-neutral-400">Unknown prices or policies are left blank — TWIGA will not make them up.</p>
             <Button onClick={() => void saveProfile()} disabled={saving || demo} className="rounded-xl bg-orange-500 text-white hover:bg-orange-600"><IconCheck className="mr-2 h-4 w-4" />{saving ? "Saving…" : "Save business profile"}</Button>
