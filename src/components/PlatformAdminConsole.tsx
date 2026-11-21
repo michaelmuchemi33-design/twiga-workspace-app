@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import BringYourOwnAPI from "@/components/BringYourOwnAPI";
 
 type Row = Record<string, any>;
 const money = (value: unknown) => "KSh " + Number(value || 0).toLocaleString("en-KE", { maximumFractionDigits: 2 });
@@ -249,7 +250,7 @@ export default function PlatformAdminConsole() {
         <p className="mt-1 text-xs text-neutral-500">{selectedClient ? selectedClient.name + " · " + (selectedClient.ownerEmail || "Owner email not set") : "Select a business from the directory."}</p>
         <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3">
           <p className="text-sm font-semibold text-neutral-950">Business connections & environment keys</p>
-          <p className="mt-1 text-xs leading-5 text-neutral-600">Assign a provider key to this business only. TWIGA validates it, stores it encrypted in Supabase Vault, and keeps it out of the customer’s browser and Worker environment.</p>
+          <p className="mt-1 text-xs leading-5 text-neutral-600">Assign a legacy voice or payment provider key to this business only. TWIGA validates it and stores it in the business's encrypted Cloudflare D1 workspace, not in shared Worker environment variables.</p>
           <label className="mt-3 block text-xs font-semibold text-neutral-700">Provider
             <select value={providerToAssign} onChange={(event) => { setProviderToAssign(event.target.value); setProviderMessage(""); }} disabled={busy} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-2 text-sm text-neutral-900">
               <option value="sautikit">SautiKit · voice and phone</option>
@@ -261,7 +262,10 @@ export default function PlatformAdminConsole() {
           </label>
           <button onClick={() => void saveBusinessProviderKey()} disabled={busy || !selectedBusinessId || !providerApiKey.trim()} className="mt-3 w-full rounded-lg bg-neutral-950 px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40">{busy ? "Validating & saving…" : "Validate and assign key"}</button>
           {providerMessage && <p role="status" className="mt-2 rounded-lg bg-white p-2.5 text-xs leading-5 text-neutral-700">{providerMessage}</p>}
-          <p className="mt-2 text-[11px] leading-5 text-neutral-500">Only the last four characters are retained for display. The full key is never returned to this screen. Other integrations can be added through the same isolated workspace connection model.</p>
+          <p className="mt-2 text-[11px] leading-5 text-neutral-500">Only the last four characters are retained for display. The full key is never returned to this screen.</p>
+        </div>
+        <div className="mt-4">
+          <BringYourOwnAPI businessId={selectedBusinessId} adminMode />
         </div>
         <label className="mt-3 block text-xs font-semibold text-neutral-600">Access status<select value={accessStatus} onChange={(event) => setAccessStatus(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 bg-white px-2 text-sm"><option value="TRIAL">Trial</option><option value="ACTIVE">Active</option><option value="SUSPENDED">Suspended</option></select></label>
         <label className="mt-3 block text-xs font-semibold text-neutral-600">Paid through<input type="date" value={paidThrough} onChange={(event) => setPaidThrough(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-neutral-200 px-2 text-sm"/></label>
