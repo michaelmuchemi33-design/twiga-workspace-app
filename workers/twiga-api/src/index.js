@@ -1,3 +1,4 @@
+import { Container, getContainer } from '@cloudflare/containers';
 
 const QUOTA = 524288000;
 const AI_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
@@ -29,10 +30,17 @@ export default {
     if (req.method === 'OPTIONS') return new Response(null, {status: 204, headers: cors});
     const path = new URL(req.url).pathname;
 
+    if (path === '/waha/status' && req.method === 'GET') return wahaStatus(req, env);
+    if (path === '/waha/connect' && req.method === 'POST') return wahaConnect(req, env);
+    if (path === '/waha/qr' && req.method === 'GET') return wahaQr(req, env);
+    if (path === '/waha/pairing-code' && req.method === 'POST') return wahaPairingCode(req, env);
+    if (path === '/waha/disconnect' && req.method === 'POST') return wahaDisconnect(req, env);
+    if (path === '/whatsapp/waha-webhook' && req.method === 'POST') return wahaWebhook(req, env, ctx);
     if (path === '/whatsapp/webhook' && req.method === 'GET') return verifyMetaWebhook(req, env);
     if (path === '/whatsapp/webhook' && req.method === 'POST') return whatsappWebhook(req, env, ctx);
     if (path === '/whatsapp/config' && req.method === 'GET') return whatsappConfig(req, env);
     if (path === '/whatsapp/connect' && req.method === 'POST') return whatsappConnect(req, env);
+    if (req.method === 'POST' && path === '/ai/setup-chat') return aiSetupChat(req, env);
     if (req.method === 'POST' && path === '/ai/worker') return aiWorker(req, env);
     if (req.method === 'POST' && path === '/ai/chat') return aiChat(req, env);
     if (req.method === 'POST' && path === '/ai/demo') return aiDemo(req, env);
@@ -51,7 +59,7 @@ export default {
     }
   },
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(dispatchDueBusinessWorkers(env));
+    ctx.waitUntil(Promise.allSettled([dispatchDueBusinessWorkers(env), renewActiveWahaContainers(env)]));
   }
 };
 
@@ -71,7 +79,10 @@ async function ensureBusinessWorkerSchema(env) {
       env.DB.prepare("CREATE TABLE IF NOT EXISTS whatsapp_accounts (business_id TEXT PRIMARY KEY, waba_id TEXT NOT NULL, phone_number_id TEXT NOT NULL UNIQUE, display_phone_number TEXT NOT NULL DEFAULT '', verified_name TEXT NOT NULL DEFAULT '', token_cipher TEXT NOT NULL, token_iv TEXT NOT NULL, token_expires_at TEXT, status TEXT NOT NULL DEFAULT 'connected', last_webhook_at TEXT, updated_at TEXT NOT NULL)"),
       env.DB.prepare("CREATE TABLE IF NOT EXISTS whatsapp_messages (message_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, phone_number_id TEXT NOT NULL, wa_id TEXT NOT NULL, direction TEXT NOT NULL, message_type TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, created_at TEXT NOT NULL)"),
       env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_conversation ON whatsapp_messages(business_id, wa_id, created_at)"),
-      env.DB.prepare("CREATE TABLE IF NOT EXISTS whatsapp_conversations (business_id TEXT NOT NULL, phone_number_id TEXT NOT NULL, wa_id TEXT NOT NULL, last_inbound_at TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (business_id, wa_id))")
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS whatsapp_conversations (business_id TEXT NOT NULL, phone_number_id TEXT NOT NULL, wa_id TEXT NOT NULL, last_inbound_at TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (business_id, wa_id))"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS waha_accounts (business_id TEXT PRIMARY KEY, session_name TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'STARTING', display_phone_number TEXT NOT NULL DEFAULT '', profile_name TEXT NOT NULL DEFAULT '', webhook_token_hash TEXT NOT NULL, last_event_at TEXT, last_error TEXT, updated_at TEXT NOT NULL)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS waha_messages (message_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, session_name TEXT NOT NULL, chat_id TEXT NOT NULL, direction TEXT NOT NULL, message_type TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'received', created_at TEXT NOT NULL)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_waha_messages_chat ON waha_messages(business_id, chat_id, created_at)")
     ]).catch((error) => { businessWorkerSchemaReady = null; throw error; });
   }
   return businessWorkerSchemaReady;
@@ -233,6 +244,7 @@ async function runBusinessAgentTasks(env, businessId) {
       if (task.task_type === 'daily_review') result = await runBusinessReview(env, businessId, task.id);
       else if (task.task_type === 'whatsapp_reply') result = await processWhatsAppMessage(env, businessId, JSON.parse(task.detail || '{}'));
       else if (task.task_type === 'whatsapp_call_event') result = await processWhatsAppCallEvent(env, businessId, JSON.parse(task.detail || '{}'));
+      else if (task.task_type === 'waha_message') result = await processWahaMessage(env, businessId, JSON.parse(task.detail || '{}'));
       else throw new Error('Unknown automated task type.');
       if (task.task_type !== 'daily_review') await env.DB.prepare("UPDATE business_worker_tasks SET status = 'done', result_json = ?, updated_at = ? WHERE business_id = ? AND id = ?").bind(JSON.stringify(result || {}), now(), businessId, task.id).run();
       outcomes.push({id: task.id, ok: true, result: result});
@@ -665,6 +677,447 @@ async function whatsappWebhook(req, env, ctx) {
     await Promise.allSettled(businesses.map((businessId) => dispatchBusinessAgent(env,businessId)));
   })());
   return json({ok:true});
+}
+
+
+function toBase64(bytes) {
+  let binary = '';
+  const array = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  for (let i = 0; i < array.length; i++) binary += String.fromCharCode(array[i]);
+  return btoa(binary);
+}
+async function sha256Hex(value) {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value))));
+  return Array.from(digest).map((byte) => byte.toString(16).padStart(2,'0')).join('');
+}
+async function tenantProviderSecret(env, businessId, provider) {
+  const response = await fetch(env.SUPABASE_URL + '/rest/v1/rpc/twiga_get_provider_secret', {
+    method:'POST',
+    headers:{apikey:env.SUPABASE_KEY,Authorization:'Bearer '+env.SUPABASE_KEY,'Content-Type':'application/json'},
+    body:JSON.stringify({p_business_id:businessId,p_provider:provider})
+  });
+  if (!response.ok) throw new Error('Business provider settings could not be read securely.');
+  return await response.json();
+}
+async function wahaTenantRuntime(env, businessId) {
+  const values = await Promise.all([
+    tenantProviderSecret(env,businessId,'waha_r2_bucket'),
+    tenantProviderSecret(env,businessId,'waha_r2_access_key_id'),
+    tenantProviderSecret(env,businessId,'waha_r2_secret_access_key')
+  ]);
+  const bucket = String(values[0] || '').trim();
+  const accessKey = String(values[1] || '').trim();
+  const secretKey = String(values[2] || '').trim();
+  if (!bucket || !accessKey || !secretKey) {
+    throw new Error('WhatsApp storage has not been assigned to this business by the TWIGA administrator yet.');
+  }
+  if (!env.WAHA_INTERNAL_API_KEY) throw new Error('The TWIGA WAHA service key has not been configured in Cloudflare.');
+  if (!env.R2_ACCOUNT_ID) throw new Error('The Cloudflare R2 account has not been configured for WAHA.');
+  return {
+    WHATSAPP_DEFAULT_ENGINE:'GOWS',
+    WAHA_API_KEY:String(env.WAHA_INTERNAL_API_KEY),
+    WAHA_RUN_XVFB:'false',
+    WAHA_LOCAL_STORE_BASE_DIR:'/app/.sessions',
+    R2_ACCOUNT_ID:String(env.R2_ACCOUNT_ID),
+    R2_BUCKET_NAME:bucket,
+    AWS_ACCESS_KEY_ID:accessKey,
+    AWS_SECRET_ACCESS_KEY:secretKey,
+    AWS_DEFAULT_REGION:'auto',
+    AWS_REGION:'auto',
+    WAHA_LOG_LEVEL:'info'
+  };
+}
+async function wahaContainerStub(env, businessId) {
+  const runtime = await wahaTenantRuntime(env,businessId);
+  if (!env.WAHA_CONTAINER) throw new Error('The WAHA Container binding is not deployed.');
+  const container = getContainer(env.WAHA_CONTAINER,businessId);
+  await container.startAndWaitForPorts({
+    ports:[3000],
+    startOptions:{envVars:runtime,enableInternet:true},
+    cancellationOptions:{portReadyTimeoutMS:90000,instanceGetTimeoutMS:12000}
+  });
+  container.renewActivityTimeout();
+  return container;
+}
+async function wahaRequest(env, businessId, path, method, body) {
+  const container = await wahaContainerStub(env,businessId);
+  const headers = new Headers({'Accept':'application/json','X-Api-Key':String(env.WAHA_INTERNAL_API_KEY)});
+  if (body !== undefined) headers.set('Content-Type','application/json');
+  const response = await container.containerFetch('http://localhost:3000'+path,{
+    method:method || 'GET',
+    headers:headers,
+    ...(body !== undefined ? {body:JSON.stringify(body)} : {})
+  },3000);
+  return response;
+}
+function wahaUrlSegment(value) {
+  return encodeURIComponent(String(value || ''));
+}
+async function wahaAccount(env,businessId) {
+  return await env.DB.prepare('SELECT business_id, session_name, status, display_phone_number, profile_name, webhook_token_hash, last_event_at, last_error, updated_at FROM waha_accounts WHERE business_id = ?')
+    .bind(businessId).first();
+}
+async function wahaEnsureSession(env,ctx,token) {
+  await ensureBusinessWorkerSchema(env);
+  let account = await wahaAccount(env,ctx.biz.id);
+  if (account) return account;
+  const digest = await sha256Hex(ctx.biz.id);
+  const sessionName = 'twiga_' + digest.slice(0,18);
+  const webhookToken = toBase64(crypto.getRandomValues(new Uint8Array(32))).replace(/[^a-zA-Z0-9]/g,'').slice(0,40);
+  const webhookHash = await sha256Hex(webhookToken);
+  const timestamp = now();
+  await env.DB.prepare("INSERT OR IGNORE INTO waha_accounts (business_id,session_name,status,webhook_token_hash,updated_at) VALUES (?,?, 'STARTING', ?, ?)")
+    .bind(ctx.biz.id,sessionName,webhookHash,timestamp).run();
+  account = await wahaAccount(env,ctx.biz.id);
+  if (!account) throw new Error('WhatsApp session could not be created.');
+  const hooksUrl = String(env.WAHA_WEBHOOK_URL || 'https://twiga-api.twiga-ke.workers.dev/whatsapp/waha-webhook');
+  const greeting = 'Thanks for calling or messaging. Please send us a WhatsApp text or voice note and our receptionist will help.';
+  const sessionPayload = {
+    name:sessionName,
+    start:true,
+    config:{
+      webhooks:[{
+        url:hooksUrl,
+        events:['message','session.status'],
+        retries:{policy:'linear',delaySeconds:2,attempts:5},
+        customHeaders:[{name:'X-Twiga-Webhook-Token',value:webhookToken}]
+      }]
+    },
+    apps:[{
+      app:'calls',
+      id:'twiga-calls-'+digest.slice(0,8),
+      config:{
+        dm:{reject:true,message:greeting},
+        group:{reject:true,message:'TWIGA answers private business messages. Please message the business directly.'}
+      }
+    }]
+  };
+  try {
+    const response = await wahaRequest(env,ctx.biz.id,'/api/sessions','POST',sessionPayload);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok && response.status !== 422 && response.status !== 409) {
+      const reason = txt(data && (data.message || data.error) || 'WAHA could not start this session.',300);
+      throw new Error(reason);
+    }
+    await env.DB.prepare("UPDATE waha_accounts SET status = 'STARTING', last_error = NULL, updated_at = ? WHERE business_id = ?")
+      .bind(now(),ctx.biz.id).run();
+    await syncBusinessWorkerProfile(env,ctx,token);
+    return await wahaAccount(env,ctx.biz.id);
+  } catch (error) {
+    await env.DB.prepare("UPDATE waha_accounts SET status = 'FAILED', last_error = ?, updated_at = ? WHERE business_id = ?")
+      .bind(txt(error && error.message ? error.message : error,300),now(),ctx.biz.id).run();
+    throw error;
+  }
+}
+async function wahaReadStatus(env,businessId,account) {
+  if (!account) return {connected:false,status:'NOT_CONNECTED',label:'Not connected',phoneNumber:''};
+  try {
+    const response = await wahaRequest(env,businessId,'/api/sessions/'+wahaUrlSegment(account.session_name),'GET');
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error('WAHA session status could not be loaded.');
+    const status = String(data.status || data.state || account.status || 'STARTING').toUpperCase();
+    let phone = String(account.display_phone_number || '');
+    let name = String(account.profile_name || '');
+    if (status === 'WORKING' || status === 'SCAN_QR_CODE') {
+      const meResponse = await wahaRequest(env,businessId,'/api/sessions/'+wahaUrlSegment(account.session_name)+'/me','GET');
+      if (meResponse.ok) {
+        const me = await meResponse.json().catch(() => ({}));
+        phone = String(me.id || me.wid || me.phone || phone).replace(/@c\\.us$/,'');
+        name = String(me.pushName || me.name || name);
+      }
+    }
+    await env.DB.prepare('UPDATE waha_accounts SET status = ?, display_phone_number = ?, profile_name = ?, last_error = NULL, updated_at = ? WHERE business_id = ?')
+      .bind(status,phone,name,now(),businessId).run();
+    return {
+      connected:status === 'WORKING',
+      status:status,
+      label:status === 'WORKING' ? 'Connected' : status === 'SCAN_QR_CODE' ? 'Waiting for QR scan' : status === 'STARTING' ? 'Starting WhatsApp' : status,
+      phoneNumber:phone,
+      profileName:name,
+      lastEventAt:account.last_event_at || null
+    };
+  } catch (error) {
+    return {connected:false,status:'SERVICE_UNAVAILABLE',label:'Reconnecting',phoneNumber:account.display_phone_number || '',error:txt(error && error.message ? error.message : error,200)};
+  }
+}
+function wahaBusinessAuth(req) {
+  const auth = req.headers.get('Authorization') || '';
+  return auth.replace(/^Bearer\\s+/i,'').trim();
+}
+async function wahaStatus(req,env) {
+  try {
+    const url = new URL(req.url);
+    const token = wahaBusinessAuth(req);
+    const businessId = url.searchParams.get('business_id') || req.headers.get('x-business-id') || '';
+    const ctx = await authorize(env,token,businessId);
+    const account = await wahaAccount(env,ctx.biz.id);
+    const result = await wahaReadStatus(env,ctx.biz.id,account);
+    const runtimeStatus = await (async () => {
+      try { await wahaTenantRuntime(env,ctx.biz.id); return 'READY'; }
+      catch (error) { return 'NEEDS_ADMIN_SETUP'; }
+    })();
+    return json({ok:true,ready:runtimeStatus === 'READY',runtimeStatus:runtimeStatus,...result,connected:result.connected,session:account ? account.session_name : ''});
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error);
+    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : message.indexOf('INACTIVE|') === 0 ? 403 : 500;
+    return json({ok:false,error:status === 401 ? 'Sign in again.' : status === 403 ? 'This workspace is not available to your account.' : 'WhatsApp status could not be loaded.'},status);
+  }
+}
+async function wahaConnect(req,env) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const token = String(body.token || wahaBusinessAuth(req)).trim();
+    const ctx = await authorize(env,token,body.business_id);
+    await wahaEnsureSession(env,ctx,token);
+    const account = await wahaAccount(env,ctx.biz.id);
+    const status = await wahaReadStatus(env,ctx.biz.id,account);
+    return json({ok:true,session:account.session_name,...status});
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error);
+    const code = message.indexOf('not been assigned') >= 0 || message.indexOf('not been configured') >= 0 || message.indexOf('binding is not deployed') >= 0 ? 503 : message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : 400;
+    return json({ok:false,error:txt(message,300),code:code === 503 ? 'ADMIN_SETUP_REQUIRED' : 'WHATSAPP_CONNECT_FAILED'},code);
+  }
+}
+async function wahaQr(req,env) {
+  try {
+    const url = new URL(req.url);
+    const token = wahaBusinessAuth(req);
+    const businessId = url.searchParams.get('business_id') || req.headers.get('x-business-id') || '';
+    const ctx = await authorize(env,token,businessId);
+    const account = await wahaEnsureSession(env,ctx,token);
+    const response = await wahaRequest(env,ctx.biz.id,'/api/'+wahaUrlSegment(account.session_name)+'/auth/qr','GET');
+    if (!response.ok) {
+      const detail = await response.text();
+      return json({ok:false,error:txt(detail || 'QR code is not ready yet. Start pairing with your phone or try again.',240)},response.status);
+    }
+    const data = await response.arrayBuffer();
+    return json({ok:true,qrDataUrl:'data:image/png;base64,'+toBase64(data)});
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error);
+    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : 400;
+    return json({ok:false,error:txt(message,240)},status);
+  }
+}
+async function wahaPairingCode(req,env) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const token = String(body.token || wahaBusinessAuth(req)).trim();
+    const ctx = await authorize(env,token,body.business_id);
+    const phone = String(body.phone_number || '').replace(/[^0-9]/g,'');
+    if (!/^\\d{10,15}$/.test(phone)) return json({ok:false,error:'Enter the WhatsApp number with country code, without + or spaces. Example: 254712345678.'},400);
+    const account = await wahaEnsureSession(env,ctx,token);
+    const response = await wahaRequest(env,ctx.biz.id,'/api/'+wahaUrlSegment(account.session_name)+'/auth/request-code','POST',{phoneNumber:phone});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return json({ok:false,error:txt(data && (data.message || data.error) || 'WhatsApp could not issue a pairing code. Try QR scanning instead.',240)},response.status);
+    return json({ok:true,code:String(data.code || ''),message:'Enter this code in the Linked devices section of WhatsApp on your phone.'});
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error);
+    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : 400;
+    return json({ok:false,error:txt(message,240)},status);
+  }
+}
+async function wahaDisconnect(req,env) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const token = String(body.token || wahaBusinessAuth(req)).trim();
+    const ctx = await authorize(env,token,body.business_id);
+    const account = await wahaAccount(env,ctx.biz.id);
+    if (!account) return json({ok:true,disconnected:true});
+    const response = await wahaRequest(env,ctx.biz.id,'/api/sessions/'+wahaUrlSegment(account.session_name)+'/logout','POST',{});
+    if (!response.ok) {
+      const details = await response.text();
+      return json({ok:false,error:txt(details || 'WhatsApp could not be disconnected.',240)},response.status);
+    }
+    await env.DB.prepare('DELETE FROM waha_accounts WHERE business_id = ?').bind(ctx.biz.id).run();
+    return json({ok:true,disconnected:true,message:'WhatsApp has been disconnected from this business.'});
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error);
+    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : 400;
+    return json({ok:false,error:txt(message,240)},status);
+  }
+}
+async function wahaWebhook(req,env,ctx) {
+  const raw = await req.text();
+  let body;
+  try { body = JSON.parse(raw); } catch (_) { return json({ok:false,error:'Invalid webhook JSON.'},400); }
+  const session = txt(body.session,80);
+  if (!session) return json({ok:true,ignored:true});
+  const account = await env.DB.prepare('SELECT business_id, session_name, webhook_token_hash FROM waha_accounts WHERE session_name = ?').bind(session).first();
+  if (!account) return json({ok:true,ignored:true});
+  const supplied = req.headers.get('X-Twiga-Webhook-Token') || '';
+  const suppliedHash = await sha256Hex(supplied);
+  if (!supplied || suppliedHash !== account.webhook_token_hash) return json({ok:false,error:'Invalid WAHA webhook token.'},401);
+  const event = String(body.event || '');
+  const payload = body.payload || {};
+  if (event === 'session.status') {
+    const status = String(payload.status || body.status || 'STARTING').toUpperCase();
+    const me = payload.me || {};
+    const phone = String(me.id || me.wid || '').replace(/@c\\.us$/,'');
+    await env.DB.prepare('UPDATE waha_accounts SET status = ?, display_phone_number = COALESCE(NULLIF(?,\\'\\'),display_phone_number), profile_name = COALESCE(NULLIF(?,\\'\\'),profile_name), last_event_at = ?, last_error = NULL, updated_at = ? WHERE business_id = ?')
+      .bind(status,phone,String(me.pushName || ''),now(),now(),account.business_id).run();
+    return json({ok:true});
+  }
+  if (event === 'message' || event === 'message.any') {
+    const message = payload._data && payload._data.message ? payload._data.message : payload;
+    if (payload.fromMe === true || message.fromMe === true) return json({ok:true,ignored:true});
+    const messageId = txt(payload.id || message.id || payload._data && payload._data.id,180);
+    const chatId = txt(payload.from || message.from || payload.chatId,100);
+    if (!messageId || !chatId || chatId.indexOf('@g.us') >= 0) return json({ok:true,ignored:true});
+    const bodyText = txt(payload.body || message.conversation || message.extendedTextMessage && message.extendedTextMessage.text,4000);
+    const messageType = txt(payload.type || (payload.hasMedia ? 'media' : 'text'),30);
+    const timestamp = payload.timestamp ? new Date(Number(payload.timestamp) * 1000).toISOString() : now();
+    const saved = await env.DB.prepare("INSERT OR IGNORE INTO waha_messages (message_id,business_id,session_name,chat_id,direction,message_type,body,status,created_at) VALUES (?,?,?,?, 'inbound', ?, ?, 'queued', ?)")
+      .bind(messageId,account.business_id,session,chatId,messageType,bodyText || (payload.hasMedia ? '[Media message]' : ''),timestamp).run();
+    if (saved.meta && Number(saved.meta.changes || 0) === 1) {
+      const taskId = 'waha-' + messageId;
+      await env.DB.prepare("INSERT OR IGNORE INTO business_worker_tasks (id,business_id,task_type,title,detail,status,priority,due_at,created_at,updated_at) VALUES (?,?, 'waha_message', 'Reply to WhatsApp message', ?, 'pending', 'normal', ?, ?, ?)")
+        .bind(taskId,account.business_id,JSON.stringify({session:session,message:payload}),now(),now(),now()).run();
+      ctx.waitUntil(dispatchBusinessAgent(env,account.business_id));
+    }
+    await env.DB.prepare('UPDATE waha_accounts SET last_event_at = ?, updated_at = ? WHERE business_id = ?')
+      .bind(now(),now(),account.business_id).run();
+    return json({ok:true,queued:true});
+  }
+  return json({ok:true,ignored:true});
+}
+async function processWahaMessage(env,businessId,detail) {
+  const account = await wahaAccount(env,businessId);
+  if (!account || account.session_name !== detail.session) throw new Error('WhatsApp session is not connected to this business.');
+  const message = detail.message || {};
+  const data = message._data && message._data.message ? message._data.message : message;
+  const chatId = txt(message.from || data.from || message.chatId,100);
+  const messageId = txt(message.id || data.id || message._data && message._data.id,180);
+  if (!chatId || !messageId) throw new Error('WhatsApp message did not include a sender or message ID.');
+  let incomingText = txt(message.body || data.conversation || data.extendedTextMessage && data.extendedTextMessage.text,4000);
+  const media = message.media || data.media || {};
+  const mediaType = String(message.type || media.mimetype || '').toLowerCase();
+  if (!incomingText && (message.hasMedia || mediaType.indexOf('audio') >= 0 || mediaType === 'ptt')) {
+    let audioBytes = null;
+    if (typeof media.data === 'string' && media.data.length < 12000000) {
+      const base64 = media.data.replace(/^data:[^,]+,/, '');
+      audioBytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+    } else if (typeof media.url === 'string' && media.url.startsWith('/api/')) {
+      const response = await wahaRequest(env,businessId,media.url,'GET');
+      if (response.ok) audioBytes = new Uint8Array(await response.arrayBuffer());
+    }
+    if (audioBytes && audioBytes.length < 12 * 1024 * 1024 && env.AI) {
+      const transcript = await env.AI.run('@cf/openai/whisper',{audio:Array.from(audioBytes)});
+      incomingText = txt(transcript && transcript.text ? transcript.text : '',4000);
+    }
+    if (!incomingText) {
+      await createWhatsAppOwnerTask(env,businessId,'whatsapp_voice_note','WhatsApp voice note needs review','A customer sent a voice note. WAHA did not provide downloadable audio in the event, so the owner should review the original message.','waha-voice-'+messageId);
+      incomingText = 'A customer sent a voice note. Please send a text summary so I can help, or the business team will review it.';
+    }
+  }
+  if (!incomingText) incomingText = 'The customer sent a WhatsApp message that needs staff review.';
+  await wahaRequest(env,businessId,'/api/sendSeen','POST',{chatId:chatId,session:account.session_name}).catch(() => null);
+  await wahaRequest(env,businessId,'/api/startTyping','POST',{chatId:chatId,session:account.session_name}).catch(() => null);
+  await new Promise((resolve) => setTimeout(resolve,2000));
+  const explicitHuman = /\\b(human|person|staff|agent|manager|speak to someone|talk to someone)\\b/i.test(incomingText);
+  if (explicitHuman) {
+    await createWhatsAppOwnerTask(env,businessId,'whatsapp_handover','Customer wants a person',chatId+': '+incomingText,'waha-human-'+messageId);
+  }
+  const profileRow = await env.DB.prepare('SELECT business_name,business_type,profile_json FROM business_worker_profiles WHERE business_id = ?').bind(businessId).first();
+  const profile = profileRow ? JSON.parse(profileRow.profile_json || '{}') : {};
+  let reply;
+  if (explicitHuman) {
+    reply = 'Thank you. I have passed your message to the team so a person can follow up.';
+  } else if (!profileRow || !String(profile.business_summary || profile.what_they_do || profile.what_they_sell || profile.products_and_services || '').trim()) {
+    await createWhatsAppOwnerTask(env,businessId,'whatsapp_setup','Complete business profile','The WhatsApp receptionist received a message, but this workspace has not saved enough business information to answer safely.','waha-profile-'+businessId);
+    reply = 'Thank you for messaging. Our team will check this and get back to you. What would you like help with?';
+  } else {
+    const history = await env.DB.prepare('SELECT direction,body FROM waha_messages WHERE business_id = ? AND chat_id = ? ORDER BY created_at DESC LIMIT 8').bind(businessId,chatId).all();
+    const previous = (history.results || []).reverse().filter((row) => row.body).map((row) => ({role:row.direction === 'inbound' ? 'user' : 'assistant',content:txt(row.body,1000)}));
+    const system = [
+      'You are TWIGA, the WhatsApp receptionist for ' + String(profileRow.business_name || 'this business') + '.',
+      'Reply briefly and politely in Kenyan English or Kiswahili, matching the customer.',
+      'Use only the verified business facts below. Never invent prices, stock, availability, payments, bookings or completed actions.',
+      'Do not request PINs, passwords or OTP codes. Do not send promotions or ask for money.',
+      'If you cannot answer safely, create an owner task and say the team will check.',
+      'Business facts: ' + JSON.stringify(profile)
+    ].join('\\n\\n');
+    reply = txt(await runCloudflareAI(env,[{role:'system',content:system},...previous],{max_tokens:420}),1400);
+  }
+  const send = await wahaRequest(env,businessId,'/api/sendText','POST',{chatId:chatId,text:reply,session:account.session_name});
+  await wahaRequest(env,businessId,'/api/stopTyping','POST',{chatId:chatId,session:account.session_name}).catch(() => null);
+  if (!send.ok) throw new Error('TWIGA could not send the WhatsApp reply.');
+  const sent = await send.json().catch(() => ({}));
+  const outboundId = txt(sent.id || sent.key && sent.key.id || 'reply-'+messageId,180);
+  await env.DB.prepare("INSERT OR REPLACE INTO waha_messages (message_id,business_id,session_name,chat_id,direction,message_type,body,status,created_at) VALUES (?,?,?,?, 'outbound','text',?,'sent',?)")
+    .bind(outboundId,businessId,account.session_name,chatId,reply,now()).run();
+  await env.DB.prepare("UPDATE business_worker_tasks SET status = 'done', result_json = ?, updated_at = ? WHERE business_id = ? AND id = ?")
+    .bind(JSON.stringify({replyId:outboundId}),now(),businessId,'waha-'+messageId).run();
+  return {ok:true,replied:true,messageId:outboundId};
+}
+async function renewActiveWahaContainers(env) {
+  await ensureBusinessWorkerSchema(env);
+  const active = await env.DB.prepare("SELECT business_id FROM waha_accounts WHERE status = 'WORKING' ORDER BY updated_at DESC LIMIT 50").all();
+  await Promise.allSettled((active.results || []).map(async (row) => {
+    const stub = getContainer(env.WAHA_CONTAINER,String(row.business_id));
+    stub.renewActivityTimeout();
+  }));
+}
+
+async function aiSetupChat(req,env) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const token = String(body.token || (req.headers.get('Authorization') || '').replace(/^Bearer\\s+/i,'')).trim();
+    const ctx = await authorize(env,token,body.business_id);
+    const messages = (Array.isArray(body.messages) ? body.messages : []).slice(-12).map((item) => ({
+      role:item && item.role === 'assistant' ? 'assistant' : 'user',
+      content:txt(item && item.content,2200)
+    })).filter((item) => item.content);
+    const draft = body.draft && typeof body.draft === 'object' ? body.draft : {};
+    const existing = await env.DB.prepare('SELECT business_name,business_type,profile_json FROM business_worker_profiles WHERE business_id = ?').bind(ctx.biz.id).first();
+    const savedProfile = existing ? JSON.parse(existing.profile_json || '{}') : {};
+    const system = [
+      'You are TWIGA Setup Guide, a patient business onboarding assistant for a Kenyan small business.',
+      'Talk like a helpful person, not a long form. Ask only ONE question at a time. Use any details the owner already gave you and never ask them again.',
+      'Collect and structure: business name, type, what it sells/does, products and prices, opening hours, location/service area, target customers, FAQs, booking/order/payment policies, delivery/returns, staff escalation instructions, preferred language/brand voice, receptionist greeting, and which tasks TWIGA should handle.',
+      'Also identify requested connections: WhatsApp, phone calls/SautiKit, M-Pesa/PalPluss, AiSensy campaigns, Google Calendar, Contacts, Sheets and Drive.',
+      'Never ask the owner to paste API keys, passwords, PINs or tokens into this conversation. Explain that credentials are connected in the secure Connections page or assigned by a TWIGA administrator.',
+      'Never claim a connection, business profile save or AI activation has happened unless the backend confirms it. This conversation drafts the setup; the owner must review and save.',
+      'Do not invent a price, business hour, policy, phone number or service. Mark missing facts for follow-up.',
+      'Return JSON only with: {"reply":"one short friendly response and one next question","patch":{business_name,business_type,business_summary,products_and_services,opening_hours,service_area,target_customers,unique_selling_points,frequently_asked_questions,delivery_and_payment,returns_and_refunds,brand_voice,reply_language,receptionist_greeting,assistant_instructions,setup_details},"missing_fields":["..."],"suggested_connections":["whatsapp","sautikit","palpluss","aisensy","google_calendar","google_contacts","google_sheets","google_drive"],"ready":false}. Include only facts the owner supplied in patch. Keep assistant_instructions as an operational prompt for the receptionist, not a secret or generic filler.',
+      'Current saved business profile (JSON): ' + JSON.stringify(savedProfile),
+      'Business name: ' + txt(ctx.biz.name,120),
+      'Current draft from this chat (JSON): ' + JSON.stringify(draft)
+    ].join('\\n\\n');
+    const raw = await runCloudflareAI(env,[{role:'system',content:system},...messages],{temperature:0.2,max_tokens:1200});
+    let parsed = null;
+    try {
+      const first = String(raw).indexOf('{');
+      const last = String(raw).lastIndexOf('}');
+      if (first >= 0 && last > first) parsed = JSON.parse(String(raw).slice(first,last+1));
+    } catch (_) {}
+    if (!parsed || typeof parsed !== 'object') {
+      return json({ok:true,reply:txt(raw,1800),patch:{},missing_fields:[],suggested_connections:[],ready:false});
+    }
+    const allowed = ['business_name','business_type','business_summary','products_and_services','opening_hours','service_area','target_customers','unique_selling_points','frequently_asked_questions','delivery_and_payment','returns_and_refunds','brand_voice','reply_language','receptionist_greeting','assistant_instructions','setup_details'];
+    const patch = {};
+    for (const key of allowed) {
+      if (Object.prototype.hasOwnProperty.call(parsed.patch || {},key)) patch[key] = parsed.patch[key];
+    }
+    return json({
+      ok:true,
+      reply:txt(parsed.reply || 'Thanks. Tell me a little more about your business.',1800),
+      patch:patch,
+      missing_fields:Array.isArray(parsed.missing_fields) ? parsed.missing_fields.slice(0,12).map((x) => txt(x,80)) : [],
+      suggested_connections:Array.isArray(parsed.suggested_connections) ? parsed.suggested_connections.slice(0,8).map((x) => txt(x,40)) : [],
+      ready:parsed.ready === true
+    });
+  } catch (error) {
+    const message = String(error && error.message ? error.message : error);
+    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : message.indexOf('INACTIVE|') === 0 ? 403 : 500;
+    return json({ok:false,error:status === 401 ? 'Sign in again to continue business setup.' : status === 403 ? 'This workspace is not available to your account.' : 'TWIGA setup assistant could not respond right now.'},status);
+  }
+}
+
+export class WahaContainer extends Container {
+  defaultPort = 3000;
+  sleepAfter = '2h';
+  enableInternet = true;
+  pingEndpoint = 'api/health';
 }
 
 
