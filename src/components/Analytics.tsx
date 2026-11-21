@@ -70,7 +70,6 @@ export default function Analytics() {
         key,
         day: date.toLocaleDateString("en-KE", { weekday: "short", timeZone: settings.business.timezone || "Africa/Nairobi" }),
         calls: 0,
-        payments: 0,
       };
     });
     for (const call of callRecords) {
@@ -79,15 +78,6 @@ export default function Analytics() {
       const key = new Date(stamp).toLocaleDateString("en-CA", { timeZone: settings.business.timezone || "Africa/Nairobi" });
       const row = days.find((item) => item.key === key);
       if (row) row.calls += 1;
-    }
-    for (const payment of payments) {
-      const date = payment.time;
-      if (!date) continue;
-      const parsed = new Date(date);
-      if (!Number.isFinite(parsed.getTime())) continue;
-      const key = parsed.toLocaleDateString("en-CA", { timeZone: settings.business.timezone || "Africa/Nairobi" });
-      const row = days.find((item) => item.key === key);
-      if (row && payment.status === "paid") row.payments += 1;
     }
     return days;
   }, [callRecords, payments, settings.business.timezone]);
@@ -166,14 +156,13 @@ export default function Analytics() {
               <CardTitle className="flex items-center gap-2 text-lg font-bold text-neutral-950 dark:text-neutral-100">
                 <IconChart className="h-5 w-5 text-orange-500" /> Weekly activity
               </CardTitle>
-              <CardDescription className="mt-1 text-neutral-500 dark:text-neutral-400">Calls and completed payments over the last seven days</CardDescription>
+              <CardDescription className="mt-1 text-neutral-500 dark:text-neutral-400">Calls saved for each day in the last seven days</CardDescription>
             </div>
             <span className="rounded-full bg-neutral-100 px-3 py-1.5 text-[11px] font-semibold text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">7 days</span>
           </CardHeader>
           <CardContent>
             <div className="mb-3 flex flex-wrap gap-4 text-xs text-neutral-600 dark:text-neutral-300">
-              <span className="inline-flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-sm bg-orange-500" /> Calls</span>
-              <span className="inline-flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-sm bg-neutral-800 dark:bg-neutral-300" /> Paid transactions</span>
+              <span className="inline-flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-sm bg-orange-500" /> Calls recorded</span>
             </div>
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
@@ -186,8 +175,7 @@ export default function Analytics() {
                     contentStyle={{ borderRadius: 12, border: "1px solid #e5e5e5", fontSize: 12, background: "#ffffff", color: "#171717" }}
                     labelStyle={{ color: "#171717", fontWeight: 700 }}
                   />
-                  <Bar dataKey="calls" name="Calls" fill="#f97316" radius={[6, 6, 0, 0]} maxBarSize={24} />
-                  <Bar dataKey="payments" name="Paid transactions" fill="#262626" radius={[6, 6, 0, 0]} maxBarSize={24} />
+                  <Bar dataKey="calls" name="Calls recorded" fill="#f97316" radius={[6, 6, 0, 0]} maxBarSize={28} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
