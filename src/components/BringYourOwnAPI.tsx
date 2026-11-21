@@ -61,7 +61,7 @@ async function errorText(error: any, fallback: string) {
   return error?.message || fallback;
 }
 
-export default function BringYourOwnAPI({ businessId, demo = false }: { businessId: string; demo?: boolean }) {
+export default function BringYourOwnAPI({ businessId, demo = false, adminMode = false }: { businessId: string; demo?: boolean; adminMode?: boolean }) {
   const [provider, setProvider] = useState<Provider>("openai");
   const [displayName, setDisplayName] = useState("My business AI model");
   const [model, setModel] = useState(modelDefaults.openai);
@@ -80,16 +80,22 @@ export default function BringYourOwnAPI({ businessId, demo = false }: { business
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [messageTone, setMessageTone] = useState<"info" | "success" | "error">("info");
+  const [assistanceNote, setAssistanceNote] = useState("");
 
   const call = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
     if (!supabase || !businessId) throw new Error("Choose a business workspace and sign in again.");
-    const { data, error } = await supabase.functions.invoke("twiga-business-integrations", {
-      body: { action, businessId, ...extra },
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    if (sessionError || !token) throw new Error("Your sign-in has expired. Sign in again.");
+    const response = await fetch("https://twiga-api.twiga-ke.workers.dev/integrations", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ action, businessId, ...(adminMode ? { assistanceNote: assistanceNote.trim() } : {}), ...extra }),
     });
-    if (error) throw new Error(await errorText(error, "The integration service could not respond."));
-    if (data?.error) throw new Error(String(data.error));
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data?.ok === false) throw new Error(String(data?.error || "The Cloudflare integration service could not complete that request."));
     return data;
-  }, [businessId]);
+  }, [businessId, adminMode, assistanceNote]);
 
   const refresh = useCallback(async () => {
     if (!businessId || !supabase || demo) return;
@@ -97,7 +103,7 @@ export default function BringYourOwnAPI({ businessId, demo = false }: { business
     try {
       const data = await call("list");
       setIntegrations(Array.isArray(data.integrations) ? data.integrations : []);
-      setPalplussStatus(data.palpluss || { connected: false });
+      setPalplussStatus(data.integrations?.some((item: Integration) => item.provider_slug === "palpluss") ? { connected: true } : { connected: false });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not load saved integrations.");
       setMessageTone("error");
@@ -130,6 +136,11 @@ export default function BringYourOwnAPI({ businessId, demo = false }: { business
     if (demo) return;
     if (!displayName.trim()) {
       setMessage("Give this connection a name first.");
+      setMessageTone("error");
+      return;
+    }
+    if (adminMode && assistanceNote.trim().length < 8) {
+      setMessage("Add a short admin-assistance note explaining why this client needs help.");
       setMessageTone("error");
       return;
     }
@@ -249,9 +260,9 @@ export default function BringYourOwnAPI({ businessId, demo = false }: { business
       <div className="border-b border-neutral-200 bg-neutral-50 px-5 py-5 dark:border-neutral-800 dark:bg-neutral-950">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[.16em] text-orange-700 dark:text-orange-400">Business-owned connections</p>
-            <h2 className="mt-1 text-xl font-bold text-neutral-950 dark:text-neutral-100">Bring your own AI & tools</h2>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-600 dark:text-neutral-300">Connect the external platforms your business already uses. TWIGA guides you through each provider's exact fields, tests supported credentials and stores them encrypted for this business only.</p>
+            <p className="text-xs font-semibold uppercase tracking-[.16em] text-orange-700 dark:text-orange-400">{adminMode ? "TWIGA administrator · assisted setup" : "Business-owned connections"}</p>
+            <h2 className="mt-1 text-xl font-bold text-neutral-950 dark:text-neutral-100">{adminMode ? "Help this business connect its tools" : "Bring your own AI & tools"}</h2>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-600 dark:text-neutral-300">{adminMode ? "Connect a provider for the selected client. Credentials are kept in that business's Cloudflare D1 workspace, and the assistance action is audited without recording secret values." : "Connect the external platforms your business already uses. TWIGA guides you through each provider's exact fields, tests supported credentials and stores them encrypted in this business's Cloudflare D1 workspace."}</p>
           </div>
           <span className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">1–5 secure fields per tool</span>
         </div>
@@ -259,6 +270,9 @@ export default function BringYourOwnAPI({ businessId, demo = false }: { business
 
       <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,.85fr)]">
         <div className="space-y-4">
+          {adminMode && <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-200">Admin assistance note
+            <input value={assistanceNote} onChange={(event) => setAssistanceNote(event.target.value)} maxLength={500} placeholder="e.g. Owner requested help during onboarding" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-normal text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100" />
+          </label>}
           <div className="grid gap-2 sm:grid-cols-2">
             <label className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">What are you connecting?
               <select value={provider} onChange={(event) => chooseProvider(event.target.value as Provider)} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-normal text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100">
@@ -365,7 +379,7 @@ export default function BringYourOwnAPI({ businessId, demo = false }: { business
               </article>
             )}
             {integrations.map((item) => (
-              <article key={item.id} className="mt-3 rounded-xl border border-neutral-200 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-900">
+              <article key={item.provider_slug} className="mt-3 rounded-xl border border-neutral-200 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-900">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0"><p className="truncate text-sm font-semibold text-neutral-900 dark:text-neutral-100">{item.display_name}</p><p className="mt-0.5 text-[11px] text-neutral-500">{item.provider_slug} · {item.integration_type.replaceAll("_"," ")}</p></div>
                   <span className={"rounded-full px-2 py-1 text-[10px] font-semibold " + (item.status === "verified" ? "bg-orange-50 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200" : "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200")}>{item.status === "verified" ? "Verified" : "Saved"}</span>
