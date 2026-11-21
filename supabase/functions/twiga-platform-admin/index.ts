@@ -104,13 +104,44 @@ Deno.serve(async (req) => {
       if (providerError) throw providerError;
       if (vaultProviderError) throw vaultProviderError;
       const allProviderConnections = [...(providerConnections || []), ...(vaultProviderConnections || [])];
+      let d1ProviderConnections: any[] = [];
+      try {
+        const { data: workerSecret, error: workerSecretError } = await admin.rpc("twiga_get_worker_internal_secret");
+        if (!workerSecretError && workerSecret) {
+          const workerResponse = await fetch("https://twiga-api.twiga-ke.workers.dev/internal/integrations", {
+            method: "POST",
+            headers: { "x-twiga-worker-secret": String(workerSecret), "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "admin_list" }),
+            signal: AbortSignal.timeout(15000),
+          });
+          const workerResult = await workerResponse.json().catch(() => ({}));
+          if (workerResponse.ok && workerResult?.ok === true && Array.isArray(workerResult.integrations)) {
+            d1ProviderConnections = workerResult.integrations.map((row: any) => {
+              const last4 = row.credentials_last4_json && typeof row.credentials_last4_json === "string"
+                ? JSON.parse(row.credentials_last4_json)
+                : row.credentials_last4_json || {};
+              return {
+                business_id: row.business_id,
+                provider: row.provider_slug,
+                secret_last4: last4.api_key || Object.values(last4)[0] || "",
+                updated_at: row.updated_at,
+                integration_type: row.integration_type,
+                status: row.status,
+                source: "cloudflare_d1",
+              };
+            });
+          }
+        }
+      } catch (error) {
+        console.warn("Cloudflare integration inventory unavailable", error);
+      }
 
       const paidTotal = (payments || []).reduce((n: number, payment: any) => n + Number(payment.amount || 0), 0);
       return reply({
         isAdmin: true, clients, totalClientCount: totalClientCount || clients.length,
         clientsLimit: 500, payments: payments || [], subscriptionIntents: subscriptionIntents || [], tickets: tickets || [], vapiAccounts: vapiAccounts || [],
         phoneLines: phoneLines || [], recentCalls: recentCalls || [], auditLogs: auditLogs || [],
-        providerConnections: allProviderConnections,
+        providerConnections: [...allProviderConnections, ...d1ProviderConnections],
         metrics: { clientCount: totalClientCount || clients.length, paymentCount: (payments || []).length,
           paidTotalKes: Number(paidTotal.toFixed(2)),
           openTickets: (tickets || []).filter((ticket: any) => ticket.status !== "resolved").length,
