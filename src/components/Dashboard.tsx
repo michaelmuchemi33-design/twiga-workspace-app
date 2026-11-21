@@ -31,10 +31,20 @@ async function businessWorkerRequest(businessId: string, action: string, extra: 
   const response = await fetch("https://twiga-api.twiga-ke.workers.dev/ai/worker", {
     method: "POST",
     headers: {"Content-Type":"application/json", "Authorization":"Bearer " + token},
-    body: JSON.stringify({action:action,business_id:businessId,token:token,...extra})
+    body: JSON.stringify({action:action,business_id:businessId,...extra})
   });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok || result.ok === false) throw new Error(String(result.error || "The business Worker could not respond."));
+  const rawResponse = await response.text();
+  let result: any = {};
+  try {
+    result = rawResponse ? JSON.parse(rawResponse) : {};
+  } catch {
+    throw new Error(`TWIGA Worker returned an unreadable response (HTTP ${response.status}).`);
+  }
+  if (!response.ok || result.ok === false) {
+    const message = String(result.error || `The business Worker could not respond (HTTP ${response.status}).`);
+    const reference = result.reference ? ` Reference: ${String(result.reference).slice(0, 40)}` : "";
+    throw new Error(message + reference);
+  }
   return result;
 }
 
