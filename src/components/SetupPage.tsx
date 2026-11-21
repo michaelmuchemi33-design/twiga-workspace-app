@@ -17,7 +17,10 @@ const firstMessage = "Hi! Let’s set up your receptionist. I already have your 
 // JavaScript's default "[object Object]" representation in the conversation.
 function readableText(value: unknown, fallback = "", depth = 0): string {
   if (depth > 5 || value == null) return fallback;
-  if (typeof value === "string") return value.trim() || fallback;
+  if (typeof value === "string") {
+    const text = value.trim();
+    return !text || text === "[object Object]" || text === "[object Array]" ? fallback : text;
+  }
   if (typeof value === "number") return String(value);
   if (typeof value === "boolean") return fallback;
   if (Array.isArray(value)) {
