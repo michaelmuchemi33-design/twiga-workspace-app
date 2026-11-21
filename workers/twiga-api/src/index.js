@@ -690,6 +690,16 @@ async function sha256Hex(value) {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value))));
   return Array.from(digest).map((byte) => byte.toString(16).padStart(2,'0')).join('');
 }
+async function platformProviderSecret(env, provider) {
+  if (env.WAHA_INTERNAL_API_KEY && provider === 'waha_internal_api_key') return String(env.WAHA_INTERNAL_API_KEY);
+  const response = await fetch(env.SUPABASE_URL + '/rest/v1/rpc/twiga_get_platform_secret', {
+    method:'POST',
+    headers:{apikey:env.SUPABASE_KEY,Authorization:'Bearer '+env.SUPABASE_KEY,'Content-Type':'application/json'},
+    body:JSON.stringify({p_provider:provider})
+  });
+  if (!response.ok) throw new Error('Platform provider settings could not be read securely.');
+  return await response.json();
+}
 async function tenantProviderSecret(env, businessId, provider) {
   const response = await fetch(env.SUPABASE_URL + '/rest/v1/rpc/twiga_get_provider_secret', {
     method:'POST',
@@ -703,19 +713,21 @@ async function wahaTenantRuntime(env, businessId) {
   const values = await Promise.all([
     tenantProviderSecret(env,businessId,'waha_r2_bucket'),
     tenantProviderSecret(env,businessId,'waha_r2_access_key_id'),
-    tenantProviderSecret(env,businessId,'waha_r2_secret_access_key')
+    tenantProviderSecret(env,businessId,'waha_r2_secret_access_key'),
+    platformProviderSecret(env,'waha_internal_api_key')
   ]);
   const bucket = String(values[0] || '').trim();
   const accessKey = String(values[1] || '').trim();
   const secretKey = String(values[2] || '').trim();
+  const wahaApiKey = String(values[3] || '').trim();
   if (!bucket || !accessKey || !secretKey) {
     throw new Error('WhatsApp storage has not been assigned to this business by the TWIGA administrator yet.');
   }
-  if (!env.WAHA_INTERNAL_API_KEY) throw new Error('The TWIGA WAHA service key has not been configured in Cloudflare.');
+  if (!wahaApiKey) throw new Error('The TWIGA administrator has not configured the WAHA platform service key yet.');
   if (!env.R2_ACCOUNT_ID) throw new Error('The Cloudflare R2 account has not been configured for WAHA.');
   return {
     WHATSAPP_DEFAULT_ENGINE:'GOWS',
-    WAHA_API_KEY:String(env.WAHA_INTERNAL_API_KEY),
+    WAHA_API_KEY:wahaApiKey,
     WAHA_RUN_XVFB:'false',
     WAHA_LOCAL_STORE_BASE_DIR:'/app/.sessions',
     WAHA_EVENTS_DOWNLOAD_MEDIA:'true',
@@ -730,8 +742,8 @@ async function wahaTenantRuntime(env, businessId) {
     WAHA_LOG_LEVEL:'info'
   };
 }
-async function wahaContainerStub(env, businessId) {
-  const runtime = await wahaTenantRuntime(env,businessId);
+async function wahaContainerStub(env, businessId, suppliedRuntime) {
+  const runtime = suppliedRuntime || await wahaTenantRuntime(env,businessId);
   if (!env.WAHA_CONTAINER) throw new Error('The WAHA Container binding is not deployed.');
   const container = getContainer(env.WAHA_CONTAINER,businessId);
   await container.startAndWaitForPorts({
@@ -743,8 +755,9 @@ async function wahaContainerStub(env, businessId) {
   return container;
 }
 async function wahaRequest(env, businessId, path, method, body) {
-  const container = await wahaContainerStub(env,businessId);
-  const headers = new Headers({'Accept':'application/json','X-Api-Key':String(env.WAHA_INTERNAL_API_KEY)});
+  const runtime = await wahaTenantRuntime(env,businessId);
+  const container = await wahaContainerStub(env,businessId,runtime);
+  const headers = new Headers({'Accept':'application/json','X-Api-Key':runtime.WAHA_API_KEY});
   if (body !== undefined) headers.set('Content-Type','application/json');
   const response = await container.containerFetch('http://localhost:3000'+path,{
     method:method || 'GET',
@@ -1061,8 +1074,7 @@ async function renewActiveWahaContainers(env) {
   await ensureBusinessWorkerSchema(env);
   const active = await env.DB.prepare("SELECT business_id FROM waha_accounts WHERE status = 'WORKING' ORDER BY updated_at DESC LIMIT 50").all();
   await Promise.allSettled((active.results || []).map(async (row) => {
-    const stub = getContainer(env.WAHA_CONTAINER,String(row.business_id));
-    stub.renewActivityTimeout();
+    await wahaContainerStub(env,String(row.business_id));
   }));
 }
 
