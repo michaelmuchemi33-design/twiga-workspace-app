@@ -296,9 +296,18 @@ async function attachCalendarTools(
 
 function resolveProviderVoice(voices: unknown[], requested: string): string {
   const values = voices.map((value) => String(value || "")).filter(Boolean);
-  const exact = values.find((value) => value.toLowerCase() === requested.toLowerCase());
+  const normalized = requested.trim().toLowerCase();
+  const exact = values.find((value) => value.toLowerCase() === normalized);
   if (exact) return exact;
-  const isMale = requested === "Man";
+
+  const isMale = ["man", "male", "masculine"].includes(normalized);
+  const isFemale = ["woman", "female", "feminine"].includes(normalized);
+  if (isFemale) {
+    // TWIGA's verified SautiKit female voice is Amara. Prefer its provider ID
+    // when the selected model exposes it; do not pass the abstract "Woman" label.
+    const amara = values.find((value) => value.toLowerCase() === "amara");
+    if (amara) return amara;
+  }
   const matches = values.filter((value) => {
     const name = value.toLowerCase().replace(/[^a-z]/g, "");
     return isMale
@@ -933,7 +942,8 @@ Deno.serve(async (req: Request) => {
       const modelEntry = (Array.isArray(catalogue?.data) ? catalogue.data : []).find((entry: Row) => String(entry.id || "") === modelId);
       if (!modelEntry) return json({ error: "Choose a model from the live SautiKit catalogue." }, 400);
       const voices = Array.isArray(modelEntry.voices) ? modelEntry.voices.map(String) : [];
-      if (!voices.includes(voice)) return json({ error: "That voice is not available for the selected SautiKit model." }, 400);
+      const providerVoice = resolveProviderVoice(voices, voice);
+      if (!providerVoice) return json({ error: "SautiKit does not list a matching " + (voice === "Man" ? "male" : "female") + " provider voice for this model." }, 400);
 
       const scripts = {
         greeting: String(body.greeting || settings.sautikit_scripts?.greeting || "Hello, karibu! Thank you for calling " + businessName + ". How can I help you today?").slice(0, 1200),
@@ -975,7 +985,7 @@ Deno.serve(async (req: Request) => {
         name: agentName,
         base_prompt: basePrompt,
         model: modelId,
-        voice,
+        voice: providerVoice,
         accent: "Kenyan English and Kiswahili",
         speech_style: "Warm, clear, natural Kenyan English and Kiswahili; calm, concise turns and natural pauses.",
         max_call_minutes: 8,
@@ -1005,7 +1015,7 @@ Deno.serve(async (req: Request) => {
         inbound_agent_provider: "sautikit-managed",
         inbound_agent_name: agentName,
         inbound_agent_revision: 0,
-        inbound_voice: voice,
+        inbound_voice: providerVoice,
         inbound_model_id: modelId,
         ai_agent_bound: false,
         sautikit_booking_tool_id: toolId,
@@ -1027,7 +1037,7 @@ Deno.serve(async (req: Request) => {
         sautikit_scripts: scripts,
       };
       const { error: saveAgentError } = await admin.from("twiga_phone_lines")
-        .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", updated_at: new Date().toISOString() })
+        .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", outbound_enabled: false, outbound_status: "testing", updated_at: new Date().toISOString() })
         .eq("id", line.id);
       if (saveAgentError) throw saveAgentError;
 
@@ -1504,7 +1514,7 @@ Deno.serve(async (req: Request) => {
         last_published_at: new Date().toISOString(),
       };
       const { error: updateLineError } = await admin.from("twiga_phone_lines")
-        .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", outbound_enabled: true, outbound_status: "active", updated_at: new Date().toISOString() })
+        .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", outbound_enabled: false, outbound_status: "testing", updated_at: new Date().toISOString() })
         .eq("id", line.id);
       if (updateLineError) throw updateLineError;
       return json({
@@ -1528,7 +1538,9 @@ Deno.serve(async (req: Request) => {
       const reason = String(body.reason || "").trim().slice(0, 500);
       if (!/^\+[1-9]\d{7,14}$/.test(to)) return json({ error: "Enter the destination in international format, such as +2547XXXXXXXX." }, 400);
       if (!reason) return json({ error: "Enter why this person is being called." }, 400);
-      if (body.authorised !== true) return json({ error: "Confirm that the person or business has authorised this callback before placing it." }, 400);
+      if (body.testMode !== true) return json({ error: "Outbound calling is in test-only mode. Use the one-off test control." }, 403);
+      if (body.authorised !== true) return json({ error: "Confirm that you are authorised to place this test call." }, 400);
+      if (body.consent !== true) return json({ error: "The person receiving the test call must explicitly agree before TWIGA can call them." }, 403);
       const scripts = settings.sautikit_scripts && typeof settings.sautikit_scripts === "object" ? settings.sautikit_scripts : {};
       const outbound = String(scripts.outbound || "Identify the business, explain the reason for calling, ask if this is a convenient time, and respect requests not to be contacted again.");
       const business = await admin.from("businesses").select("name").eq("id", businessId).maybeSingle();
@@ -1579,8 +1591,9 @@ Deno.serve(async (req: Request) => {
         if (callRecordError) console.error("Could not record SautiKit call in TWIGA history:", callRecordError.message);
         else callRecordId = callRecord?.id || null;
       }
-      let retryJobId: string | null = null;
-      if (providerCallId) {
+      // Test calls are one-off only. Never create a scheduled retry for a test recipient.
+      const retryJobId: string | null = null;
+      if (providerCallId && body.testMode !== true) {
         const { data: retryJob, error: retryJobError } = await admin.from("twiga_scheduled_calls").insert({
           business_id: businessId,
           customer_name: "",
@@ -1612,7 +1625,7 @@ Deno.serve(async (req: Request) => {
         else retryJobId = retryJob?.id || null;
       }
       await admin.from("twiga_phone_lines").update({ settings: { ...settings, last_outbound_call_id: providerCallId || null, last_outbound_call_status: safe(call?.status || "queued", 40) } }).eq("id", line.id);
-      return json({ submitted: true, call, callRecordId, retryJobId, noAnswerRetry: !!retryJobId, message: "Your authorised callback was submitted through SautiKit. When tracked, one no-answer retry is scheduled for five minutes later." });
+      return json({ submitted: true, call, callRecordId, retryJobId, noAnswerRetry: false, message: "Your one-off, recipient-approved test call was submitted through SautiKit. No retry or campaign was scheduled." });
     }
 
     return json({ error: "Unknown SautiKit action." }, 404);
