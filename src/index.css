@@ -735,3 +735,54 @@ a[class*="bg-black"] svg,
 .dark .hover\\:bg-neutral-100:hover,
 .dark .hover\\:bg-gray-50:hover,
 .dark .hover\\:bg-gray-100:hover { background-color: #303030 !important; }
+
+
+/* TWIGA theme surfaces: dark mode must darken the surfaces as well as
+   changing foregrounds, otherwise neutral text overrides create white-on-white UI. */
+.dark body,
+.dark #root {
+  background-color: #0a0a0a !important;
+  color: #f5f5f5;
+}
+.dark .bg-white { background-color: #171717 !important; }
+.dark .bg-neutral-50,
+.dark .bg-slate-50,
+.dark .bg-gray-50 { background-color: #111111 !important; }
+.dark .bg-neutral-100,
+.dark .bg-slate-100,
+.dark .bg-gray-100 { background-color: #202020 !important; }
+.dark .bg-neutral-200,
+.dark .bg-slate-200,
+.dark .bg-gray-200 { background-color: #292929 !important; }
+.dark .bg-neutral-900 { background-color: #111111 !important; }
+.dark .bg-neutral-950,
+.dark .bg-black { background-color: #050505 !important; }
+.dark .border-neutral-100,
+.dark .border-neutral-200,
+.dark .border-neutral-300 { border-color: #3b3b3b !important; }
+.dark .pos-cart-panel { background-color: #171717 !important; }
+.dark .pos-cart-panel input,
+.dark .pos-cart-panel select {
+  background-color: #0a0a0a !important;
+  color: #f5f5f5 !important;
+  border-color: #454545 !important;
+}
+.dark .pos-cart-panel button:not([class*="bg-orange"]):not([class*="bg-neutral-950"]) {
+  color: #f5f5f5;
+}
+.dark .pos-cart-panel .bg-neutral-50 { background-color: #202020 !important; }
+.dark button[class*="bg-neutral-950"],
+.dark button[class*="bg-neutral-900"],
+.dark button[class*="bg-black"],
+.dark [role="button"][class*="bg-neutral-950"],
+.dark [role="button"][class*="bg-neutral-900"],
+.dark [role="button"][class*="bg-black"] {
+  background-color: #050505 !important;
+  color: #ffffff !important;
+}
+.dark button[class*="bg-neutral-950"] *,
+.dark button[class*="bg-neutral-900"] *,
+.dark button[class*="bg-black"] *,
+.dark [role="button"][class*="bg-neutral-950"] *,
+.dark [role="button"][class*="bg-neutral-900"] *,
+.dark [role="button"][class*="bg-black"] * { color: #ffffff !important; }
