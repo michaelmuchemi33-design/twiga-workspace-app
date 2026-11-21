@@ -11,6 +11,7 @@ import Payments from "@/components/Payments";
 import SubscriptionBilling from "@/components/SubscriptionBilling";
 import Customers from "@/components/Customers";
 import WhatsAppOutbox from "@/components/WhatsAppOutbox";
+import Chat33Inbox from "@/components/Chat33Inbox";
 import Organizer from "@/components/Organizer";
 import Analytics from "@/components/Analytics";
 import Settings from "@/components/Settings";
@@ -61,7 +62,7 @@ const moreTabs = [
   { id: "organizer", label: "Organize", icon: IconSwap },
   { id: "functions", label: "Functions", icon: IconSparkle },
   { id: "customers", label: "People", icon: IconUsers },
-  { id: "whatsapp", label: "WhatsApp", icon: IconChat },
+  { id: "whatsapp", label: "Inbox", icon: IconChat },
   { id: "analytics", label: "Stats", icon: IconChart },
   { id: "products", label: "Products", icon: IconBox },
   { id: "reports", label: "Reports", icon: IconFile },
@@ -240,7 +241,7 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
           {tab === "billing" && <SubscriptionBilling businessId={businessId} demo={demo} />}
           {tab === "payments" && <Payments />}
           {tab === "customers" && <Customers />}
-          {tab === "whatsapp" && <WhatsAppOutbox />}
+          {tab === "whatsapp" && <div className="space-y-8"><Chat33Inbox /><section className="space-y-3"><div><h2 className="text-xl font-bold text-neutral-950 dark:text-neutral-100">WhatsApp Business</h2><p className="text-sm text-neutral-500">Separate direct Meta connection. Chat33 currently lists WhatsApp Business as coming soon, so WhatsApp is not yet part of the Chat33 social inbox.</p></div><WhatsAppOutbox /></section></div>}
           {tab === "analytics" && <Analytics />}
           {tab === "products" && <Products />}
           {tab === "reports" && <Reports />}
