@@ -183,7 +183,7 @@ export default function Chat33Gateway(){
             <strong className="text-neutral-900">Create an API key in Chat33</strong>
             <ol className="mt-2 list-decimal space-y-1 pl-5">
               <li>Open Chat33 Settings → API Keys and create a new key.</li>
-              <li>Enable: accounts:read, posts:read, posts:write, media:write, inbox:read, inbox:write, comments:read and comments:write.</li>
+              <li>Enable: accounts:read, posts:read, posts:write, media:write, inbox:read and inbox:write.</li>
               <li>In Chat33, connect the social channels you want this business to use.</li>
               <li>Paste that API key into one of the slots below. TWIGA verifies it by reading the channel list.</li>
             </ol>
