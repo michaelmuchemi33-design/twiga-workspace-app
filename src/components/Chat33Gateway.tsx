@@ -66,7 +66,7 @@ export function Chat33QuickPublisher({ compact=false }: { compact?:boolean }) {
     if(targets.length!==selected.length){setNotice("One or more selected social channels are no longer available. Refresh accounts.");return;}
     const hasYouTube=targets.some(account=>account.platform.toLowerCase()==="youtube");
     const hasTikTok=targets.some(account=>account.platform.toLowerCase()==="tiktok");
-    if(hasYouTube&&!file){setNotice("YouTube destinations require a video file.");return;}
+    if(hasYouTube&&(!file||!file.type.startsWith("video/"))){setNotice("YouTube destinations require a video file, not a photo.");return;}
     if(hasYouTube&&!youtubeTitle.trim()&&!caption.trim()){setNotice("Add a YouTube video title or a post caption.");return;}
     if(hasYouTube&&!youtubeMadeForKids){setNotice("Select whether this YouTube video is made for kids. YouTube requires this declaration.");return;}
     if(hasTikTok&&!file){setNotice("TikTok destinations require a photo or video.");return;}
@@ -209,7 +209,7 @@ export default function Chat33Gateway(){
           <div className="max-w-3xl">
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-orange-600">Social media gateway · optional</p>
             <h1 className="mt-2 text-3xl font-bold tracking-tight text-neutral-950">The 10 core functions</h1>
-            <p className="mt-2 text-sm leading-6 text-neutral-700">Connect up to three Chat33 workspaces for this business. TWIGA uses their channels to publish content and bring supported social conversations into the business workspace. Social setup is optional; phone reception and the rest of TWIGA continue to work without it.</p>
+            <p className="mt-2 text-sm leading-6 text-neutral-700">Connect up to three Chat33 API workspaces. Each one can contain several social channels, and TWIGA can publish one selected post to channels across all three. This connection is optional; your calls, business workspace and other TWIGA tools continue to work without it.</p>
           </div>
           <div className="rounded-xl border border-orange-200 bg-white px-4 py-3 text-sm"><strong className="block text-xl text-neutral-950">{configuredCount}/3</strong><span className="text-neutral-500">Chat33 gateways</span></div>
         </div>
@@ -222,8 +222,10 @@ export default function Chat33Gateway(){
             <strong className="text-neutral-900">Create an API key in Chat33</strong>
             <ol className="mt-2 list-decimal space-y-1 pl-5">
               <li>Open Chat33 Settings → API Keys and create a new key.</li>
-              <li>Enable: accounts:read, posts:read, posts:write, media:write, inbox:read and inbox:write.</li>
-              <li>In Chat33, connect the social channels you want this business to use.</li>
+              <li>For publishing: enable <strong>accounts:read, posts:read, posts:write and media:write</strong>.</li>
+              <li>For Instagram/Facebook Messenger: enable <strong>inbox:read and inbox:write</strong>.</li>
+              <li>For supported post comments: enable <strong>comments:read and comments:write</strong>.</li>
+              <li>Connect the social profiles and Pages you want in Chat33. One Chat33 workspace can expose multiple social channels.</li>
               <li>Paste that API key into one of the slots below. TWIGA verifies it by reading the channel list.</li>
             </ol>
             <a href="https://chat33.io/settings" target="_blank" rel="noreferrer" className="mt-3 inline-flex font-semibold text-orange-700 underline">Open Chat33 Settings ↗</a>
@@ -256,7 +258,7 @@ export default function Chat33Gateway(){
       <Chat33QuickPublisher />
 
       <Card className="rounded-2xl border-neutral-200 shadow-sm">
-        <CardHeader><CardTitle>3. Message webhook (optional)</CardTitle><CardDescription>For new Instagram and Facebook Messenger messages to appear in TWIGA without waiting for an inbox refresh.</CardDescription></CardHeader>
+        <CardHeader><CardTitle>3. Message webhook (optional)</CardTitle><CardDescription>For new Instagram and Facebook Messenger DMs to arrive immediately. Post comments are read through Chat33’s comment tools when refreshed.</CardDescription></CardHeader>
         <CardContent className="space-y-2 text-sm text-neutral-700">
           <p>In Chat33 Settings → API Keys → Message webhook, set the endpoint below and enable new DMs. Copy its signing secret and save it in the matching gateway slot above.</p>
           <div className="flex flex-wrap items-center gap-2 rounded-xl bg-neutral-50 p-3"><code className="min-w-0 flex-1 break-all text-xs">https://twiga-api.twiga-ke.workers.dev/chat33/webhook</code><Button size="sm" variant="outline" onClick={()=>void navigator.clipboard?.writeText("https://twiga-api.twiga-ke.workers.dev/chat33/webhook")}>Copy URL</Button></div>
