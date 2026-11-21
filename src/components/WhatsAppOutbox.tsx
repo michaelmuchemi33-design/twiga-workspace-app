@@ -251,7 +251,7 @@ export default function WhatsAppOutbox() {
             <CardTitle className="flex items-center gap-2 text-lg font-semibold">
               <IconChat className="h-5 w-5 text-orange-500" /> WhatsApp Business · Direct Meta connection
             </CardTitle>
-            <CardDescription>This is a separate official Meta connection, not part of the Chat33 social gateway.</CardDescription>
+            <CardDescription>Official WhatsApp Business Platform connection for this business, managed separately from Chat33 social accounts.</CardDescription>
           </div>
           <Badge className={cn("border-0",whatsappChannel?.connected ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-700")}>
             {channelLoading ? "Checking…" : whatsappChannel?.connected ? "Connected" : "Not connected"}
@@ -265,18 +265,17 @@ export default function WhatsAppOutbox() {
             </div>
           ) : (
             <p className="text-sm leading-5 text-neutral-600">
-              Once connected, TWIGA can answer incoming text messages and voice notes, and notify your team when a person asks for help.
+              WhatsApp is not connected to this business yet. TWIGA will make the official connection available here when platform setup is complete. You can continue using your workspace in the meantime.
             </p>
           )}
-          <div className="flex flex-wrap items-center gap-2">
-            <Button onClick={connectWhatsAppWithMeta} disabled={channelLoading || connectingWhatsApp || demoMode || !whatsappChannel?.configured || !facebookReady} className="bg-neutral-950 text-white hover:bg-neutral-800">
-              {connectingWhatsApp ? "Connecting…" : whatsappChannel?.connected ? "Connect another number" : "Connect with Meta"}
-            </Button>
-            {whatsappChannel?.webhookUrl && <Button variant="outline" onClick={() => { void navigator.clipboard?.writeText(whatsappChannel.webhookUrl); setChannelMessage("Webhook URL copied. Add it in Meta Developer settings and subscribe to WhatsApp messages and calls."); }}>Copy webhook URL</Button>}
-          </div>
-          {!whatsappChannel?.configured && !demoMode && <p className="text-xs leading-5 text-neutral-500">Meta setup is not complete yet. TWIGA admin must add the Meta App ID, Embedded Signup v4 configuration, webhook verification token, app secret and encrypted-token key.</p>}
-          {whatsappChannel?.configured && !whatsappChannel.connected && <p className="text-xs leading-5 text-neutral-500">After connecting, add the callback URL in Meta Developer settings and subscribe this app to WhatsApp message and call webhooks.</p>}
-          {whatsappChannel?.connected && !whatsappChannel.lastWebhookAt && <p className="text-xs leading-5 text-neutral-500">The number is connected. Incoming replies start after the Meta webhook is verified and the WhatsApp webhook field is subscribed.</p>}
+          {whatsappChannel?.configured && !demoMode && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={connectWhatsAppWithMeta} disabled={channelLoading || connectingWhatsApp || !facebookReady} className="bg-neutral-950 text-white hover:bg-neutral-800">
+                {connectingWhatsApp ? "Connecting…" : whatsappChannel?.connected ? "Connect another number" : "Connect with Meta"}
+              </Button>
+            </div>
+          )}
+          {whatsappChannel?.connected && !whatsappChannel.lastWebhookAt && <p className="text-xs leading-5 text-neutral-500">Your number is connected. TWIGA is waiting for the first message event from WhatsApp.</p>}
           {channelMessage && <p role="status" className="rounded-xl bg-neutral-50 p-3 text-sm text-neutral-700">{channelMessage}</p>}
           <p className="text-[11px] leading-5 text-neutral-500">TWIGA uses Meta’s official Cloud API. Free-form replies are limited to the customer service window; approved templates are needed outside it. Automated replies must support human handover.</p>
         </CardContent>
