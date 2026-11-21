@@ -54,6 +54,7 @@ const REQUIRED_SCOPES = [
   "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/drive.file",
 ];
+const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
 
 class HttpError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -306,7 +307,8 @@ async function connectGoogle(admin: any, userId: string, businessId: string, bod
   const granted = new Set(String(tokenInfo.scope || "").split(" "));
   const hasCalendar = granted.has(REQUIRED_SCOPES[0]) || granted.has("https://www.googleapis.com/auth/calendar.events");
   const hasContacts = granted.has(REQUIRED_SCOPES[1]) || granted.has("https://www.googleapis.com/auth/contacts");
-  const missing = REQUIRED_SCOPES.filter(scope => {
+  const expectedScopes = body.includeGmailSend === true ? [...REQUIRED_SCOPES, GMAIL_SEND_SCOPE] : REQUIRED_SCOPES;
+  const missing = expectedScopes.filter(scope => {
     if (scope === REQUIRED_SCOPES[0]) return !hasCalendar;
     if (scope === REQUIRED_SCOPES[1]) return !hasContacts;
     return !granted.has(scope);
@@ -478,6 +480,8 @@ Deno.serve(async (req: Request) => {
       return reply(req, {
         clientId,
         scopes: REQUIRED_SCOPES,
+        gmailSendScope: GMAIL_SEND_SCOPE,
+        gmailSendSensitive: true,
         serverConfigured: !!(clientId && clientSecret && encryptionReady),
       });
     }
@@ -509,7 +513,8 @@ Deno.serve(async (req: Request) => {
         await patchConnection(admin, businessId, { granted_scopes: liveScopes.join(" ") });
         return reply(req, {
           connected: true, status: missingScopes.length ? "partial" : "connected",
-          permissionsComplete: missingScopes.length === 0,
+          permissionsComplete: REQUIRED_SCOPES.every(scope => liveSet.has(scope) || (scope === REQUIRED_SCOPES[0] && hasCalendar) || (scope === REQUIRED_SCOPES[1] && hasContacts)),
+          gmailSendEnabled: liveSet.has(GMAIL_SEND_SCOPE),
           googleEmail: connection.google_email, scopes: liveScopes, missingScopes,
           refreshReady: !!connection.refresh_token,
           expiresAt: connection.access_expires_at,
@@ -533,6 +538,41 @@ Deno.serve(async (req: Request) => {
     const connection = await getConnection(admin, businessId);
     if (!connection) throw new HttpError(409, "Connect Google Workspace first.");
     const token = await tokenFor(admin, connection);
+
+    if (action === "gmail.send") {
+      if (!String(connection.granted_scopes || "").split(" ").includes(GMAIL_SEND_SCOPE)) {
+        throw new HttpError(403, "Reconnect Google and explicitly enable the optional Gmail sending permission first.");
+      }
+      const to = String(body.to || "").trim().slice(0, 254);
+      const subject = String(body.subject || "").trim().slice(0, 180);
+      const messageText = String(body.text || body.bodyText || "").trim().slice(0, 12000);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) throw new HttpError(400, "Enter a valid recipient email address.");
+      if (!subject || !messageText) throw new HttpError(400, "Email subject and message are required.");
+      if (body.approved !== true) throw new HttpError(403, "The business owner must explicitly approve this email before TWIGA sends it.");
+      const base64Url = (value: string) => {
+        const bytes = new TextEncoder().encode(value);
+        let binary = "";
+        for (const byte of bytes) binary += String.fromCharCode(byte);
+        return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+      };
+      const raw = [
+        "To: " + to,
+        "Subject: " + subject.replace(/[\r\n]/g, " "),
+        "MIME-Version: 1.0",
+        "Content-Type: text/plain; charset=UTF-8",
+        "Content-Transfer-Encoding: 8bit",
+        "",
+        messageText,
+      ].join("\r\n");
+      const sent = await googleJson(token, "https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+        method: "POST",
+        body: JSON.stringify({ raw: base64Url(raw) }),
+      });
+      await patchConnection(admin, businessId, { last_sync_at: new Date().toISOString() });
+      return reply(req, { sent: true, messageId: String(sent.id || ""), threadId: String(sent.threadId || ""), to, subject, message: "Gmail accepted the approved message for sending." });
+    }
+
+
 
     if (action === "contacts.import") {
       const granted = String(connection.granted_scopes || "");
