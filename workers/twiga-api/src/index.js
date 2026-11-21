@@ -7,6 +7,21 @@ const cache = new Map();
 const today = () => new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
 const now = () => new Date().toISOString();
 const txt = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 200);
+const aiReplyText = (value, fallback, limit) => {
+  if (typeof value === 'string') return txt(value, limit || 1800) || fallback;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map((item) => aiReplyText(item, '', limit)).filter(Boolean).join('\\n') || fallback;
+  if (value && typeof value === 'object') {
+    for (const key of ['text', 'content', 'reply', 'message', 'response', 'output_text']) {
+      if (value[key] !== undefined && value[key] !== value) {
+        const text = aiReplyText(value[key], '', limit);
+        if (text) return text;
+      }
+    }
+    try { return txt(JSON.stringify(value), limit || 1800); } catch (_) { return fallback; }
+  }
+  return fallback;
+};
 const num = (v, label, min) => { const n = Number(v); if (!isFinite(n) || n < (min == null ? 0 : min)) throw new Error('Invalid ' + label); return Math.round(n * 100) / 100; };
 const rid = p => p + '-' + today().slice(2).replace(/-/g, '') + '-' + Math.random().toString(16).slice(2, 7).toUpperCase();
 const size = (...s) => 120 + s.reduce((a, x) => a + String(x == null ? '' : x).length, 0);
@@ -705,7 +720,7 @@ async function whatsappWebhook(req, env, ctx) {
 async function runCloudflareAI(env, messages, options) {
   if (!env.AI || typeof env.AI.run !== 'function') throw new Error('CLOUDFLARE_AI_BINDING_MISSING');
   const result = await env.AI.run(AI_MODEL, Object.assign({messages, temperature: 0.25, max_tokens: 1800}, options || {}));
-  const content = txt(result && (result.response || (result.choices && result.choices[0] && result.choices[0].message && result.choices[0].message.content)), 12000);
+  const content = aiReplyText(result && (result.response || (result.choices && result.choices[0] && result.choices[0].message && result.choices[0].message.content)), '', 12000);
   if (!content) throw new Error('CLOUDFLARE_AI_EMPTY_RESPONSE');
   return content;
 }
@@ -1206,13 +1221,27 @@ async function aiSetup(req,env) {
       for (const key of allowed) safeDraft[key] = txt(draft[key] || '', key === 'assistant_instructions' || key === 'products_and_services' ? 12000 : 8000);
       safeDraft.setup_details = draft.setup_details && typeof draft.setup_details === 'object' && !Array.isArray(draft.setup_details) ? draft.setup_details : {};
       const businessProfile = Object.assign({},safeDraft,{business_name:txt(draft.business_name || ctx.biz.name,120),business_type:txt(draft.business_type || ctx.biz.business_type || 'general',80)});
-      return json({ok:true,reply:txt(parsed.reply || 'I have prepared a draft from the details you shared. Review it, then save the profile.',1200),profileDraft:businessProfile,businessProfile,model:AI_MODEL});
+      return json({ok:true,reply:aiReplyText(parsed.reply, 'I have prepared a draft from the details you shared. Review it, then save the profile.', 1200),profileDraft:businessProfile,businessProfile,model:AI_MODEL});
     }
-    return json({ok:true,reply:txt(parsed && parsed.reply || raw,1800),profileDraft:null,model:AI_MODEL});
+    return json({ok:true,reply:aiReplyText(parsed && parsed.reply, raw, 1800),profileDraft:null,model:AI_MODEL});
   } catch (error) {
     const message = String(error && error.message || error);
-    const status = message === 'LOGIN_REQUIRED' ? 401 : message === 'NO_ACCESS' ? 403 : message.startsWith('INACTIVE|') ? 403 : message === 'CLOUDFLARE_AI_BINDING_MISSING' ? 503 : 500;
-    return json({ok:false,error:message.startsWith('INACTIVE|') ? message.slice(9) : status === 401 ? 'Sign in again to continue business setup.' : status === 403 ? 'You do not have access to this business workspace.' : status === 503 ? 'Cloudflare Workers AI is not enabled for TWIGA yet.' : 'TWIGA could not complete this setup step. Your saved profile has not been changed.'},status);
+    const requestId = crypto.randomUUID();
+    const status = message === 'LOGIN_REQUIRED' ? 401
+      : message === 'NO_ACCESS' || message.startsWith('INACTIVE|') ? 403
+      : message === 'CLOUDFLARE_AI_BINDING_MISSING' ? 503
+      : message === 'CLOUDFLARE_AI_EMPTY_RESPONSE' || message === 'CLOUDFLARE_AI_REQUEST_FAILED' ? 502
+      : 500;
+    // Keep provider/database details in Worker logs, not in the browser response.
+    console.error('TWIGA /ai/setup failed', requestId, message);
+    const safeMessage = message.startsWith('INACTIVE|') ? message.slice(9)
+      : status === 401 ? 'Your sign-in has expired. Sign in again to continue.'
+      : status === 403 ? 'You do not have access to this business workspace.'
+      : status === 503 ? 'Cloudflare Workers AI is not enabled for TWIGA yet. Check the Worker AI binding.'
+      : status === 502 ? 'TWIGA AI is temporarily unavailable. Please retry in a moment.'
+      : message === 'Could not load this business profile.' ? message
+      : 'TWIGA could not complete this setup step. Your saved profile has not been changed.';
+    return json({ok:false,error:safeMessage,requestId},status);
   }
 }
 
