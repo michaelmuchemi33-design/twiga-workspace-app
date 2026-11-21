@@ -17,12 +17,29 @@ binding = "AI"
 name = "BUSINESS_AGENT"
 class_name = "BusinessAgent"
 
+[[durable_objects.bindings]]
+name = "WAHA_CONTAINER"
+class_name = "WahaContainer"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["BusinessAgent"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["WahaContainer"]
+
+[[containers]]
+class_name = "WahaContainer"
+image = "./waha/Dockerfile"
+image_build_context = "./waha"
+instance_type = "basic"
+max_instances = 10
 
 [triggers]
 crons = ["* * * * *"]
 
 [vars]
 META_GRAPH_VERSION = "v27.0"
+R2_ACCOUNT_ID = "1cc614c3da5df801f742a023ae1ffc95"
+WAHA_WEBHOOK_URL = "https://twiga-api.twiga-ke.workers.dev/whatsapp/waha-webhook"
