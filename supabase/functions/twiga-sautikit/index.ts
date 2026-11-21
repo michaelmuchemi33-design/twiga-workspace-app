@@ -297,17 +297,18 @@ async function attachCalendarTools(
 function resolveProviderVoice(voices: unknown[], requested: string): string {
   const values = voices.map((value) => String(value || "")).filter(Boolean);
   const normalized = requested.trim().toLowerCase();
-  const exact = values.find((value) => value.toLowerCase() === normalized);
-  if (exact) return exact;
-
   const isMale = ["man", "male", "masculine"].includes(normalized);
   const isFemale = ["woman", "female", "feminine"].includes(normalized);
+
   if (isFemale) {
-    // TWIGA's verified SautiKit female voice is Amara. Prefer its provider ID
-    // when the selected model exposes it; do not pass the abstract "Woman" label.
+    // The currently published TWIGA female voice is the provider ID "amara".
+    // Prefer it over a generic "Woman" alias if both are listed by the model.
     const amara = values.find((value) => value.toLowerCase() === "amara");
     if (amara) return amara;
   }
+  const exact = values.find((value) => value.toLowerCase() === normalized);
+  if (exact) return exact;
+
   const matches = values.filter((value) => {
     const name = value.toLowerCase().replace(/[^a-z]/g, "");
     return isMale
@@ -1592,38 +1593,8 @@ Deno.serve(async (req: Request) => {
         else callRecordId = callRecord?.id || null;
       }
       // Test calls are one-off only. Never create a scheduled retry for a test recipient.
+      // Test calls are intentionally one-off. No automatic retry or scheduler entry is created.
       const retryJobId: string | null = null;
-      if (providerCallId && body.testMode !== true) {
-        const { data: retryJob, error: retryJobError } = await admin.from("twiga_scheduled_calls").insert({
-          business_id: businessId,
-          customer_name: "",
-          phone_number: to,
-          reason,
-          scheduled_at: new Date().toISOString(),
-          timezone: "Africa/Nairobi",
-          consent_status: "opted_in",
-          trigger_type: "manual",
-          trigger_conditions: { source: "dashboard_send_call" },
-          calling_window_start: "08:00",
-          calling_window_end: "20:00",
-          status: "submitted",
-          attempt_count: 1,
-          max_attempts: 2,
-          retry_interval_minutes: 5,
-          provider_call_id: providerCallId,
-          created_by: user.id,
-          metadata: {
-            source: "dashboard_send_call",
-            call_record_id: callRecordId,
-            agent_id: agentId,
-            provider_call_ids: [providerCallId],
-            no_answer_retry: { enabled: true, attempts: 0, max_attempts: 2, delay_minutes: 5 },
-            dispatch_status: "submitted",
-          },
-        }).select("id").maybeSingle();
-        if (retryJobError) console.error("Could not track SautiKit callback for no-answer retry:", retryJobError.message);
-        else retryJobId = retryJob?.id || null;
-      }
       await admin.from("twiga_phone_lines").update({ settings: { ...settings, last_outbound_call_id: providerCallId || null, last_outbound_call_status: safe(call?.status || "queued", 40) } }).eq("id", line.id);
       return json({ submitted: true, call, callRecordId, retryJobId, noAnswerRetry: false, message: "Your one-off, recipient-approved test call was submitted through SautiKit. No retry or campaign was scheduled." });
     }
