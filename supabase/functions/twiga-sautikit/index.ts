@@ -1592,11 +1592,10 @@ Deno.serve(async (req: Request) => {
         if (callRecordError) console.error("Could not record SautiKit call in TWIGA history:", callRecordError.message);
         else callRecordId = callRecord?.id || null;
       }
-      // Test calls are one-off only. Never create a scheduled retry for a test recipient.
       // Test calls are intentionally one-off. No automatic retry or scheduler entry is created.
       const retryJobId: string | null = null;
       await admin.from("twiga_phone_lines").update({ settings: { ...settings, last_outbound_call_id: providerCallId || null, last_outbound_call_status: safe(call?.status || "queued", 40) } }).eq("id", line.id);
-      return json({ submitted: true, call, callRecordId, retryJobId, noAnswerRetry: false, message: "Your one-off, recipient-approved test call was submitted through SautiKit. No retry or campaign was scheduled." });
+      return json({ submitted: true, call, callRecordId, retryJobId, noAnswerRetry: !!retryJobId, message: "Your one-off, recipient-approved test call was submitted through SautiKit. No retry or campaign was scheduled." });
     }
 
     return json({ error: "Unknown SautiKit action." }, 404);
