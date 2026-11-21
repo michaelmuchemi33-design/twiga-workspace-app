@@ -23,3 +23,6 @@ storage = "sqlite"
 
 [triggers]
 crons = ["* * * * *"]
+
+[vars]
+META_GRAPH_VERSION = "v27.0"
