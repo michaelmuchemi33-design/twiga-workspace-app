@@ -556,17 +556,22 @@ html.dark,
 html.dark body,
 html.dark #root {
   min-height: 100%;
-  background-color: #171717 !important;
+  background-color: #111111 !important;
   color: #f5f5f5 !important;
 }
 
+/* The workspace canvas is slightly lighter than the browser background. */
+html.dark #root > div.min-h-screen {
+  background-color: #171717 !important;
+}
+
 /* Cards and neutral panels remain visibly separate from the page background. */
-.dark .bg-white { background-color: #202020 !important; }
+.dark .bg-white { background-color: #252525 !important; }
 .dark .bg-neutral-50,
 .dark .bg-gray-50,
 .dark .bg-slate-50,
 .dark .bg-zinc-50,
-.dark .bg-stone-50 { background-color: #171717 !important; }
+.dark .bg-stone-50 { background-color: #202020 !important; }
 .dark .bg-neutral-100,
 .dark .bg-gray-100,
 .dark .bg-slate-100,
