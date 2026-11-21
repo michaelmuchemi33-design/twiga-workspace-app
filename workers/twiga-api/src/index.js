@@ -645,8 +645,9 @@ async function handleWhatsAppWebhook(env, body) {
       for (const call of (Array.isArray(value.calls) ? value.calls : [])) {
         const callId = txt(call.id || crypto.randomUUID(),160);
         const taskId = 'wa-call-' + callId;
-        await env.DB.prepare("INSERT OR IGNORE INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'whatsapp_call_event', 'Review WhatsApp call', ?, 'pending', 'normal', ?, ?, ?)")
-          .bind(taskId,account.business_id,JSON.stringify({phoneNumberId:phoneNumberId,call:call}),now(),now(),now()).run();
+        const urgentInboundCall = String(call.event || '').toLowerCase() === 'connect' && String(call.direction || '').toLowerCase() === 'user_initiated';
+        await env.DB.prepare("INSERT OR IGNORE INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'whatsapp_call_event', 'Review WhatsApp call', ?, 'pending', ?, ?, ?, ?)")
+          .bind(taskId,account.business_id,JSON.stringify({phoneNumberId:phoneNumberId,call:call}),urgentInboundCall ? 'high' : 'normal',now(),now(),now()).run();
         dispatch.add(account.business_id);
       }
     }
