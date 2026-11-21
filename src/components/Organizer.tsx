@@ -24,6 +24,8 @@ type Task = {
   source: string;
   created_at: string;
 };
+type WorkerTask = { id: string; task_type: string; title: string; detail: string; status: string; priority: string; due_at: string; created_at: string };
+type WorkerStatus = { enabled: boolean; schedule: string; nextReviewAt: string | null; lastRunAt: string | null; lastReviewAt: string | null };
 
 async function readFunctionError(error: any, fallback: string) {
   const response = error?.context;
@@ -55,6 +57,9 @@ export default function Organizer() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [workerTasks, setWorkerTasks] = useState<WorkerTask[]>([]);
+  const [workerStatus, setWorkerStatus] = useState<WorkerStatus | null>(null);
+  const [workerActionBusy, setWorkerActionBusy] = useState(false);
 
   const load = useCallback(async () => {
     if (demoMode) {
@@ -77,16 +82,36 @@ export default function Organizer() {
         source: "demo", created_at: createdAt,
       };
       setItems([approval, ...taskItems]);
+      setWorkerTasks([]);
+      setWorkerStatus(null);
       setLoading(false);
       return;
     }
-    if (!businessId || !supabase) { setItems([]); setLoading(false); return; }
+    if (!businessId || !supabase) { setItems([]); setWorkerTasks([]); setWorkerStatus(null); setLoading(false); return; }
     setLoading(true);
     const { data, error } = await supabase.from("twiga_tasks")
       .select("id,title,description,status,kind,category,priority,due_at,approval_required,approval_status,action_type,action_payload,source,created_at")
       .eq("business_id", businessId).order("created_at", { ascending: false }).limit(200);
     if (error) setMessage(error.message);
     else setItems((data || []) as Task[]);
+    try {
+      const { data: authData } = await supabase.auth.getSession();
+      const accessToken = authData.session?.access_token;
+      if (!accessToken) throw new Error("Sign in again to view the AI Worker queue.");
+      const response = await fetch("https://twiga-api.twiga-ke.workers.dev/ai/worker", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        body: JSON.stringify({ action: "overview", business_id: businessId }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) throw new Error(String(payload?.error || "The AI Worker status could not be loaded."));
+      setWorkerStatus(payload.worker || null);
+      setWorkerTasks(Array.isArray(payload.tasks) ? payload.tasks.filter((task: WorkerTask) => task.status === "needs_review" || task.status === "failed") : []);
+    } catch (workerError) {
+      setWorkerStatus(null);
+      setWorkerTasks([]);
+      setMessage(workerError instanceof Error ? "AI Orchestrator: " + workerError.message : "AI Orchestrator status could not be loaded.");
+    }
     setLoading(false);
   }, [businessId, demoMode, sampleTasks]);
 
@@ -180,6 +205,30 @@ export default function Organizer() {
     finally { setBusy(false); }
   };
 
+  const acknowledgeWorkerTask = async (taskId: string) => {
+    if (!supabase || !businessId) return;
+    setWorkerActionBusy(true);
+    setMessage("");
+    try {
+      const { data: authData } = await supabase.auth.getSession();
+      const accessToken = authData.session?.access_token;
+      if (!accessToken) throw new Error("Sign in again before acknowledging this item.");
+      const response = await fetch("https://twiga-api.twiga-ke.workers.dev/ai/worker", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        body: JSON.stringify({ action: "resolve_task", business_id: businessId, task_id: taskId }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload?.ok === false) throw new Error(String(payload?.error || "This item could not be acknowledged."));
+      setMessage("Item acknowledged in the business Worker queue.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not acknowledge this Worker item.");
+    } finally {
+      setWorkerActionBusy(false);
+    }
+  };
+
   const visible = useMemo(() => items.filter((item) => {
     if (filter === "tasks") return item.kind === "task" || item.kind === "followup";
     if (filter === "ideas") return item.kind === "idea";
@@ -203,6 +252,41 @@ export default function Organizer() {
           <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Ideas</p><p className="mt-1 text-xl font-bold tabular-nums text-neutral-950">{ideas}</p></div>
         </div>
       </header>
+
+      <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-orange-600">Cloudflare · per-business runtime</p>
+            <h2 className="mt-1 text-lg font-semibold text-neutral-950">AI Business Orchestrator</h2>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-600">The Worker processes queued work on its one-minute schedule and is also woken immediately by supported phone and WhatsApp webhooks. This is separate from the business opening-hours setting.</p>
+          </div>
+          <span className={cn("rounded-full px-3 py-1.5 text-xs font-semibold", workerStatus?.enabled ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600")}>
+            {workerStatus ? (workerStatus.enabled ? "Scheduler enabled" : "Scheduler paused") : demoMode ? "Demo only" : "Status unavailable"}
+          </span>
+        </div>
+        {workerStatus && <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Queue check</p><p className="mt-1 text-sm font-semibold text-neutral-950">Every minute</p></div>
+          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Last Worker run</p><p className="mt-1 text-sm font-semibold text-neutral-950">{workerStatus.lastRunAt ? new Date(workerStatus.lastRunAt).toLocaleString() : "Not recorded yet"}</p></div>
+          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Last business review</p><p className="mt-1 text-sm font-semibold text-neutral-950">{workerStatus.lastReviewAt ? new Date(workerStatus.lastReviewAt).toLocaleString() : "Not run yet"}</p></div>
+        </div>}
+        <div className="mt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div><h3 className="text-sm font-semibold text-neutral-950">Staff handovers & Worker exceptions</h3><p className="mt-1 text-xs text-neutral-500">Items waiting for a person to review, plus automated jobs that failed.</p></div>
+            <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-semibold text-neutral-700">{workerTasks.length} waiting</span>
+          </div>
+          {!workerStatus && !demoMode && <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">The Worker queue could not be read. Refresh to retry; the business task list below remains available.</p>}
+          {workerTasks.length === 0 && workerStatus && <p className="mt-3 rounded-xl border border-dashed border-neutral-200 p-4 text-sm text-neutral-500">No staff handovers or failed Worker tasks are waiting for review.</p>}
+          <div className="mt-3 space-y-2">
+            {workerTasks.map((task) => <article key={task.id} className="rounded-xl border border-neutral-200 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0"><p className="text-sm font-semibold text-neutral-950">{task.title}</p><p className="mt-1 text-xs text-neutral-500">{label(task.task_type)} · {label(task.status)} · {label(task.priority)} priority</p></div>
+                <button onClick={() => void acknowledgeWorkerTask(task.id)} disabled={workerActionBusy} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700 disabled:opacity-40">Acknowledge</button>
+              </div>
+              {task.detail && <p className="mt-2 whitespace-pre-wrap text-sm leading-5 text-neutral-600">{task.detail}</p>}
+            </article>)}
+          </div>
+        </div>
+      </section>
 
       <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
         <div className="flex items-center gap-2"><IconSwap className="h-5 w-5 text-orange-500" /><h2 className="font-semibold text-neutral-950">Capture work</h2></div>
