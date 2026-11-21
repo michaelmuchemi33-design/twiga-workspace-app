@@ -555,16 +555,58 @@ async function processWhatsAppCallEvent(env, businessId, detail) {
   const call = detail.call || {};
   const from = txt(call.from || call.from_number || call.fromNumber,40);
   const eventName = txt(call.event || call.status || 'call_event',60).toLowerCase();
-  const missed = eventName.indexOf('missed') >= 0 || eventName.indexOf('no_answer') >= 0 || eventName.indexOf('no-answer') >= 0;
-  await createWhatsAppOwnerTask(env,businessId,'whatsapp_call','WhatsApp call event', 'Call event ' + eventName + (from ? ' from ' + from : '') + '. Check the conversation and follow up if needed.', 'wa-call-' + txt(call.id || crypto.randomUUID(),160));
-  if (!missed || !from) return {ok:true,replied:false};
-  const token = await decryptWhatsAppToken(env,account);
-  const conversation = await env.DB.prepare('SELECT last_inbound_at FROM whatsapp_conversations WHERE business_id = ? AND wa_id = ?').bind(businessId,from).first();
-  const lastInbound = conversation && conversation.last_inbound_at ? Date.parse(conversation.last_inbound_at) : 0;
-  if (!lastInbound || Date.now() - lastInbound > 24 * 60 * 60 * 1000) return {ok:true,replied:false,reason:'no_open_customer_service_window'};
-  const text = 'Sorry we missed your WhatsApp call. You can send us a message or voice note here and our receptionist will help, or our team can follow up.';
-  const sent = await sendWhatsAppText(env,account,token,from,text);
-  return {ok:true,replied:true,messageId:sent && sent.messages && sent.messages[0] ? sent.messages[0].id : ''};
+  const direction = txt(call.direction || '',40).toLowerCase();
+  const callId = txt(call.id || '',180);
+
+  // A user-initiated CONNECT carries the call offer. TWIGA does not stream AI
+  // voice on WhatsApp calls, so reject it promptly and offer chat/voice-note help.
+  if ((eventName === 'connect' || eventName === 'ringing') && direction === 'user_initiated' && callId) {
+    let rejected = false;
+    let rejectError = '';
+    try {
+      const token = await decryptWhatsAppToken(env,account);
+      const result = await metaGraph(env,token,account.phone_number_id + '/calls','POST',{
+        messaging_product:'whatsapp',
+        call_id:callId,
+        action:'reject'
+      });
+      rejected = result && result.success === true;
+    } catch (error) {
+      rejectError = txt(error && error.message ? error.message : error,240);
+    }
+
+    await createWhatsAppOwnerTask(
+      env,
+      businessId,
+      'whatsapp_call',
+      rejected ? 'WhatsApp call rejected · reply sent if allowed' : 'Incoming WhatsApp call needs attention',
+      'Incoming WhatsApp call from ' + (from || 'an unknown caller') + '. ' + (rejected ? 'TWIGA rejected it because WhatsApp live AI audio is not enabled.' : 'TWIGA could not confirm the reject action: ' + rejectError),
+      'wa-call-' + callId
+    );
+
+    if (!rejected) return {ok:true,rejected:false,notifiedOwner:true,reason:rejectError || 'provider_did_not_confirm_reject'};
+
+    const conversation = await env.DB.prepare('SELECT last_inbound_at FROM whatsapp_conversations WHERE business_id = ? AND wa_id = ?').bind(businessId,from).first();
+    const lastInbound = conversation && conversation.last_inbound_at ? Date.parse(conversation.last_inbound_at) : 0;
+    if (!from || !lastInbound || Date.now() - lastInbound > 24 * 60 * 60 * 1000) {
+      await createWhatsAppOwnerTask(env,businessId,'whatsapp_window_expired','WhatsApp call follow-up needs a template','A WhatsApp call was rejected but the 24-hour customer-service window is not open. Use an approved template or ask the customer to message first.','wa-call-window-' + callId);
+      return {ok:true,rejected:true,replied:false,reason:'no_open_customer_service_window'};
+    }
+
+    const text = 'Sorry we could not answer your WhatsApp call. Please send us a message or voice note here and our receptionist will help, or our team can follow up.';
+    const sent = await sendWhatsAppText(env,account,await decryptWhatsAppToken(env,account),from,text);
+    return {ok:true,rejected:true,replied:true,messageId:sent && sent.messages && sent.messages[0] ? sent.messages[0].id : ''};
+  }
+
+  await createWhatsAppOwnerTask(
+    env,
+    businessId,
+    'whatsapp_call',
+    'WhatsApp call event',
+    'Call event ' + eventName + (from ? ' from ' + from : '') + '. Check the conversation and follow up if needed.',
+    'wa-call-' + (callId || crypto.randomUUID()) + '-' + eventName
+  );
+  return {ok:true,replied:false,event:eventName};
 }
 async function handleWhatsAppWebhook(env, body) {
   await ensureBusinessWorkerSchema(env);
