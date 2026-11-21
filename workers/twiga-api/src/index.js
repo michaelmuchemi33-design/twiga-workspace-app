@@ -919,7 +919,7 @@ async function wahaConnect(req, env) {
       // A session created before a previous UI retry may exist; attach this tenant's
       // webhook token explicitly rather than creating a second WA identity.
       if (Number(error && error.status) !== 409) throw error;
-      await wahaRequest(env,'/api/sessions/' + encodeURIComponent(sessionName),'POST',{
+      await wahaRequest(env,'/api/sessions/' + encodeURIComponent(sessionName),'PUT',{
         config:{webhooks:[webhook],metadata:{'twiga.business_id':businessId,'twiga.workspace':'true'}}
       });
       session = await wahaRequest(env,'/api/sessions/' + encodeURIComponent(sessionName),'GET');
