@@ -217,6 +217,24 @@ async function chat33Inbox(req, env) {
         for (const row of rows) await chat33SaveContact(env,access.businessId,slot.slot,row.platform || row.channel && row.channel.platform || '',row.contact || row);
       } catch (error) { errors.push({slot:slot.slot,error:txt(error && error.message || error,200)}); }
     }
+    // Include conversations from the separate official Meta WhatsApp connection.
+    // Slot 0 identifies this provider within the unified inbox.
+    await ensureBusinessWorkerSchema(env);
+    const waRows = await env.DB.prepare("SELECT wa_id, phone_number_id, direction, body, message_type, status, created_at FROM whatsapp_messages WHERE business_id = ? ORDER BY created_at DESC LIMIT 500").bind(access.businessId).all();
+    const waGrouped = new Map();
+    for (const row of waRows.results || []) {
+      const waId = txt(row.wa_id,40);
+      if (!waId || waGrouped.has(waId)) continue;
+      waGrouped.set(waId,{
+        id:waId,conversationId:waId,platform:'whatsapp',
+        contact:{id:waId,name:waId,phone:waId},
+        lastMessage:{text:txt(row.body,1200),direction:row.direction,fromMe:row.direction==='outbound',sentAt:row.created_at},
+        lastMessageAt:row.created_at,
+        _twigaSlot:0,_twigaAccountName:'WhatsApp Business (Meta)',_twigaProvider:'meta_whatsapp',
+        phoneNumberId:row.phone_number_id
+      });
+    }
+    conversations.push(...Array.from(waGrouped.values()));
     conversations.sort((a,b)=>String(b.lastMessageAt || b.updatedAt || b.lastActivityAt || '').localeCompare(String(a.lastMessageAt || a.updatedAt || a.lastActivityAt || '')));
     return json({ok:true,conversations:conversations.slice(0,300),errors});
   } catch (error) {
@@ -229,7 +247,14 @@ async function chat33Messages(req, env) {
   try {
     const access=await chat33Auth(req,env);
     const url=new URL(req.url), slot=Number(url.searchParams.get('slot')), conversationId=txt(url.searchParams.get('conversation_id'),160);
-    if(![1,2,3].includes(slot)||!conversationId) return json({ok:false,error:'Choose a Chat33 account and conversation.'},400);
+    if(![0,1,2,3].includes(slot)||!conversationId) return json({ok:false,error:'Choose a social account and conversation.'},400);
+    if (slot === 0) {
+      await ensureBusinessWorkerSchema(env);
+      const account = await env.DB.prepare("SELECT phone_number_id FROM whatsapp_accounts WHERE business_id=? AND status='connected'").bind(access.businessId).first();
+      if (!account) return json({ok:false,error:'The official WhatsApp Business connection is not active.'},404);
+      const result = await env.DB.prepare("SELECT message_id AS id, body AS text, direction, message_type AS type, status, created_at AS sentAt FROM whatsapp_messages WHERE business_id=? AND wa_id=? ORDER BY created_at ASC LIMIT 150").bind(access.businessId,conversationId).all();
+      return json({ok:true,messages:(result.results||[]).map(item=>Object.assign({},item,{fromMe:item.direction==='outbound'})),conversation:{id:conversationId,platform:'whatsapp'}});
+    }
     const record=await chat33GetSlot(env,access.businessId,slot);
     if(!record) return json({ok:false,error:'This Chat33 account is not connected.'},404);
     const payload=await chat33Api(record.key,'/conversations/'+encodeURIComponent(conversationId)+'/messages','GET');
@@ -245,7 +270,21 @@ async function chat33Reply(req, env) {
     const body=await req.json().catch(()=>({}));
     const access=await chat33Auth(req,env,body);
     const slot=Number(body.slot), conversationId=txt(body.conversationId,160), message=txt(body.message,4000);
-    if(![1,2,3].includes(slot)||!conversationId||!message) return json({ok:false,error:'Choose a conversation and enter a reply.'},400);
+    if(![0,1,2,3].includes(slot)||!conversationId||!message) return json({ok:false,error:'Choose a conversation and enter a reply.'},400);
+    if (slot === 0) {
+      await ensureBusinessWorkerSchema(env);
+      const account = await env.DB.prepare("SELECT business_id, phone_number_id, display_phone_number, verified_name, token_cipher, token_iv, status FROM whatsapp_accounts WHERE business_id=? AND status='connected'").bind(access.businessId).first();
+      if (!account) return json({ok:false,error:'The official WhatsApp Business connection is not active.'},404);
+      const conversation = await env.DB.prepare("SELECT last_inbound_at FROM whatsapp_conversations WHERE business_id=? AND wa_id=?").bind(access.businessId,conversationId).first();
+      const lastInbound = conversation && conversation.last_inbound_at ? Date.parse(conversation.last_inbound_at) : 0;
+      if (!lastInbound || Date.now()-lastInbound > 24*60*60*1000) return json({ok:false,error:'The WhatsApp customer-service reply window has closed. Use an approved message template or wait for the customer to message again.'},409);
+      const tokenValue = await decryptWhatsAppToken(env,account);
+      const result = await sendWhatsAppText(env,account,tokenValue,conversationId,message);
+      const outboundId = txt(result && result.messages && result.messages[0] && result.messages[0].id || 'twiga-wa-'+crypto.randomUUID(),180);
+      await env.DB.prepare("INSERT OR REPLACE INTO whatsapp_messages (message_id,business_id,phone_number_id,wa_id,direction,message_type,body,status,created_at) VALUES (?,?,?,?, 'outbound','text',?,'submitted',?)")
+        .bind(outboundId,access.businessId,account.phone_number_id,conversationId,message,now()).run();
+      return json({ok:true,result,message:'WhatsApp accepted the reply.'});
+    }
     const record=await chat33GetSlot(env,access.businessId,slot);
     if(!record) return json({ok:false,error:'This Chat33 account is not connected.'},404);
     const result=await chat33Api(record.key,'/conversations/'+encodeURIComponent(conversationId)+'/reply','POST',{message});
@@ -334,8 +373,11 @@ async function chat33People(req,env) {
   try {
     const access=await chat33Auth(req,env);
     await ensureChat33Schema(env);
-    const result=await env.DB.prepare("SELECT contact_id AS id,platform,name,username,channel_name AS channel,last_message_at,updated_at FROM chat33_social_contacts WHERE business_id=? ORDER BY COALESCE(last_message_at,updated_at) DESC LIMIT 500").bind(access.businessId).all();
-    return json({ok:true,contacts:result.results||[]});
+    const result=await env.DB.prepare("SELECT contact_id AS id,platform,name,username,channel_name AS channel,last_message_at,updated_at,slot FROM chat33_social_contacts WHERE business_id=? ORDER BY COALESCE(last_message_at,updated_at) DESC LIMIT 500").bind(access.businessId).all();
+    await ensureBusinessWorkerSchema(env);
+    const waRows=await env.DB.prepare("SELECT wa_id,MAX(last_inbound_at) AS last_message_at FROM whatsapp_conversations WHERE business_id=? GROUP BY wa_id ORDER BY last_message_at DESC LIMIT 500").bind(access.businessId).all();
+    const waContacts=(waRows.results||[]).map(row=>({id:String(row.wa_id),platform:'whatsapp',name:String(row.wa_id),username:'',channel:'WhatsApp Business (Meta)',last_message_at:row.last_message_at,slot:0,source:'meta_whatsapp',phone:String(row.wa_id)}));
+    return json({ok:true,contacts:[...(result.results||[]),...waContacts]});
   } catch(error) {
     const message=String(error && error.message || error), status=message==='LOGIN_REQUIRED'?401:message==='NO_ACCESS'||message.startsWith('INACTIVE|')?403:500;
     return json({ok:false,error:status===401?'Sign in again.':status===403?'You do not have access to this business workspace.':'Social contacts could not be loaded.'},status);
