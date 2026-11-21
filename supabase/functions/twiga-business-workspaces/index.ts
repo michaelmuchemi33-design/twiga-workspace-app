@@ -31,6 +31,82 @@ Deno.serve(async(req:Request)=>{
    if(updateError)throw updateError;
    return json({saved:true,ownerName,ownerEmail});
   }
+  if(body.action==="update_profile"){
+   const businessId=String(body.businessId||"");
+   const p=body.profile&&typeof body.profile==="object"?body.profile:{};
+   if(!/^[0-9a-f-]{36}$/i.test(businessId))return json({error:"Select a valid business workspace."},400);
+   const {data:member,error:memberError}=await db.from("business_members").select("role").eq("business_id",businessId).eq("user_id",user.id).maybeSingle();
+   if(memberError)throw memberError;
+   if(!member||!["owner","admin"].includes(String(member.role)))return json({error:"Only this business owner or administrator can update its AI profile."},403);
+   const {data:business,error:businessError}=await db.from("businesses").select("id,name,business_type").eq("id",businessId).maybeSingle();
+   if(businessError)throw businessError;
+   if(!business)return json({error:"Business workspace not found."},404);
+   const name=String(p.business_name||business.name||"").trim().slice(0,120);
+   const businessType=String(p.business_type||business.business_type||"general").trim().slice(0,80);
+   const summary=String(p.business_summary||p.what_they_do||"").slice(0,12000);
+   if(name.length<2||summary.trim().length<5)return json({error:"Add a business name and describe what your business does before saving."},400);
+   const {error:businessSaveError}=await db.from("businesses").update({name,business_type:businessType}).eq("id",businessId);
+   if(businessSaveError)throw businessSaveError;
+   const profile={
+    business_id:businessId,
+    owner_name:String(p.owner_name||user.user_metadata?.full_name||user.user_metadata?.name||"").slice(0,160),
+    owner_email:String(p.owner_email||user.email||"").slice(0,254),
+    business_summary:summary,
+    what_they_do:String(p.what_they_do||summary).slice(0,12000),
+    what_they_sell:String(p.what_they_sell||p.products_and_services||"").slice(0,12000),
+    products_and_services:String(p.products_and_services||p.what_they_sell||"").slice(0,16000),
+    target_customers:String(p.target_customers||"").slice(0,8000),
+    unique_selling_points:String(p.unique_selling_points||"").slice(0,8000),
+    service_area:String(p.service_area||"").slice(0,4000),
+    opening_hours:String(p.opening_hours||"").slice(0,4000),
+    delivery_and_payment:String(p.delivery_and_payment||"").slice(0,8000),
+    returns_and_refunds:String(p.returns_and_refunds||"").slice(0,8000),
+    frequently_asked_questions:String(p.frequently_asked_questions||"").slice(0,12000),
+    brand_voice:String(p.brand_voice||"Calm, warm, helpful and professional").slice(0,500),
+    reply_language:String(p.reply_language||"match_customer").slice(0,100),
+    receptionist_greeting:String(p.receptionist_greeting||("Hello, thank you for calling "+name+". How can I help you today?")).slice(0,1200),
+    assistant_instructions:String(p.assistant_instructions||"").slice(0,16000),
+    setup_details:p.setup_details&&typeof p.setup_details==="object"?p.setup_details:{},
+    updated_by:user.id,
+    updated_at:new Date().toISOString()
+   };
+   const {error:profileSaveError}=await db.from("twiga_business_profiles").upsert(profile,{onConflict:"business_id"});
+   if(profileSaveError)throw profileSaveError;
+   const {data:settings,error:settingsReadError}=await db.from("twiga_business_settings").select("business_hours,followups_enabled").eq("business_id",businessId).maybeSingle();
+   if(settingsReadError)throw settingsReadError;
+   const {error:settingsSaveError}=await db.from("twiga_business_settings").upsert({
+     business_id:businessId,
+     timezone:"Africa/Nairobi",
+     language_mode:"auto",
+     business_hours:p.business_hours&&typeof p.business_hours==="object"?p.business_hours:(settings?.business_hours||{}),
+     followups_enabled:settings?.followups_enabled!==false
+   },{onConflict:"business_id"});
+   if(settingsSaveError)throw settingsSaveError;
+   const prompt=String(p.assistant_instructions||"").slice(0,16000);
+   const {error:aiSaveError}=await db.from("business_ai").upsert({
+     business_id:businessId,
+     greeting:profile.receptionist_greeting,
+     prompt:prompt,
+     faq:profile.frequently_asked_questions,
+     rules:prompt,
+     updated_at:new Date().toISOString()
+   },{onConflict:"business_id"});
+   if(aiSaveError)throw aiSaveError;
+   const {error:voiceSaveError}=await db.from("twiga_business_voice_configs").upsert({
+     business_id:businessId,
+     provider:"sautikit",
+     sautikit_model_id:String(p.sautikit_model_id||"sautikit-flash"),
+     sautikit_voice_id:String(p.sautikit_voice_id||"Woman"),
+     retell_voice_id:"",
+     retell_model:"",
+     retell_language_codes:["en-KE","sw-KE"],
+     inbound_prompt:prompt||"Use the business information saved in TWIGA. If a fact is missing, ask the team to confirm rather than inventing it.",
+     outbound_prompt:"Only contact customers for a business-approved reason and after consent.",
+     updated_by:user.id
+   },{onConflict:"business_id"});
+   if(voiceSaveError)throw voiceSaveError;
+   return json({saved:true,business:{id:businessId,name,business_type:businessType},message:"Business profile and receptionist instructions saved."});
+  }
   if(body.action==="create"){
    const name=String(body.name||"").trim().slice(0,120),businessType=String(body.businessType||"general").trim().slice(0,80)||"general",p=body.profile&&typeof body.profile==="object"?body.profile:{};
    if(name.length<2)return json({error:"Add your business name first."},400);
