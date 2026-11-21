@@ -3,6 +3,8 @@ import * as pdfjsLib from "pdfjs-dist";
 import * as XLSX from "xlsx";
 import * as mammoth from "mammoth";
 import { supabase } from "@/lib/supabase";
+
+(pdfjsLib as any).GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
 import { useStore } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
