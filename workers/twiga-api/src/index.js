@@ -684,7 +684,7 @@ async function registerBusinessAgent(env,businessId) {
   const tenantId = normalizeBusinessOrchestratorId(businessId);
   await ensureBusinessWorkerSchema(env);
   const stamp = now();
-  await env.DB.prepare("INSERT INTO business_worker_orchestrators (business_id,durable_object_name,status,registered_at,last_seen_at,created_at,updated_at) VALUES (?,?,'registering',?,?,?,?) ON CONFLICT(business_id) DO UPDATE SET durable_object_name=excluded.durable_object_name,status='registering',last_seen_at=excluded.last_seen_at,last_error=NULL,updated_at=excluded.updated_at")
+  await env.DB.prepare("INSERT INTO business_worker_orchestrators (business_id,durable_object_name,status,registered_at,last_seen_at,created_at,updated_at) VALUES (?,?,'registering',?,?,?,?) ON CONFLICT(business_id) DO UPDATE SET durable_object_name=excluded.durable_object_name,status=CASE WHEN status='degraded' THEN 'degraded' ELSE 'registering' END,last_seen_at=excluded.last_seen_at,updated_at=excluded.updated_at")
     .bind(tenantId,tenantId,stamp,stamp,stamp,stamp).run();
   try {
     const stub = businessAgentStub(env,tenantId);
@@ -697,7 +697,7 @@ async function registerBusinessAgent(env,businessId) {
     if (!response.ok || data.ok === false || data.registered !== true || data.isolated !== true || String(data.businessId || '').toLowerCase() !== tenantId) {
       throw new Error(data.error || 'The business orchestrator identity could not be confirmed.');
     }
-    await env.DB.prepare("UPDATE business_worker_orchestrators SET status=CASE WHEN last_error IS NULL THEN 'ready' ELSE status END,registered_at=COALESCE(registered_at,?),last_seen_at=?,updated_at=? WHERE business_id=?")
+    await env.DB.prepare("UPDATE business_worker_orchestrators SET status=CASE WHEN status='degraded' THEN 'degraded' ELSE 'ready' END,registered_at=COALESCE(registered_at,?),last_seen_at=?,last_error=CASE WHEN status='degraded' THEN last_error ELSE NULL END,last_error_at=CASE WHEN status='degraded' THEN last_error_at ELSE NULL END,updated_at=? WHERE business_id=?")
       .bind(data.registeredAt || stamp,stamp,stamp,tenantId).run();
     return Object.assign({},data,{ready:true,isolated:true,scope:'one_business',businessId:tenantId,lastSeenAt:stamp});
   } catch (error) {
@@ -712,7 +712,7 @@ async function dispatchBusinessAgent(env, businessId) {
   const tenantId = normalizeBusinessOrchestratorId(businessId);
   await ensureBusinessWorkerSchema(env);
   const startedAt = now();
-  await env.DB.prepare("INSERT INTO business_worker_orchestrators (business_id,durable_object_name,status,registered_at,last_seen_at,last_dispatch_at,created_at,updated_at) VALUES (?,?,'running',?,?, ?,?,?) ON CONFLICT(business_id) DO UPDATE SET durable_object_name=excluded.durable_object_name,status=CASE WHEN last_error IS NULL THEN 'running' ELSE status END,last_seen_at=excluded.last_seen_at,last_dispatch_at=excluded.last_dispatch_at,updated_at=excluded.updated_at")
+  await env.DB.prepare("INSERT INTO business_worker_orchestrators (business_id,durable_object_name,status,registered_at,last_seen_at,last_dispatch_at,created_at,updated_at) VALUES (?,?,'running',?,?, ?,?,?) ON CONFLICT(business_id) DO UPDATE SET durable_object_name=excluded.durable_object_name,status=CASE WHEN status='degraded' THEN 'degraded' ELSE 'running' END,last_seen_at=excluded.last_seen_at,last_dispatch_at=excluded.last_dispatch_at,updated_at=excluded.updated_at")
     .bind(tenantId,tenantId,startedAt,startedAt,startedAt,startedAt,startedAt).run();
   try {
     const stub = businessAgentStub(env,tenantId);
