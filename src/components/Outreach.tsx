@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 type Contact = { name: string; phone: string; consent: boolean };
 const DEFAULT_SCRIPT = "Hello, this is the AI assistant calling on behalf of {{business_name}}. We have a special offer: {{offer}}. Would you like me to tell you more? If you are not interested, I can end the call and make sure we do not contact you about this offer again.";
 const DAY_OPTIONS = [{ id: 1, label: "Mon" }, { id: 2, label: "Tue" }, { id: 3, label: "Wed" }, { id: 4, label: "Thu" }, { id: 5, label: "Fri" }, { id: 6, label: "Sat" }, { id: 0, label: "Sun" }];
+const NAIROBI_TIME_ZONE = "Africa/Nairobi";
 
 function normalizePhone(value: string) {
   let n = String(value || "").trim().replace(/[\s().-]/g, "");
@@ -37,14 +38,33 @@ function parseCsv(text: string): Contact[] {
     consent: ["yes", "true", "1", "opt-in", "opted-in", "consented"].includes(String(r[consentIndex] || "").toLowerCase().trim()),
   })).filter(c => c.phone);
 }
+function nairobiDateParts(date: Date) {
+  const values = new Intl.DateTimeFormat("en-GB", {
+    timeZone: NAIROBI_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(date).reduce((out: Record<string,string>, part) => {
+    if (part.type !== "literal") out[part.type] = part.value;
+    return out;
+  }, {});
+  return { year: Number(values.year), month: Number(values.month), day: Number(values.day), hour: Number(values.hour), minute: Number(values.minute) };
+}
 function nextSlot(from: Date, days: number[], start: string, end: string): Date {
+  const permitted = Array.from(new Set(days.map(Number).filter(day => Number.isInteger(day) && day >= 0 && day <= 6)));
+  if (!permitted.length) throw new Error("Select at least one calling day.");
   const [sh, sm] = start.split(":").map(Number), [eh, em] = end.split(":").map(Number);
+  if (![sh,sm,eh,em].every(Number.isFinite) || sh < 0 || sh > 23 || eh < 0 || eh > 23 || sm < 0 || sm > 59 || em < 0 || em > 59 || start >= end) {
+    throw new Error("Choose a valid Kenya-time calling window.");
+  }
+  const base = nairobiDateParts(from);
   for (let offset = 0; offset < 35; offset++) {
-    const d = new Date(from); d.setDate(d.getDate() + offset);
-    if (!days.includes(d.getDay())) continue;
-    const begin = new Date(d); begin.setHours(sh, sm, 0, 0);
-    const finish = new Date(d); finish.setHours(eh, em, 0, 0);
-    const candidate = offset === 0 && from > begin ? new Date(from) : begin;
+    // Build the calendar date using UTC arithmetic, then interpret the selected
+    // wall-clock time explicitly in Nairobi (UTC+03:00), independent of browser zone.
+    const day = new Date(Date.UTC(base.year, base.month - 1, base.day + offset));
+    if (!permitted.includes(day.getUTCDay())) continue;
+    const dateKey = day.toISOString().slice(0,10);
+    const begin = new Date(dateKey + "T" + start + ":00+03:00");
+    const finish = new Date(dateKey + "T" + end + ":00+03:00");
+    const candidate = offset === 0 && from > begin ? from : begin;
     if (candidate < finish) return candidate;
   }
   throw new Error("Could not find a calling slot. Select at least one day and a valid calling window.");
@@ -57,7 +77,7 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
   const [inboundPrompt, setInboundPrompt] = useState("Answer questions about the business accurately, help with bookings and orders, and ask before saving customer details.");
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [fileName, setFileName] = useState("");
-  const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5, 6, 0]);
   const [start, setStart] = useState("09:00");
   const [end, setEnd] = useState("17:00");
   const [testNumber, setTestNumber] = useState("0793832286");
@@ -69,14 +89,34 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
   const [error, setError] = useState("");
   const [testText, setTestText] = useState("A customer asks: What is the offer, how much does it cost, and how can I book?");
   const [testReply, setTestReply] = useState("");
-  useEffect(() => {
+  const [phoneLine, setPhoneLine] = useState<any>(null);
+  const [providerError, setProviderError] = useState("");
+  const [configLoading, setConfigLoading] = useState(true);
+  const refreshPhoneConfig = async () => {
     if (!supabase || !businessId || demo) return;
-    void supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } }).then(({ data, error }) => {
-      if (error || !data) return;
+    const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } });
+    if (invokeError) throw new Error(invokeError.message);
+    if (data?.error) throw new Error(String(data.error));
+    setPhoneLine(data?.phoneLine || null);
+    setProviderError(String(data?.providerError || ""));
+    if (data?.scripts?.greeting) setGreeting(String(data.scripts.greeting));
+    if (data?.scripts?.inbound) setInboundPrompt(String(data.scripts.inbound));
+    if (data?.scripts?.outbound) setScript(String(data.scripts.outbound));
+  };
+  useEffect(() => {
+    if (!supabase || !businessId || demo) { setConfigLoading(false); return; }
+    let active = true;
+    void supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } }).then(({ data, error: invokeError }) => {
+      if (!active) return;
+      if (invokeError) { setProviderError(invokeError.message); return; }
+      if (!data) return;
+      setPhoneLine(data.phoneLine || null);
+      setProviderError(String(data.providerError || ""));
       if (data.scripts?.greeting) setGreeting(String(data.scripts.greeting));
       if (data.scripts?.inbound) setInboundPrompt(String(data.scripts.inbound));
       if (data.scripts?.outbound) setScript(String(data.scripts.outbound));
-    });
+    }).finally(() => { if (active) setConfigLoading(false); });
+    return () => { active = false; };
   }, [businessId, demo]);
   const optedIn = contacts.filter(c => c.consent);
   const invalidCount = useMemo(() => contacts.length - optedIn.length, [contacts, optedIn.length]);
@@ -101,7 +141,8 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
       const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "publish_agent", businessId, greeting, inboundPrompt, outboundPrompt: publishedPrompt } });
       if (invokeError) throw new Error(invokeError.message);
       if (data?.error) throw new Error(String(data.error));
-      setMessage(data?.message || "Offer and outbound instructions published.");
+      await refreshPhoneConfig();
+      setMessage(data?.message || "Offer and outbound instructions published. Check the outbound status below before scheduling calls.");
     } catch (e) { setError(e instanceof Error ? e.message : "Could not publish the offer."); }
     finally { setPublishing(false); }
   };
@@ -113,7 +154,7 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     if (!window.confirm("Place a real AI test call to " + to + "? Provider call charges may apply.")) return;
     setTesting(true); setError(""); setMessage("Sending your AI test call request…");
     try {
-      const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "send_call", businessId, to, reason: "Owner-requested TWIGA promotional AI test call", authorised: true, consent: true } });
+      const { data, error: invokeError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "send_call", businessId, to, reason: "Owner-requested TWIGA promotional AI test call", testMode: true, authorised: true, consent: true } });
       if (invokeError) throw new Error(invokeError.message);
       if (data?.error) throw new Error(String(data.error));
       setMessage(data?.message || "Test call request submitted to " + to + ".");
@@ -124,29 +165,41 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     if (!offer.trim()) { setError("Publish an offer before starting the campaign."); return; }
     if (!optedIn.length) { setError("Your CSV needs a consent/opt-in column, and at least one contact must have agreed to promotional calls."); return; }
     if (!days.length) { setError("Choose at least one calling day."); return; }
+    if (phoneLine?.outbound_enabled !== true || phoneLine?.outbound_status !== "active") {
+      setError("Campaigns cannot be dispatched yet. This business's SautiKit outbound line is not verified and active. TWIGA must verify and enable outbound calling before calls can be placed. No campaign was queued.");
+      return;
+    }
     if (start >= end) { setError("End time must be later than start time."); return; }
     if (optedIn.length > 200) { setError("For safety, upload no more than 200 opted-in contacts per campaign batch."); return; }
     if (!supabase || !businessId) { setError("Select a business workspace first."); return; }
     if (!window.confirm("Queue " + optedIn.length + " consented contacts for promotional calls during " + start + "–" + end + " on your selected days? Calls will be scheduled, not placed all at once.")) return;
     setLaunching(true); setError(""); setMessage("Scheduling opted-in contacts…");
     try {
-      const rows: any[] = [];
-      let cursor = new Date();
-      cursor.setMinutes(cursor.getMinutes() + 5, 0, 0);
+      const scheduledContacts: { name: string; phone: string; scheduledAt: string }[] = [];
+      let cursor = new Date(Date.now() + 5 * 60_000);
       for (const contact of optedIn) {
         const slot = nextSlot(cursor, days, start, end);
-        rows.push({
-          business_id: businessId, customer_name: contact.name, phone_number: contact.phone,
-          reason: "Promotional offer: " + offer.trim() + "\nAI instructions: " + publishedPrompt,
-          scheduled_at: slot.toISOString(), timezone: "Africa/Nairobi", consent_status: "opted_in",
-          trigger_type: "timer", trigger_conditions: { campaign_type: "promotional", offer: offer.trim(), consent_source: fileName || "CSV upload" },
-          calling_window_start: start, calling_window_end: end, max_attempts: 1, retry_interval_minutes: 30, status: "scheduled",
-        });
+        scheduledContacts.push({ name: contact.name, phone: contact.phone, scheduledAt: slot.toISOString() });
         cursor = new Date(slot.getTime() + 5 * 60_000);
       }
-      const { error: insertError } = await supabase.from("twiga_scheduled_calls").insert(rows);
-      if (insertError) throw new Error(insertError.message);
-      setMessage("Campaign queued: " + rows.length + " consented contacts scheduled. The scheduled-call worker will dispatch due calls inside the selected calling windows.");
+      const { data, error: scheduleError } = await supabase.functions.invoke("twiga-scheduled-calls", {
+        body: {
+          action: "schedule",
+          businessId,
+          authorised: true,
+          contacts: scheduledContacts,
+          reason: ("Promotional offer: " + offer.trim() + "\nAI instructions: " + publishedPrompt).slice(0, 500),
+          timezone: NAIROBI_TIME_ZONE,
+          callingWindowStart: start,
+          callingWindowEnd: end,
+          allowedDays: days,
+          triggerType: "timer",
+          retryOnNoAnswer: false,
+        },
+      });
+      if (scheduleError) throw new Error(scheduleError.message);
+      if (data?.error) throw new Error(String(data.error));
+      setMessage(data?.message || ("Campaign queued: " + Number(data?.scheduledCount || scheduledContacts.length) + " consented contacts scheduled across " + DAY_OPTIONS.filter(day => days.includes(day.id)).map(day => day.label).join(", ") + ". Dispatch will begin only while the SautiKit outbound line is active."));
     } catch (e) { setError(e instanceof Error ? e.message : "Could not queue the campaign."); }
     finally { setLaunching(false); }
   };
@@ -162,6 +215,18 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
   return <div className="mx-auto max-w-6xl space-y-5">
     <header className="rounded-2xl border border-neutral-200 bg-white p-6"><p className="text-xs font-bold uppercase tracking-widest text-orange-600">TWIGA · Campaigns</p><h1 className="mt-2 text-3xl font-bold text-neutral-950">Outreach</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-neutral-600">Create a promotional offer, upload opted-in contacts, choose when the AI may call, and test the experience before launch.</p></header>
     {(message || error) && <div className={"rounded-xl border px-4 py-3 text-sm " + (error ? "border-red-200 bg-red-50 text-red-800" : "border-orange-200 bg-orange-50 text-orange-900")}>{error || message}</div>}
+    <section className={"rounded-2xl border p-4 " + (phoneLine?.outbound_enabled === true && phoneLine?.outbound_status === "active" ? "border-orange-200 bg-orange-50" : "border-amber-200 bg-amber-50")}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-bold uppercase tracking-wide text-orange-700">Outbound readiness</p>
+          <p className="mt-1 text-sm font-semibold text-neutral-950">{configLoading ? "Checking the phone service…" : phoneLine?.outbound_enabled === true && phoneLine?.outbound_status === "active" ? "Outbound calling is active" : "Outbound calling is not enabled yet"}</p>
+          <p className="mt-1 text-xs leading-5 text-neutral-700">{configLoading ? "Reading the live SautiKit line status." : phoneLine ? "Line status: " + String(phoneLine.outbound_status || "not configured") + " · " + (phoneLine.outbound_enabled === true ? "Enabled" : "Disabled") + (phoneLine.line_number ? " · " + String(phoneLine.line_number) : "") : "No SautiKit phone line is assigned to this business."}</p>
+          {providerError && <p className="mt-1 text-xs leading-5 text-neutral-600">{providerError}</p>}
+          {phoneLine?.outbound_enabled !== true || phoneLine?.outbound_status !== "active" ? <p className="mt-2 text-xs font-medium leading-5 text-amber-950">Weekend selection and queue scheduling do not activate a phone line. A TWIGA administrator must verify the provider number, published agent and outbound permission before campaign calls can be sent.</p> : <p className="mt-2 text-xs text-neutral-700">Campaign calls will respect the selected Nairobi days and time window.</p>}
+        </div>
+        <button type="button" onClick={() => { setConfigLoading(true); void refreshPhoneConfig().catch(e => setProviderError(e instanceof Error ? e.message : "Could not refresh phone status.")).finally(() => setConfigLoading(false)); }} disabled={configLoading} className="shrink-0 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 disabled:opacity-50">Refresh phone status</button>
+      </div>
+    </section>
     <section className="grid gap-5 lg:grid-cols-2">
       <div className="space-y-4 rounded-2xl border border-neutral-200 bg-white p-5">
         <div><p className="text-xs font-bold uppercase tracking-wide text-orange-600">01 · Your offer</p><h2 className="mt-1 text-xl font-bold text-neutral-950">What should the agent promote?</h2><p className="mt-1 text-sm text-neutral-600">Be clear about the product, price, dates and conditions. The AI must not invent details.</p></div>
@@ -181,13 +246,14 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     </section>
     <section className="rounded-2xl border border-neutral-200 bg-white p-5">
       <p className="text-xs font-bold uppercase tracking-wide text-orange-600">03 · Calling schedule</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Choose days and calling hours</h2>
-      <div className="mt-4 flex flex-wrap gap-2">{DAY_OPTIONS.map(d => <button key={d.id} onClick={() => setDays(old => old.includes(d.id) ? old.filter(x => x !== d.id) : [...old, d.id])} className={"rounded-xl border px-4 py-2 text-sm font-semibold " + (days.includes(d.id) ? "border-orange-300 bg-orange-50 text-orange-800" : "border-neutral-200 bg-white text-neutral-600")}>{d.label}</button>)}</div>
+      <p className="mt-2 text-xs text-neutral-500">All seven days are selected by default, including Saturday and Sunday. Toggle any day off to exclude it.</p>
+      <div className="mt-3 flex flex-wrap gap-2">{DAY_OPTIONS.map(d => <button type="button" key={d.id} aria-pressed={days.includes(d.id)} onClick={() => setDays(old => old.includes(d.id) ? old.filter(x => x !== d.id) : [...old, d.id])} className={"rounded-xl border px-4 py-2 text-sm font-semibold transition-colors " + (days.includes(d.id) ? "border-orange-400 bg-orange-500 text-white" : "border-neutral-200 bg-white text-neutral-600 hover:border-orange-300")}>{d.label}</button>)}</div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-sm font-semibold text-neutral-700">Start time (Kenya time)<input type="time" value={start} onChange={e => setStart(e.target.value)} className="mt-1 block w-full rounded-xl border border-neutral-200 p-3" /></label><label className="text-sm font-semibold text-neutral-700">End time (Kenya time)<input type="time" value={end} onChange={e => setEnd(e.target.value)} className="mt-1 block w-full rounded-xl border border-neutral-200 p-3" /></label></div>
       <p className="mt-3 text-xs text-neutral-500">Calls are queued at least five minutes apart and only for contacts marked opted-in. Check local rules and your customers' preferences before launching.</p>
-      <button onClick={() => void launch()} disabled={launching || !optedIn.length} className="mt-4 w-full rounded-xl bg-neutral-950 px-4 py-3 text-sm font-bold text-white hover:bg-neutral-800 disabled:opacity-40">{launching ? "Scheduling campaign…" : "Start outreach campaign · " + optedIn.length + " opted-in contacts"}</button>
+      <button onClick={() => void launch()} disabled={launching || !optedIn.length || configLoading || phoneLine?.outbound_enabled !== true || phoneLine?.outbound_status !== "active"} className="mt-4 w-full rounded-xl bg-neutral-950 px-4 py-3 text-sm font-bold text-white hover:bg-neutral-800 disabled:opacity-40">{launching ? "Scheduling campaign…" : "Start outreach campaign · " + optedIn.length + " opted-in contacts"}</button>
     </section>
     <section className="grid gap-5 lg:grid-cols-2">
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-bold uppercase tracking-wide text-orange-600">04 · Real test call</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Call yourself first</h2><p className="mt-1 text-sm text-neutral-600">Your requested number is prefilled. This places a real provider call and may incur call charges.</p><label className="mt-4 block text-sm font-semibold text-neutral-700">Your mobile number<input value={testNumber} onChange={e => setTestNumber(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-200 p-3" /></label><label className="mt-3 flex items-start gap-2 text-xs text-neutral-600"><input type="checkbox" checked={testConsent} onChange={e => setTestConsent(e.target.checked)} className="mt-0.5" />I own this number or have permission to receive this test call.</label><button onClick={() => void testCall()} disabled={testing} className="mt-4 w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">{testing ? "Calling…" : "Call me · 0793832286"}</button></div>
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-bold uppercase tracking-wide text-orange-600">04 · Real test call</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Call yourself first</h2><p className="mt-1 text-sm text-neutral-600">Your requested number is prefilled. This places a real provider call and may incur call charges.</p><label className="mt-4 block text-sm font-semibold text-neutral-700">Your mobile number<input value={testNumber} onChange={e => setTestNumber(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-200 p-3" /></label><label className="mt-3 flex items-start gap-2 text-xs text-neutral-600"><input type="checkbox" checked={testConsent} onChange={e => setTestConsent(e.target.checked)} className="mt-0.5" />I own this number or have permission to receive this test call.</label><button onClick={() => void testCall()} disabled={testing || configLoading} className="mt-4 w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">{testing ? "Calling…" : "Call me · 0793832286"}</button></div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-bold uppercase tracking-wide text-orange-600">05 · AI test space</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Try a customer question</h2><p className="mt-1 text-sm text-neutral-600">Preview your script and think through common questions before the live call.</p><textarea value={testText} onChange={e => setTestText(e.target.value)} rows={3} className="mt-4 w-full rounded-xl border border-neutral-200 p-3 text-sm" /><button onClick={runTextTest} className="mt-2 rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-bold text-neutral-800 hover:bg-neutral-50">Preview response</button>{testReply && <div className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm leading-6 text-neutral-800">{testReply}</div>}<p className="mt-3 text-xs text-neutral-500">This text preview is a rehearsal aid, not a live model response. Use the real test call above to hear the configured voice.</p></div>
     </section>
   </div>;
