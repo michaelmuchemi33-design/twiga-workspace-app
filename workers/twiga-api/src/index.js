@@ -1439,8 +1439,8 @@ async function validateBusinessIntegration(provider,credentials,model,fromEmail,
     const availableModels=models.map(x=>String(x&& (x.id||x.name)||'').trim()).filter(Boolean);
     let selectedModel=txt(model,180);
     if(availableModels.length){
-      if(!selectedModel)selectedModel=availableModels[0];
-      else if(!availableModels.includes(selectedModel))throw new Error('The selected model ID is not available on this account. Leave the model field blank to use an available model.');
+      if(!selectedModel)selectedModel=availableModels.find(id=>/(gpt|grok|llama|deepseek|qwen|claude|gemini|mistral|mixtral|command)/i.test(id))||availableModels[0];
+      else if(!availableModels.includes(selectedModel))throw new Error('The selected model ID is not available on this account. Leave the model field blank to use an available chat model.');
     }
     if(!selectedModel)throw new Error('The provider did not return an available model list. Enter the exact model ID from your provider account and try again.');
     return {type:'ai_model',config:{provider,base_url:endpoint,model:selectedModel},message:'AI API key validated. Available model selected: '+selectedModel+'.'};
