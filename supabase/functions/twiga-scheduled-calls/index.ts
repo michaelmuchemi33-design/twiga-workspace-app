@@ -649,6 +649,7 @@ Deno.serve(async (req: Request) => {
           contactProfile.itemsBought ? "Previous purchases/interests: " + safe(contactProfile.itemsBought, 1500) : "",
           contactProfile.notes ? "Customer notes: " + safe(contactProfile.notes, 1000) : "",
           contactProfile.lastPurchaseAt ? "Last purchase date: " + safe(contactProfile.lastPurchaseAt, 40) : "",
+          contactProfile.followUpAt ? "Customer's requested follow-up time: " + safe(contactProfile.followUpAt, 40) : "",
         ].filter(Boolean).join(". ");
         const reportCall = !!metadata.owner_report_series_id;
         const reportSummary = safe(metadata.owner_report_summary, 5000);

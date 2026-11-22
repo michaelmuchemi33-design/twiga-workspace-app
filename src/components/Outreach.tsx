@@ -257,11 +257,30 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     if (!window.confirm("Queue " + optedIn.length + " consented contacts for promotional calls during " + start + "–" + end + " on your selected days? Calls will be scheduled, not placed all at once.")) return;
     setLaunching(true); setError(""); setMessage("Scheduling opted-in contacts…");
     try {
-      const scheduledContacts: { name: string; phone: string; scheduledAt: string; marketingConsent: true; email?: string; itemsBought?: string; notes?: string; preferredLanguage?: string; lastPurchaseAt?: string }[] = [];
+      const scheduledContacts: { name: string; phone: string; scheduledAt: string; marketingConsent: true; email?: string; itemsBought?: string; notes?: string; preferredLanguage?: string; lastPurchaseAt?: string; followUpAt?: string }[] = [];
       let cursor = new Date(Date.now() + 5 * 60_000);
-      for (const contact of optedIn) {
-        const slot = nextSlot(cursor, days, start, end);
-        scheduledContacts.push({ name: contact.name, phone: contact.phone, scheduledAt: slot.toISOString(), marketingConsent: true, email: contact.email, itemsBought: contact.itemsBought, notes: contact.notes, preferredLanguage: contact.preferredLanguage, lastPurchaseAt: contact.lastPurchaseAt });
+      const campaignContacts = optedIn.map((contact, index) => {
+        const raw = String(contact.followUpAt || "").trim();
+        const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+        const requested = raw ? new Date(dateOnly ? raw + "T" + start + ":00+03:00" : raw) : null;
+        return { contact, index, requestedAt: requested && Number.isFinite(requested.getTime()) && requested.getTime() >= cursor.getTime() ? requested : null };
+      }).sort((a, b) => {
+        if (a.requestedAt && b.requestedAt) return a.requestedAt.getTime() - b.requestedAt.getTime();
+        if (a.requestedAt) return -1;
+        if (b.requestedAt) return 1;
+        return a.index - b.index;
+      });
+      for (const item of campaignContacts) {
+        const slot = item.requestedAt && item.requestedAt.getTime() >= cursor.getTime()
+          ? item.requestedAt
+          : nextSlot(cursor, days, start, end);
+        const contact = item.contact;
+        scheduledContacts.push({
+          name: contact.name, phone: contact.phone, scheduledAt: slot.toISOString(), marketingConsent: true,
+          email: contact.email, itemsBought: contact.itemsBought, notes: contact.notes,
+          preferredLanguage: contact.preferredLanguage, lastPurchaseAt: contact.lastPurchaseAt,
+          followUpAt: contact.followUpAt,
+        });
         cursor = new Date(slot.getTime() + 5 * 60_000);
       }
       const { data, error: scheduleError } = await supabase.functions.invoke("twiga-scheduled-calls", {
@@ -319,7 +338,7 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
         <button onClick={() => void publish()} disabled={publishing} className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">{publishing ? "Publishing…" : "Publish offer to AI"}</button>
       </div>
       <div className="space-y-4 rounded-2xl border border-neutral-200 bg-white p-5">
-        <div><p className="text-xs font-bold uppercase tracking-wide text-orange-600">02 · Contact list</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Upload your CSV or Excel list</h2><p className="mt-1 text-sm text-neutral-600">Required columns: phone and consent. Optional: name, email, items_bought, notes, preferred_language and last_purchase_at. Each contact is saved to this business's private customer directory.</p></div>
+        <div><p className="text-xs font-bold uppercase tracking-wide text-orange-600">02 · Contact list</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Upload your CSV or Excel list</h2><p className="mt-1 text-sm text-neutral-600">Required columns: phone and consent. Optional: name, email, items_bought, notes, preferred_language, last_purchase_at and follow_up_at (ISO date/time; date-only uses the campaign start time). Each contact is saved to this business's private customer directory.</p></div>
         <button onClick={() => fileRef.current?.click()} className="flex w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 px-4 py-8 text-center hover:border-orange-400"><span className="text-2xl">↑</span><span className="mt-2 text-sm font-bold text-neutral-800">Choose CSV or Excel file</span><span className="mt-1 text-xs text-neutral-500">{fileName || "Upload .csv, .xlsx or .xls · up to 500 saved profiles"}</span></button>
         <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" className="hidden" onChange={e => void importFile(e.target.files?.[0])} />
         <div className="grid grid-cols-3 gap-2"><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Valid numbers</p><p className="text-xl font-bold text-neutral-900">{contacts.length}</p></div><div className="rounded-xl bg-orange-50 p-3"><p className="text-xs text-orange-700">Opted in</p><p className="text-xl font-bold text-neutral-900">{optedIn.length}</p></div><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Not eligible</p><p className="text-xl font-bold text-neutral-900">{invalidCount}</p></div></div>
