@@ -366,7 +366,7 @@ export default function Organizer() {
           <div>
             <p className="text-xs font-bold uppercase tracking-wider text-orange-600">Cloudflare · per-business runtime</p>
             <h2 className="mt-1 text-lg font-semibold text-neutral-950">AI Business Orchestrator</h2>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-600">Cloudflare checks up to 50 business workspaces per scheduler tick and can process up to 50 due jobs for this business per run. Daily reviews run at 8:00 a.m. Nairobi time; inbox events and due jobs are processed in the background. Unsupported actions stay in the owner approval queue rather than being falsely marked complete.</p>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-600">One Cloudflare account hosts the shared scheduler, while every client business gets its own isolated Durable Object orchestrator, business profile and task queue. A fair least-recently-served scheduler rotates through any number of client workspaces, dispatching up to 50 businesses per minute; each business orchestrator can process up to 50 due jobs per run. Daily reviews run at 8:00 a.m. Nairobi time, with inbox events and due jobs handled in the background. Unsupported actions stay in the owner approval queue rather than being falsely marked complete.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className={cn("rounded-full px-3 py-1.5 text-xs font-semibold", workerStatus?.enabled ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600")}>
