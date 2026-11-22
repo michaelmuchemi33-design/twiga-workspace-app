@@ -958,14 +958,16 @@ async function aiWorker(req, env) {
       }
     }
     await ensureBusinessWorkerSettings(env,ctx.biz.id);
+    // Any authenticated business workspace that opens the Worker is assigned
+    // its own Durable Object instance, not just the first business to run jobs.
+    const orchestratorRegistration = await registerBusinessAgent(env,ctx.biz.id);
     if (body.action === 'provision') {
       if (!['owner','admin'].includes(String(ctx.role))) return json({ok:false,error:'Only the business owner or administrator can provision the Worker.'},403);
       const settings = await env.DB.prepare('SELECT enabled,next_review_at FROM business_worker_settings WHERE business_id=?').bind(ctx.biz.id).first();
       const ownerContact = await env.DB.prepare('SELECT phone_e164,enabled FROM business_worker_owner_contacts WHERE business_id=?').bind(ctx.biz.id).first();
       const waAccount = await env.DB.prepare("SELECT display_phone_number,status FROM whatsapp_accounts WHERE business_id=?").bind(ctx.biz.id).first();
-      const orchestrator = await registerBusinessAgent(env,ctx.biz.id);
       return json({ok:true,provisioned:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,
-        orchestrator:{ready:orchestrator.registered===true,isolated:orchestrator.isolated===true,scope:'one_business'},
+        orchestrator:{ready:orchestratorRegistration.registered===true,isolated:orchestratorRegistration.isolated===true,scope:'one_business'},
         worker:{enabled:Number(settings && settings.enabled !== undefined ? settings.enabled : 1)===1,nextReviewAt:settings && settings.next_review_at || null,ownerWhatsAppConfigured:!!(ownerContact&&ownerContact.phone_e164),ownerWhatsAppEnabled:!!(ownerContact&&Number(ownerContact.enabled)===1),ownerWhatsAppLast4:maskWhatsAppPhone(ownerContact&&ownerContact.phone_e164),ownerWhatsAppBusinessNumber:waAccount&&waAccount.status==='connected'?waAccount.display_phone_number||'Connected WhatsApp number':'Not connected'},
         message:'This business now has its own isolated TWIGA orchestrator. The shared Cloudflare scheduler will fairly dispatch this business alongside every other client workspace.'});
     }
@@ -986,8 +988,8 @@ async function aiWorker(req, env) {
         env.DB.prepare("SELECT COUNT(*) AS pending FROM business_worker_whatsapp_outbox WHERE business_id=? AND status IN ('pending','retry','processing','blocked')").bind(ctx.biz.id).first()
       ]);
       const ownerContact=ownerState[0]||{},ownerDelivery=ownerState[1]||{},waAccount=ownerState[2]||{},ownerPending=ownerState[3]||{};
-      return json({ok:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,
-        worker:{enabled:Number(settings.enabled===undefined?1:settings.enabled)===1,schedule:'Queue check every minute · up to 50 businesses and 50 queued tasks per business tick · daily owner review 08:00 Africa/Nairobi',nextReviewAt:settings.next_review_at || null,lastRunAt:settings.last_run_at || null,lastReviewAt:settings.last_review_at || null,
+      return json({ok:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,orchestrator:{ready:orchestratorRegistration.registered===true,isolated:orchestratorRegistration.isolated===true,scope:'one_business'},
+        worker:{enabled:Number(settings.enabled===undefined?1:settings.enabled)===1,schedule:'Queue check every minute · fair dispatch of up to 50 business orchestrators per tick · up to 50 due tasks per business run · daily owner review 08:00 Africa/Nairobi',nextReviewAt:settings.next_review_at || null,lastRunAt:settings.last_run_at || null,lastReviewAt:settings.last_review_at || null,
           lastTickAt:runtime.last_tick_at || null,lastSuccessAt:runtime.last_success_at || null,lastErrorAt:runtime.last_error_at || null,lastError:runtime.last_error || null,lastProcessedCount:Number(runtime.last_processed_count || 0),lastFailedCount:Number(runtime.last_failed_count || 0),
           schedulerLastStartedAt:scheduler.last_started_at || null,schedulerLastFinishedAt:scheduler.last_finished_at || null,schedulerLastDispatchedBusinesses:Number(scheduler.last_dispatched_businesses || 0),schedulerLastFailedBusinesses:Number(scheduler.last_failed_businesses || 0),schedulerLastPendingBusinesses:Number(scheduler.last_pending_businesses || 0),schedulerLastError:scheduler.last_error || null,
           ownerWhatsAppConfigured:!!ownerContact.phone_e164,ownerWhatsAppEnabled:Number(ownerContact.enabled)===1,ownerWhatsAppLast4:maskWhatsAppPhone(ownerContact.phone_e164),ownerWhatsAppBusinessNumber:waAccount.status==='connected'?waAccount.display_phone_number||'Connected':'Not connected',
