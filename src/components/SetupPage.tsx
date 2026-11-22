@@ -17,10 +17,13 @@ import { cn } from "@/lib/utils";
 type ChatMessage = { role: "assistant" | "user"; content: string };
 type ProfileDraft = Record<string, any>;
 type SetupDocument = { id: string; name: string; contentType: string; fileId: string; extractedText: string; extractionStatus: string; sizeBytes: number };
-type SetupConnectionTarget = "openai" | "openrouter" | "xai" | "groq" | "deepseek" | "resend" | "palpluss" | "custom" | "special";
+type SetupConnectionTarget = "openai" | "openrouter" | "xai" | "groq" | "deepseek" | "resend" | "palpluss" | "custom" | "google" | "whatsapp" | "sautikit" | "chat33";
 function getSetupConnectionTarget(request: string): SetupConnectionTarget {
   const value = String(request || "").toLowerCase();
-  if (/google|calendar|contacts|sheets|drive|chat33|sautikit|whatsapp|meta|phone|voice/.test(value)) return "special";
+  if (/chat33/.test(value)) return "chat33";
+  if (/google|calendar|contacts|sheets|drive/.test(value)) return "google";
+  if (/sautikit|phone|voice/.test(value)) return "sautikit";
+  if (/whatsapp|meta/.test(value)) return "whatsapp";
   if (/openrouter/.test(value)) return "openrouter";
   if (/openai|gpt/.test(value)) return "openai";
   if (/xai|grok/.test(value)) return "xai";
@@ -72,6 +75,7 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections }: {
   onDone: () => void;
   onBusinessCreated: (id: string) => void;
   onOpenConnections: () => void;
+  onOpenCoreConnections: () => void;
 }) {
   const { businessId } = useStore();
   const [messages, setMessages] = useState<ChatMessage[]>([{role:"assistant",content:firstMessage}]);
@@ -102,6 +106,10 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections }: {
   const openFullConnectionSettings = () => {
     setConnectionOpen(false);
     onOpenConnections();
+  };
+  const openCoreConnections = () => {
+    setConnectionOpen(false);
+    onOpenCoreConnections();
   };
 
   const askTwiga = async (action: "chat" | "build_profile", history: ChatMessage[]) => {
@@ -392,7 +400,7 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections }: {
             <button type="button" onClick={() => setConnectionOpen(false)} className="shrink-0 rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">Close</button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
-            {connectionTarget === "special" ? <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 dark:border-orange-900 dark:bg-orange-950/30"><h3 className="text-sm font-semibold text-orange-950 dark:text-orange-100">This service uses its own connection flow</h3><p className="mt-2 text-sm leading-6 text-orange-950/90 dark:text-orange-100/90">Google Workspace, official WhatsApp, SautiKit and Chat33 use provider-specific OAuth or account setup. They should not be connected by pasting their tokens into a generic API field.</p><button type="button" onClick={openFullConnectionSettings} className="mt-3 rounded-lg bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-950">Open dedicated connection settings</button></div> : <BringYourOwnAPI key={connectionTarget} businessId={businessId || ""} defaultProvider={connectionTarget} compact onSaved={() => { setConnectionOpen(false); setNotice("The service connection was saved. Check its verified status before using it in a workflow."); }} />}
+            {connectionTarget === "google" || connectionTarget === "whatsapp" || connectionTarget === "sautikit" || connectionTarget === "chat33" ? <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 dark:border-orange-900 dark:bg-orange-950/30"><h3 className="text-sm font-semibold text-orange-950 dark:text-orange-100">{connectionTarget === "google" ? "Google Workspace connection" : connectionTarget === "whatsapp" ? "Official WhatsApp connection" : connectionTarget === "sautikit" ? "SautiKit phone connection" : "Chat33 social accounts"}</h3><p className="mt-2 text-sm leading-6 text-orange-950/90 dark:text-orange-100/90">{connectionTarget === "google" ? "Connect Calendar, Contacts, Sheets and Drive using Google's permission window. TWIGA will show only the permissions requested for your workflows." : connectionTarget === "whatsapp" ? "Official WhatsApp uses Meta's account authorization and phone-number setup. Do not paste a WhatsApp token into a generic API field." : connectionTarget === "sautikit" ? "SautiKit has its own phone account, API access and number-assignment flow." : "Chat33 accounts are connected under The 10 core functions, where you can manage up to three social gateway accounts."}</p><button type="button" onClick={connectionTarget === "chat33" ? openCoreConnections : openFullConnectionSettings} className="mt-3 rounded-lg bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-950">{connectionTarget === "chat33" ? "Open The 10 core functions" : "Open dedicated connection settings"}</button></div> : <BringYourOwnAPI key={connectionTarget} businessId={businessId || ""} defaultProvider={connectionTarget} compact onSaved={() => { setConnectionOpen(false); setNotice("The service connection was saved. Check its verified status before using it in a workflow."); }} />}
           </div>
         </div>
       </div>
