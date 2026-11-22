@@ -1436,8 +1436,14 @@ async function validateBusinessIntegration(provider,credentials,model,fromEmail,
     const r=await fetch(endpoint+'/models',{headers:{Authorization:'Bearer '+credentials.api_key,Accept:'application/json'},signal:AbortSignal.timeout(15000)});
     if(!r.ok)throw new Error(r.status===401?'The AI provider rejected this API key.':'The AI provider connection test failed (HTTP '+r.status+').');
     const data=await r.json().catch(()=>({})),models=Array.isArray(data.data)?data.data:Array.isArray(data.models)?data.models:[];
-    if(models.length&&!models.some(x=>String(x.id||x.name||'')===model))throw new Error('The selected model ID is not available on this account.');
-    return {type:'ai_model',config:{provider,base_url:endpoint,model},message:'AI API key and selected model validated.'};
+    const availableModels=models.map(x=>String(x&& (x.id||x.name)||'').trim()).filter(Boolean);
+    let selectedModel=txt(model,180);
+    if(availableModels.length){
+      if(!selectedModel)selectedModel=availableModels[0];
+      else if(!availableModels.includes(selectedModel))throw new Error('The selected model ID is not available on this account. Leave the model field blank to use an available model.');
+    }
+    if(!selectedModel)throw new Error('The provider did not return an available model list. Enter the exact model ID from your provider account and try again.');
+    return {type:'ai_model',config:{provider,base_url:endpoint,model:selectedModel},message:'AI API key validated. Available model selected: '+selectedModel+'.'};
   }
   if(provider==='resend'){
     const r=await fetch('https://api.resend.com/domains?limit=1',{headers:{Authorization:'Bearer '+credentials.api_key,Accept:'application/json'},signal:AbortSignal.timeout(15000)});
