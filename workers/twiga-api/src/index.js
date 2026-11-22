@@ -697,7 +697,7 @@ async function registerBusinessAgent(env,businessId) {
     if (!response.ok || data.ok === false || data.registered !== true || data.isolated !== true || String(data.businessId || '').toLowerCase() !== tenantId) {
       throw new Error(data.error || 'The business orchestrator identity could not be confirmed.');
     }
-    await env.DB.prepare("UPDATE business_worker_orchestrators SET status='ready',registered_at=COALESCE(registered_at,?),last_seen_at=?,last_error=NULL,last_error_at=NULL,updated_at=? WHERE business_id=?")
+    await env.DB.prepare("UPDATE business_worker_orchestrators SET status=CASE WHEN last_error IS NULL THEN 'ready' ELSE status END,registered_at=COALESCE(registered_at,?),last_seen_at=?,updated_at=? WHERE business_id=?")
       .bind(data.registeredAt || stamp,stamp,stamp,tenantId).run();
     return Object.assign({},data,{ready:true,isolated:true,scope:'one_business',businessId:tenantId,lastSeenAt:stamp});
   } catch (error) {
@@ -712,7 +712,7 @@ async function dispatchBusinessAgent(env, businessId) {
   const tenantId = normalizeBusinessOrchestratorId(businessId);
   await ensureBusinessWorkerSchema(env);
   const startedAt = now();
-  await env.DB.prepare("INSERT INTO business_worker_orchestrators (business_id,durable_object_name,status,registered_at,last_seen_at,last_dispatch_at,created_at,updated_at) VALUES (?,?,'running',?,?, ?,?,?) ON CONFLICT(business_id) DO UPDATE SET durable_object_name=excluded.durable_object_name,status='running',last_seen_at=excluded.last_seen_at,last_dispatch_at=excluded.last_dispatch_at,last_error=NULL,updated_at=excluded.updated_at")
+  await env.DB.prepare("INSERT INTO business_worker_orchestrators (business_id,durable_object_name,status,registered_at,last_seen_at,last_dispatch_at,created_at,updated_at) VALUES (?,?,'running',?,?, ?,?,?) ON CONFLICT(business_id) DO UPDATE SET durable_object_name=excluded.durable_object_name,status=CASE WHEN last_error IS NULL THEN 'running' ELSE status END,last_seen_at=excluded.last_seen_at,last_dispatch_at=excluded.last_dispatch_at,updated_at=excluded.updated_at")
     .bind(tenantId,tenantId,startedAt,startedAt,startedAt,startedAt,startedAt).run();
   try {
     const stub = businessAgentStub(env,tenantId);
@@ -726,8 +726,16 @@ async function dispatchBusinessAgent(env, businessId) {
       throw new Error(data.error || 'The business orchestrator did not confirm its own tenant identity.');
     }
     const finishedAt = now();
-    await env.DB.prepare("UPDATE business_worker_orchestrators SET status='ready',last_seen_at=?,last_success_at=CASE WHEN ?=1 THEN ? ELSE last_success_at END,last_error=NULL,last_error_at=NULL,last_processed_count=?,updated_at=? WHERE business_id=?")
-      .bind(finishedAt,data.skipped ? 0 : 1,finishedAt,Number(data.processed || 0),finishedAt,tenantId).run();
+    const taskFailures = Math.max(0,Number(data.failed || 0));
+    const firstTaskError = Array.isArray(data.outcomes) ? data.outcomes.find((item) => item && item.ok === false) : null;
+    const tenantError = firstTaskError ? txt(firstTaskError.error,400) : taskFailures ? taskFailures + ' failed task(s) remain in this business queue.' : null;
+    if (data.skipped) {
+      await env.DB.prepare("UPDATE business_worker_orchestrators SET last_seen_at=?,updated_at=? WHERE business_id=?")
+        .bind(finishedAt,finishedAt,tenantId).run();
+    } else {
+      await env.DB.prepare("UPDATE business_worker_orchestrators SET status=?,last_seen_at=?,last_success_at=?,last_error_at=CASE WHEN ? IS NULL THEN last_error_at ELSE ? END,last_error=?,last_processed_count=?,updated_at=? WHERE business_id=?")
+        .bind(taskFailures ? 'degraded' : 'ready',finishedAt,finishedAt,tenantError,finishedAt,tenantError,Number(data.processed || 0),finishedAt,tenantId).run();
+    }
     await dispatchOwnerWhatsAppOutbox(env,tenantId,10).catch((error) => console.error('[TWIGA owner WhatsApp] delivery dispatch failed',txt(error && error.message || error,240)));
     return data;
   } catch (error) {
@@ -1048,7 +1056,10 @@ async function aiWorker(req, env) {
         orchestrator:{
           ready:orchestratorRegistration.registered===true,
           isolated:orchestratorRegistration.isolated===true,
-          scope:'one_business'
+          scope:'one_business',
+          businessId:orchestratorRegistration.businessId,
+          registeredAt:orchestratorRegistration.registeredAt,
+          lastSeenAt:orchestratorRegistration.lastSeenAt
         }
       });
     }
@@ -1079,7 +1090,8 @@ async function aiWorker(req, env) {
         env.DB.prepare("SELECT COUNT(*) AS pending FROM business_worker_whatsapp_outbox WHERE business_id=? AND status IN ('pending','retry','processing','blocked')").bind(ctx.biz.id).first()
       ]);
       const ownerContact=ownerState[0]||{},ownerDelivery=ownerState[1]||{},waAccount=ownerState[2]||{},ownerPending=ownerState[3]||{};
-      return json({ok:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,orchestrator:{ready:orchestratorRegistration.registered===true,isolated:orchestratorRegistration.isolated===true,scope:'one_business',businessId:orchestratorRegistration.businessId,registeredAt:orchestratorRegistration.registeredAt,lastSeenAt:orchestratorRegistration.lastSeenAt},
+      const orchestratorHealth=await env.DB.prepare('SELECT status,registered_at,last_seen_at,last_dispatch_at,last_success_at,last_error_at,last_error,last_processed_count FROM business_worker_orchestrators WHERE business_id=?').bind(ctx.biz.id).first() || {};
+      return json({ok:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,orchestrator:{ready:orchestratorRegistration.registered===true,isolated:orchestratorRegistration.isolated===true,scope:'one_business',businessId:orchestratorRegistration.businessId,status:orchestratorHealth.status || 'ready',registeredAt:orchestratorHealth.registered_at || orchestratorRegistration.registeredAt,lastSeenAt:orchestratorHealth.last_seen_at || orchestratorRegistration.lastSeenAt,lastDispatchAt:orchestratorHealth.last_dispatch_at || null,lastSuccessAt:orchestratorHealth.last_success_at || null,lastErrorAt:orchestratorHealth.last_error_at || null,lastError:orchestratorHealth.last_error || null,lastProcessedCount:Number(orchestratorHealth.last_processed_count || 0)},
         worker:{enabled:Number(settings.enabled===undefined?1:settings.enabled)===1,schedule:'Queue check every minute · fair dispatch of up to '+businessOrchestratorBatchSize(env)+' business orchestrators per tick across all clients · up to 50 due tasks per business run · daily owner review 08:00 Africa/Nairobi',nextReviewAt:settings.next_review_at || null,lastRunAt:settings.last_run_at || null,lastReviewAt:settings.last_review_at || null,
           lastTickAt:runtime.last_tick_at || null,lastSuccessAt:runtime.last_success_at || null,lastErrorAt:runtime.last_error_at || null,lastError:runtime.last_error || null,lastProcessedCount:Number(runtime.last_processed_count || 0),lastFailedCount:Number(runtime.last_failed_count || 0),
           schedulerLastStartedAt:scheduler.last_started_at || null,schedulerLastFinishedAt:scheduler.last_finished_at || null,schedulerLastDispatchedBusinesses:Number(scheduler.last_dispatched_businesses || 0),schedulerLastFailedBusinesses:Number(scheduler.last_failed_businesses || 0),schedulerLastPendingBusinesses:Number(scheduler.last_pending_businesses || 0),schedulerLastError:scheduler.last_error || null,
