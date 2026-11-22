@@ -61,8 +61,8 @@ async function errorText(error: any, fallback: string) {
   return error?.message || fallback;
 }
 
-export default function BringYourOwnAPI({ businessId, demo = false, adminMode = false }: { businessId: string; demo?: boolean; adminMode?: boolean }) {
-  const [provider, setProvider] = useState<Provider>("openai");
+export default function BringYourOwnAPI({ businessId, demo = false, adminMode = false, compact = false, defaultProvider = "openai", onSaved }: { businessId: string; demo?: boolean; adminMode?: boolean; compact?: boolean; defaultProvider?: Provider; onSaved?: () => void }) {
+  const [provider, setProvider] = useState<Provider>(defaultProvider);
   const [displayName, setDisplayName] = useState("My business AI model");
   const [model, setModel] = useState(modelDefaults.openai);
   const [apiKey, setApiKey] = useState("");
@@ -198,6 +198,7 @@ export default function BringYourOwnAPI({ businessId, demo = false, adminMode = 
       setMessage(data?.message || data?.testMessage || "Integration saved.");
       setMessageTone("success");
       await refresh();
+      onSaved?.();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "The integration could not be saved.");
       setMessageTone("error");
@@ -256,20 +257,20 @@ export default function BringYourOwnAPI({ businessId, demo = false, adminMode = 
   }
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="border-b border-neutral-200 bg-neutral-50 px-5 py-5 dark:border-neutral-800 dark:bg-neutral-950">
+    <section className={compact ? "overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900" : "overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm dark:border-neutral-800 dark:bg-neutral-900"}>
+      <div className={compact ? "border-b border-neutral-200 bg-neutral-50 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-950" : "border-b border-neutral-200 bg-neutral-50 px-5 py-5 dark:border-neutral-800 dark:bg-neutral-950"}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[.16em] text-orange-700 dark:text-orange-400">{adminMode ? "TWIGA administrator · assisted setup" : "Business-owned connections"}</p>
-            <h2 className="mt-1 text-xl font-bold text-neutral-950 dark:text-neutral-100">{adminMode ? "Help this business connect its tools" : "Bring your own AI & tools"}</h2>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-600 dark:text-neutral-300">{adminMode ? "Connect a provider for the selected client. Credentials are kept in that business's Cloudflare D1 workspace, and the assistance action is audited without recording secret values." : "Connect the external platforms your business already uses. TWIGA guides you through each provider's exact fields, tests supported credentials and stores them encrypted in this business's Cloudflare D1 workspace."}</p>
+            <h2 className="mt-1 text-xl font-bold text-neutral-950 dark:text-neutral-100">{compact ? "Connect an API service" : adminMode ? "Help this business connect its tools" : "Bring your own AI & tools"}</h2>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-600 dark:text-neutral-300">{compact ? "Choose a provider, enter its API details here and test the connection. Secret values are encrypted for this business." : adminMode ? "Connect a provider for the selected client. Credentials are kept in that business's Cloudflare D1 workspace, and the assistance action is audited without recording secret values." : "Connect the external platforms your business already uses. TWIGA guides you through each provider's exact fields, tests supported credentials and stores them encrypted in this business's Cloudflare D1 workspace."}</p>
           </div>
-          <span className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">1–5 secure fields per tool</span>
+          {!compact && <span className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">1–5 secure fields per tool</span>}
         </div>
       </div>
 
-      <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,.85fr)]">
-        <div className="space-y-4">
+      <div className={compact ? "grid gap-3 p-3" : "grid gap-5 p-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,.85fr)]"}>
+        <div className="min-w-0 space-y-4">
           {adminMode && <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-200">Admin assistance note
             <input value={assistanceNote} onChange={(event) => setAssistanceNote(event.target.value)} maxLength={500} placeholder="e.g. Owner requested help during onboarding" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-normal text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100" />
           </label>}
@@ -367,7 +368,7 @@ export default function BringYourOwnAPI({ businessId, demo = false, adminMode = 
           {message && <p role="status" className={"rounded-xl border p-3 text-sm " + (messageTone === "success" ? "border-orange-200 bg-orange-50 text-orange-900 dark:border-orange-900 dark:bg-orange-950/30 dark:text-orange-100" : messageTone === "error" ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200" : "border-neutral-200 bg-neutral-50 text-neutral-700 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200")}>{message}</p>}
         </div>
 
-        <aside className="space-y-3">
+        {!compact && <aside className="space-y-3">
           <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-950">
             <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-bold text-neutral-900 dark:text-neutral-100">Saved for this business</h3><span className="text-xs text-neutral-500">{integrations.length + (palplussStatus.connected ? 1 : 0)} connections</span></div>
             {loading && <p className="mt-3 text-xs text-neutral-500">Loading secure connection status…</p>}
@@ -404,7 +405,7 @@ export default function BringYourOwnAPI({ businessId, demo = false, adminMode = 
             </ul>
             <p className="mt-3 text-[11px] leading-5 text-neutral-500">Custom credentials are not executed as arbitrary URLs or code. TWIGA only runs actions for a supported connector, with business permissions and approval checks.</p>
           </div>
-        </aside>
+        </aside>}
       </div>
     </section>
   );
