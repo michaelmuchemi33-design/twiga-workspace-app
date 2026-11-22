@@ -229,6 +229,52 @@ export default function Organizer() {
     }
   };
 
+  const runWorkerCommand = async (action: string, extra: Record<string, unknown> = {}) => {
+    if (!businessId || !supabase) throw new Error("Choose a business workspace and sign in again.");
+    const { data: authData } = await supabase.auth.getSession();
+    const accessToken = authData.session?.access_token;
+    if (!accessToken) throw new Error("Sign in again to use the AI Orchestrator.");
+    const response = await fetch("https://twiga-api.twiga-ke.workers.dev/ai/worker", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+      body: JSON.stringify({ action, business_id: businessId, ...extra }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload?.ok === false) throw new Error(String(payload?.error || "The AI Orchestrator could not complete that action."));
+    return payload;
+  };
+
+  const runWorkerReview = async () => {
+    setWorkerActionBusy(true);
+    setMessage("Starting a fresh business review…");
+    try {
+      const payload = await runWorkerCommand("run_review");
+      const processed = Number(payload?.result?.processed || 0);
+      setMessage(processed > 0 ? "Business review finished. Refreshing the owner action queue…" : "The review request reached the Worker. Refreshing its current status…");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? "AI Orchestrator: " + error.message : "The business review could not be started.");
+    } finally {
+      setWorkerActionBusy(false);
+    }
+  };
+
+  const toggleWorkerSchedule = async () => {
+    if (!workerStatus) return;
+    const enabled = !workerStatus.enabled;
+    setWorkerActionBusy(true);
+    setMessage(enabled ? "Resuming scheduled business reviews…" : "Pausing scheduled business reviews…");
+    try {
+      await runWorkerCommand("set_enabled", { enabled });
+      setMessage(enabled ? "Scheduled business reviews resumed." : "Scheduled business reviews paused. Queued work will still be processed.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? "AI Orchestrator: " + error.message : "The review schedule could not be updated.");
+    } finally {
+      setWorkerActionBusy(false);
+    }
+  };
+
   const visible = useMemo(() => items.filter((item) => {
     if (filter === "tasks") return item.kind === "task" || item.kind === "followup";
     if (filter === "ideas") return item.kind === "idea";
@@ -258,14 +304,19 @@ export default function Organizer() {
           <div>
             <p className="text-xs font-bold uppercase tracking-wider text-orange-600">Cloudflare · per-business runtime</p>
             <h2 className="mt-1 text-lg font-semibold text-neutral-950">AI Business Orchestrator</h2>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-600">The Worker processes queued work on its one-minute schedule and is also woken immediately by supported phone and WhatsApp webhooks. This is separate from the business opening-hours setting.</p>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-600">The Worker checks its queue every minute. Automatic owner reviews run daily at 8:00 a.m. Nairobi time, and supported call and WhatsApp events can wake it immediately. Run a fresh review here at any time.</p>
           </div>
-          <span className={cn("rounded-full px-3 py-1.5 text-xs font-semibold", workerStatus?.enabled ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600")}>
-            {workerStatus ? (workerStatus.enabled ? "Scheduler enabled" : "Scheduler paused") : demoMode ? "Demo only" : "Status unavailable"}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={cn("rounded-full px-3 py-1.5 text-xs font-semibold", workerStatus?.enabled ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600")}>
+              {workerStatus ? (workerStatus.enabled ? "Scheduled reviews on" : "Scheduled reviews paused") : demoMode ? "Demo only" : "Status unavailable"}
+            </span>
+            {!demoMode && <button type="button" onClick={() => void runWorkerReview()} disabled={!businessId || workerActionBusy} className="rounded-lg bg-orange-500 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-600 disabled:opacity-40">{workerActionBusy ? "Working…" : "Run review now"}</button>}
+            {!demoMode && workerStatus && <button type="button" onClick={() => void toggleWorkerSchedule()} disabled={workerActionBusy} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-40">{workerStatus.enabled ? "Pause schedule" : "Resume schedule"}</button>}
+          </div>
         </div>
-        {workerStatus && <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        {workerStatus && <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Queue check</p><p className="mt-1 text-sm font-semibold text-neutral-950">Every minute</p></div>
+          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Next automatic review</p><p className="mt-1 text-sm font-semibold text-neutral-950">{workerStatus.nextReviewAt ? new Date(workerStatus.nextReviewAt).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" }) : "Not scheduled"}</p></div>
           <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Last Worker run</p><p className="mt-1 text-sm font-semibold text-neutral-950">{workerStatus.lastRunAt ? new Date(workerStatus.lastRunAt).toLocaleString() : "Not recorded yet"}</p></div>
           <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Last business review</p><p className="mt-1 text-sm font-semibold text-neutral-950">{workerStatus.lastReviewAt ? new Date(workerStatus.lastReviewAt).toLocaleString() : "Not run yet"}</p></div>
         </div>}
