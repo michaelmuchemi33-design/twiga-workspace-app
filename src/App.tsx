@@ -253,9 +253,9 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
                 onClick={() => setTheme((current) => current === "light" ? "dark" : "light")}
                 aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
                 aria-pressed={theme === "dark"}
-                className="inline-flex h-10 items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-semibold text-neutral-700 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800"
+                className="inline-flex h-10 items-center gap-2 rounded-full border border-neutral-950 bg-neutral-950 px-3.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 dark:border-black dark:bg-black dark:text-white dark:hover:bg-neutral-800"
               >
-                <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-lg bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300">{theme === "light" ? <IconMoon className="h-4 w-4" /> : <IconSun className="h-4 w-4" />}</span>
+                <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-xl bg-orange-500 text-white shadow-sm">{theme === "light" ? <IconMoon className="h-4 w-4" /> : <IconSun className="h-4 w-4" />}</span>
                 <span>{theme === "light" ? "Dark mode" : "Light mode"}</span>
               </button>
               {!demo && <button type="button" onClick={() => go("billing")} className="h-10 rounded-xl border border-orange-200 bg-orange-50 px-3 text-sm font-semibold text-orange-800 hover:bg-orange-100">Plan &amp; billing</button>}<InstallApp />{demo && <DemoInterest />}{!demo && onSignOut && <button onClick={onSignOut} className="h-10 rounded-xl border border-neutral-200 px-4 text-sm font-semibold text-neutral-600 hover:bg-neutral-50">Sign out</button>}
