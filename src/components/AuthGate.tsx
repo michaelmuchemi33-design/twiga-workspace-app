@@ -34,6 +34,23 @@ function authContext(session: Session | null): GoogleAuthContext {
 // later, deliberately, from Connections so Google verification for those APIs
 // cannot block a new customer from creating a TWIGA account.
 const GOOGLE_SCOPES = "openid email profile";
+const PASSWORD_RECOVERY_STORAGE_KEY = "twiga_password_recovery_requested_at";
+function hasRecentPasswordRecoveryRequest(): boolean {
+  try {
+    const requestedAt = Number(localStorage.getItem(PASSWORD_RECOVERY_STORAGE_KEY) || 0);
+    if (!requestedAt || Date.now() - requestedAt > 30 * 60 * 1000) {
+      localStorage.removeItem(PASSWORD_RECOVERY_STORAGE_KEY);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+function clearPasswordRecoveryRequest(): void {
+  try { localStorage.removeItem(PASSWORD_RECOVERY_STORAGE_KEY); } catch { /* storage may be unavailable */ }
+}
+
 
 export default function AuthGate({ children }: {
   children: (session: Session, googleAuth: GoogleAuthContext) => ReactNode;
@@ -47,6 +64,10 @@ export default function AuthGate({ children }: {
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
+  const [recoveryMode, setRecoveryMode] = useState(false);
+  const [recoveryPassword, setRecoveryPassword] = useState("");
+  const [recoveryConfirmation, setRecoveryConfirmation] = useState("");
+  const [recoverySuccess, setRecoverySuccess] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -62,13 +83,26 @@ export default function AuthGate({ children }: {
     // Subscribe before reading persisted state so a fast OAuth callback or
     // sign-out event cannot be overwritten by a late getSession() response.
     let authEventReceived = false;
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const hasRecoveryType = () => {
+      const query = new URLSearchParams(window.location.search);
+      const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      return query.get("type") === "recovery" || hash.get("type") === "recovery";
+    };
+    const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       authEventReceived = true;
       applySession(nextSession);
+      if (event === "SIGNED_IN") clearPasswordRecoveryRequest();
+      if (event === "PASSWORD_RECOVERY" || (event === "INITIAL_SESSION" && (hasRecoveryType() || (Boolean(nextSession) && hasRecentPasswordRecoveryRequest())))) {
+        setRecoveryMode(true);
+        setRecoverySuccess(false);
+        setError("");
+        setNotice("");
+      }
     });
     supabase.auth.getSession().then(({ data, error: sessionError }) => {
       if (!mounted || authEventReceived) return;
       if (sessionError) setError(sessionError.message);
+      if (hasRecoveryType()) setRecoveryMode(true);
       applySession(data.session);
     }).catch((cause) => {
       if (!mounted) return;
@@ -101,6 +135,71 @@ export default function AuthGate({ children }: {
       setError(cause instanceof Error ? cause.message : "Google sign-in could not be started. Please try again.");
       setBusy(false);
     }
+  };
+
+  const requestPasswordReset = async () => {
+    if (!supabase) return;
+    if (!email.trim()) {
+      setError("Enter the email address for your TWIGA account first.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      localStorage.setItem(PASSWORD_RECOVERY_STORAGE_KEY, String(Date.now()));
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        // Reuse the existing auth callback on this same origin so the PKCE verifier remains available.
+        redirectTo: window.location.origin + "/auth/callback",
+      });
+      if (resetError) throw resetError;
+      setNotice("If an account exists for this email, a reset link has been sent. Open it in this same browser to set your new password.");
+    } catch (cause) {
+      clearPasswordRecoveryRequest();
+      setError(cause instanceof Error ? cause.message : "The password reset email could not be sent.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const completePasswordRecovery = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase || !session) {
+      setError("This reset link could not be verified. Request a new password reset email and open it in the same browser.");
+      return;
+    }
+    if (recoveryPassword.length < 8) {
+      setError("Your new password must contain at least 8 characters.");
+      return;
+    }
+    if (recoveryPassword !== recoveryConfirmation) {
+      setError("The two passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const { error: updateError } = await supabase.auth.updateUser({ password: recoveryPassword });
+      if (updateError) throw updateError;
+      setRecoveryPassword("");
+      setRecoveryConfirmation("");
+      clearPasswordRecoveryRequest();
+      setRecoverySuccess(true);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Your password could not be updated. Request a fresh reset link and try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const returnToWorkspace = () => {
+    clearPasswordRecoveryRequest();
+    setRecoveryMode(false);
+    setRecoverySuccess(false);
+    setError("");
+    setNotice("");
+    setPassword("");
   };
 
   const emailSignIn = async (event: FormEvent) => {
@@ -144,6 +243,59 @@ export default function AuthGate({ children }: {
       <div className="flex items-center gap-3"><span className="h-2.5 w-2.5 animate-pulse rounded-full bg-orange-500" />Opening your private TWIGA workspace…</div>
     </div>
   );
+  if (recoveryMode) return (
+    <main className="flex min-h-screen items-center justify-center bg-[#f5f4f1] px-4 py-10">
+      <section className="w-full max-w-[480px] overflow-hidden rounded-[28px] border border-neutral-200 bg-white shadow-[0_24px_80px_-35px_rgba(0,0,0,.25)]">
+        <div className="bg-[#171715] px-7 py-8 text-white sm:px-10">
+          <p className="text-xs font-bold tracking-[.2em] text-orange-400">TWIGA ACCOUNT SECURITY</p>
+          <h1 className="mt-3 text-3xl font-bold text-white">{recoverySuccess ? "Password updated" : "Set a new password"}</h1>
+          <p className="mt-2 text-sm leading-6 text-neutral-300">
+            {recoverySuccess
+              ? "Your TWIGA password has been changed successfully."
+              : "Choose a new password for your TWIGA account. This will replace your old password."}
+          </p>
+        </div>
+        <div className="space-y-4 p-7 sm:p-10">
+          {recoverySuccess ? (
+            <>
+              <div role="status" className="rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-800">
+                Your password is saved. You can now continue to your private workspace.
+              </div>
+              <button type="button" onClick={returnToWorkspace} className="h-12 w-full rounded-xl bg-orange-500 px-4 text-sm font-bold text-neutral-950 hover:bg-orange-600">
+                Continue to TWIGA
+              </button>
+            </>
+          ) : session ? (
+            <form onSubmit={completePasswordRecovery} className="space-y-4">
+              <label className="block text-sm font-semibold text-neutral-700">
+                New password
+                <input type="password" value={recoveryPassword} onChange={e => setRecoveryPassword(e.target.value)} minLength={8} required autoComplete="new-password" className="mt-1.5 h-12 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" placeholder="At least 8 characters"/>
+              </label>
+              <label className="block text-sm font-semibold text-neutral-700">
+                Confirm new password
+                <input type="password" value={recoveryConfirmation} onChange={e => setRecoveryConfirmation(e.target.value)} minLength={8} required autoComplete="new-password" className="mt-1.5 h-12 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" placeholder="Enter the new password again"/>
+              </label>
+              <p className="text-xs text-neutral-500">Use at least 8 characters. Your password is sent directly to Supabase Auth over HTTPS and is not stored by TWIGA.</p>
+              {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+              <button type="submit" disabled={busy} className="h-12 w-full rounded-xl bg-orange-500 px-4 text-sm font-bold text-neutral-950 hover:bg-orange-600 disabled:opacity-60">
+                {busy ? "Saving new password…" : "Save new password"}
+              </button>
+            </form>
+          ) : (
+            <div role="alert" className="rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900">
+              This reset link could not be verified or has expired. Return to sign in and request another email, then open the newest link in the same browser where you requested it.
+            </div>
+          )}
+          {!recoverySuccess && (
+            <button type="button" onClick={() => { setRecoveryMode(false); setEmailMode(true); setEmailAction("signin"); setError(""); setNotice(""); }} className="w-full text-center text-sm font-semibold text-neutral-600 underline underline-offset-4">
+              Back to sign in
+            </button>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+
   if (session) return <>{children(session, googleAuth)}</>;
 
   return (
@@ -187,6 +339,7 @@ export default function AuthGate({ children }: {
                 <p className="text-sm font-semibold text-neutral-800">New to TWIGA?</p>
                 <button onClick={() => { setEmailMode(true); setEmailAction("signup"); setError(""); setNotice(""); }} className="mt-1 text-sm font-bold text-orange-700 underline decoration-orange-300 underline-offset-4 hover:text-orange-800">Create your account</button>
                 <p className="mt-4 text-xs text-neutral-500">Already have an account? <button onClick={() => { setEmailMode(true); setEmailAction("signin"); setError(""); setNotice(""); }} className="font-bold text-neutral-900 underline underline-offset-4">Sign in with email</button></p>
+                <button onClick={() => { setEmailMode(true); setEmailAction("signin"); setError(""); setNotice(""); }} className="mt-3 text-xs font-bold text-orange-700 underline underline-offset-4">Forgot password?</button>
                 {emailMode && <button onClick={() => { setEmailMode(false); setError(""); }} className="mt-3 text-xs font-semibold text-neutral-500 underline underline-offset-4">Back to Google sign-in</button>}
               </div>
               {notice && <p role="status" className="mt-4 rounded-xl bg-green-50 p-3 text-sm text-green-800">{notice}</p>}
@@ -196,6 +349,7 @@ export default function AuthGate({ children }: {
                   {emailAction === "signup" && <label className="block text-xs font-semibold text-neutral-700">Your name<input type="text" required value={fullName} onChange={e=>setFullName(e.target.value)} autoComplete="name" maxLength={100} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" placeholder="Your full name"/></label>}
                   <label className="block text-xs font-semibold text-neutral-700">Email address<input type="email" required value={email} onChange={e=>setEmail(e.target.value)} autoComplete="email" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" placeholder="you@business.co.ke"/></label>
                   <label className="block text-xs font-semibold text-neutral-700">Password<input type="password" required value={password} onChange={e=>setPassword(e.target.value)} autoComplete={emailAction === "signup" ? "new-password" : "current-password"} minLength={8} className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 px-3 text-sm outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" placeholder={emailAction === "signup" ? "At least 8 characters" : "Your password"}/></label>
+                  {emailAction === "signin" && <button type="button" onClick={requestPasswordReset} disabled={busy} className="w-full text-right text-xs font-bold text-orange-700 underline underline-offset-4 disabled:opacity-50">Forgot password?</button>}
                   <button disabled={busy} className="h-11 w-full rounded-xl bg-neutral-950 text-sm font-bold text-white disabled:opacity-50">{busy ? (emailAction === "signup" ? "Creating account…" : "Signing in…") : (emailAction === "signup" ? "Create account" : "Sign in")}</button>
                 </form>
               )}
