@@ -840,26 +840,45 @@ async function aiWorker(req, env) {
     const ctx = await authorize(env, token, body.business_id);
     await ensureUsageSchema(env);
     await ensureBusinessWorkerSchema(env);
-    // Queue visibility must not depend on reading the business profile from Supabase.
-    // Sync only when a review is requested, and keep the review runnable if that sync fails.
-    if (body.action === 'run_review') {
+    // Profile sync is best-effort: a Supabase profile read must never hide the D1 queue.
+    let profileSynced = false, profileSyncError = '';
+    if (['provision','overview','run_review'].includes(String(body.action || ''))) {
       try {
-        await syncBusinessWorkerProfile(env, ctx, token);
+        await syncBusinessWorkerProfile(env,ctx,token);
+        profileSynced = true;
       } catch (profileError) {
-        console.warn('[TWIGA Worker] profile sync skipped; continuing with saved business data', txt(profileError && profileError.message || profileError, 180));
+        profileSyncError = txt(profileError && profileError.message || profileError,180);
+        console.warn('[TWIGA Worker] profile sync skipped; continuing with saved business data',profileSyncError);
       }
     }
-    await ensureBusinessWorkerSettings(env, ctx.biz.id);
+    await ensureBusinessWorkerSettings(env,ctx.biz.id);
+    if (body.action === 'provision') {
+      if (!['owner','admin'].includes(String(ctx.role))) return json({ok:false,error:'Only the business owner or administrator can provision the Worker.'},403);
+      const settings = await env.DB.prepare('SELECT enabled,next_review_at FROM business_worker_settings WHERE business_id=?').bind(ctx.biz.id).first();
+      return json({ok:true,provisioned:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,worker:{enabled:Number(settings && settings.enabled !== undefined ? settings.enabled : 1)===1,nextReviewAt:settings && settings.next_review_at || null},message:'The business Worker is provisioned and its daily review schedule is registered.'});
+    }
     if (body.action === 'overview') {
       const result = await Promise.all([
-        env.DB.prepare('SELECT enabled, next_review_at, last_run_at, last_review_at FROM business_worker_settings WHERE business_id = ?').bind(ctx.biz.id).first(),
-        env.DB.prepare("SELECT id, task_type, title, detail, status, priority, due_at, created_at FROM business_worker_tasks WHERE business_id = ? AND status IN ('needs_review','pending','failed') ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'normal' THEN 1 ELSE 2 END, due_at ASC, created_at DESC LIMIT 30").bind(ctx.biz.id).all(),
-        env.DB.prepare('SELECT id, notification_type, title, body, priority, created_at FROM business_worker_notifications WHERE business_id = ? ORDER BY created_at DESC LIMIT 4').bind(ctx.biz.id).all(),
-        env.DB.prepare("SELECT SUM(CASE WHEN status = 'needs_review' THEN 1 ELSE 0 END) AS needs_review, SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed FROM business_worker_tasks WHERE business_id = ?").bind(ctx.biz.id).first()
+        env.DB.prepare('SELECT enabled,next_review_at,last_run_at,last_review_at FROM business_worker_settings WHERE business_id=?').bind(ctx.biz.id).first(),
+        env.DB.prepare("SELECT id,task_type,title,detail,status,priority,due_at,created_at FROM business_worker_tasks WHERE business_id=? AND status IN ('needs_review','pending','processing','failed') ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END,due_at ASC,created_at DESC LIMIT 50").bind(ctx.biz.id).all(),
+        env.DB.prepare('SELECT id,notification_type,title,body,priority,created_at FROM business_worker_notifications WHERE business_id=? ORDER BY created_at DESC LIMIT 6').bind(ctx.biz.id).all(),
+        env.DB.prepare("SELECT SUM(CASE WHEN status='needs_review' THEN 1 ELSE 0 END) AS needs_review,SUM(CASE WHEN status='pending' AND due_at<=? THEN 1 ELSE 0 END) AS pending,SUM(CASE WHEN status='processing' THEN 1 ELSE 0 END) AS processing,SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM business_worker_tasks WHERE business_id=?").bind(now(),ctx.biz.id).first(),
+        env.DB.prepare('SELECT last_tick_at,last_success_at,last_error_at,last_error,last_processed_count,last_failed_count,last_pending_count,last_needs_review_count FROM business_worker_runtime WHERE business_id=?').bind(ctx.biz.id).first(),
+        env.DB.prepare('SELECT last_started_at,last_finished_at,last_dispatched_businesses,last_failed_businesses,last_pending_businesses,last_error FROM business_worker_scheduler WHERE singleton=1').first()
       ]);
-      const settings = result[0] || {};
-      const counts = result[3] || {};
-      return json({ok: true, worker: {enabled: Number(settings.enabled === undefined ? 1 : settings.enabled) === 1, schedule: 'Queue checked every minute · scheduled owner review at 08:00 Africa/Nairobi', nextReviewAt: settings.next_review_at || null, lastRunAt: settings.last_run_at || null, lastReviewAt: settings.last_review_at || null}, tasks: result[1].results || [], notifications: result[2].results || [], counts: {needsReview: Number(counts.needs_review || 0), failed: Number(counts.failed || 0)}});
+      const settings=result[0] || {},counts=result[3] || {},runtime=result[4] || {},scheduler=result[5] || {};
+      return json({ok:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,
+        worker:{enabled:Number(settings.enabled===undefined?1:settings.enabled)===1,schedule:'Queue check every minute · up to 50 businesses and 50 queued tasks per business tick · daily owner review 08:00 Africa/Nairobi',nextReviewAt:settings.next_review_at || null,lastRunAt:settings.last_run_at || null,lastReviewAt:settings.last_review_at || null,
+          lastTickAt:runtime.last_tick_at || null,lastSuccessAt:runtime.last_success_at || null,lastErrorAt:runtime.last_error_at || null,lastError:runtime.last_error || null,lastProcessedCount:Number(runtime.last_processed_count || 0),lastFailedCount:Number(runtime.last_failed_count || 0),
+          schedulerLastStartedAt:scheduler.last_started_at || null,schedulerLastFinishedAt:scheduler.last_finished_at || null,schedulerLastDispatchedBusinesses:Number(scheduler.last_dispatched_businesses || 0),schedulerLastFailedBusinesses:Number(scheduler.last_failed_businesses || 0),schedulerLastPendingBusinesses:Number(scheduler.last_pending_businesses || 0),schedulerLastError:scheduler.last_error || null},
+        tasks:result[1].results || [],notifications:result[2].results || [],
+        counts:{needsReview:Number(counts.needs_review || 0),pending:Number(counts.pending || 0),processing:Number(counts.processing || 0),failed:Number(counts.failed || 0)}
+      });
+    }
+    if (body.action === 'process_queue') {
+      if (!['owner','admin'].includes(String(ctx.role))) return json({ok:false,error:'Only a business owner or administrator can process the Worker queue.'},403);
+      const result = await dispatchBusinessAgent(env,ctx.biz.id);
+      return json({ok:true,result:result});
     }
     if (body.action === 'run_review') {
       if (['owner','admin'].indexOf(String(ctx.role)) < 0) return json({ok: false, error: 'Only a business owner or administrator can run the Worker review.'}, 403);
