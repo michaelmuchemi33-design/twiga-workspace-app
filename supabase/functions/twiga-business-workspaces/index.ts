@@ -39,10 +39,10 @@ Deno.serve(async(req:Request)=>{
    if(memberError)throw memberError;
    if(!member||!["owner","admin"].includes(String(member.role)))return json({error:"Only a business owner or administrator can configure owner reports and receptionist prompts."},403);
    const normalizeOwnerPhone=(value:any)=>{
-    let phone=String(value||"").trim().replace(/[\\s().-]/g,"");
-    if(/^0[17]\\d{8}$/.test(phone))phone="+254"+phone.slice(1);
-    else if(/^254[17]\\d{8}$/.test(phone))phone="+"+phone;
-    return /^\\+[1-9]\\d{7,14}$/.test(phone)?phone:"";
+    let phone=String(value||"").trim().replace(/[\s().-]/g,"");
+    if(/^0[17]\d{8}$/.test(phone))phone="+254"+phone.slice(1);
+    else if(/^254[17]\d{8}$/.test(phone))phone="+"+phone;
+    return /^\+[1-9]\d{7,14}$/.test(phone)?phone:"";
    };
    const incomingReport=settings.ownerReportCall&&typeof settings.ownerReportCall==="object"?settings.ownerReportCall:{};
    const enabled=incomingReport.enabled===true;
@@ -51,7 +51,8 @@ Deno.serve(async(req:Request)=>{
    const nextOwnerName=String(incomingReport.nextOwnerName||"").trim().slice(0,120);
    const nextOwnerPhone=normalizeOwnerPhone(incomingReport.nextOwnerPhone);
    const callTime=String(incomingReport.callTime||"16:30").trim();
-   if(!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(callTime))return json({error:"Set a valid report call time."},400);
+   if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(callTime))return json({error:"Set a valid report call time."},400);
+   if(enabled&&(Number(callTime.slice(0,2))*60+Number(callTime.slice(3))>18*60+59))return json({error:"Choose a report time no later than 6:59 p.m. so both retries stay inside the allowed calling window."},400);
    if(enabled&&(!ownerName||!ownerPhone||!nextOwnerName||!nextOwnerPhone))return json({error:"Enter the primary owner and next owner names and phone numbers before enabling daily report calls."},400);
    if(enabled&&ownerPhone===nextOwnerPhone)return json({error:"The primary owner and next owner must have different phone numbers."},400);
    const reportSettings={enabled,ownerName,ownerPhone,nextOwnerName,nextOwnerPhone,callTime,timezone:"Africa/Nairobi"};
