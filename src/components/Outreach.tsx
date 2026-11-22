@@ -168,12 +168,36 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
       if (!supabase || !businessId) throw new Error("Select a signed-in business workspace first.");
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       if (sessionError || !sessionData.session?.access_token) throw new Error("Your sign-in has expired. Sign in again.");
-      const response = await fetch("https://twiga-business-files.twiga-ke.workers.dev/v1/contacts/" + encodeURIComponent(businessId), {
+      const endpoint = "https://twiga-business-files.twiga-ke.workers.dev/v1/contacts/" + encodeURIComponent(businessId);
+      const authHeaders = { Authorization: "Bearer " + sessionData.session.access_token };
+      const existingResponse = await fetch(endpoint + "?limit=500", { headers: authHeaders });
+      const existingPayload = await existingResponse.json().catch(() => ({}));
+      if (!existingResponse.ok || existingPayload?.ok !== true) throw new Error(String(existingPayload?.error || "Saved customer profiles could not be loaded."));
+      const existingByPhone = new Map<string, any>((Array.isArray(existingPayload.contacts) ? existingPayload.contacts : []).map((person: any) => [normalizePhone(person.Phone || person.phone), person]));
+      const enriched = deduped.map(contact => {
+        const existing = existingByPhone.get(contact.phone) || {};
+        let priorPurchases = "";
+        try {
+          const parsed = typeof existing.Purchases === "string" ? JSON.parse(existing.Purchases) : existing.Purchases;
+          priorPurchases = Array.isArray(parsed) ? parsed.map((item: any) => typeof item === "string" ? item : String(item?.name || item?.item || "")).filter(Boolean).join(", ") : "";
+        } catch { priorPurchases = ""; }
+        return {
+          ...contact,
+          email: contact.email || existing.Email || "",
+          itemsBought: contact.itemsBought || priorPurchases,
+          notes: contact.notes || existing.Notes || "",
+          preferredLanguage: contact.preferredLanguage || existing.PreferredLanguage || "",
+          lastPurchaseAt: contact.lastPurchaseAt || existing.LastPurchaseAt || "",
+          followUpAt: contact.followUpAt || existing.FollowUpAt || "",
+          optOut: contact.optOut === true || !!existing.OptedOutAt,
+        };
+      });
+      const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionData.session.access_token },
+        headers: { ...authHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({
           source: "csv",
-          contacts: deduped.map(contact => ({
+          contacts: enriched.map(contact => ({
             name: contact.name, phone: contact.phone, email: contact.email || "",
             purchases: contact.itemsBought || "", notes: contact.notes || "",
             preferredLanguage: contact.preferredLanguage || "", lastPurchaseAt: contact.lastPurchaseAt || "",
@@ -183,8 +207,8 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
       });
       const saved = await response.json().catch(() => ({}));
       if (!response.ok || saved?.ok !== true) throw new Error(String(saved?.error || "Customer profiles could not be saved to this business workspace."));
-      setContacts(deduped); setFileName(file.name);
-      setMessage("Imported and saved " + Number(saved.saved || deduped.length) + " customer profiles to this business. " + deduped.filter(c => c.consent && !c.optOut).length + " have recorded promotional-call consent; opted-out contacts are excluded.");
+      setContacts(enriched); setFileName(file.name);
+      setMessage("Imported and saved " + Number(saved.saved || enriched.length) + " customer profiles to this business. " + enriched.filter(c => c.consent && !c.optOut).length + " have recorded promotional-call consent; saved opt-outs remain excluded.");
     } catch (e) { setError(e instanceof Error ? e.message : "Could not read this CSV."); }
   };
   const publish = async () => {
