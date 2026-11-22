@@ -34,6 +34,23 @@ function authContext(session: Session | null): GoogleAuthContext {
 // later, deliberately, from Connections so Google verification for those APIs
 // cannot block a new customer from creating a TWIGA account.
 const GOOGLE_SCOPES = "openid email profile";
+const PASSWORD_RECOVERY_STORAGE_KEY = "twiga_password_recovery_requested_at";
+function hasRecentPasswordRecoveryRequest(): boolean {
+  try {
+    const requestedAt = Number(localStorage.getItem(PASSWORD_RECOVERY_STORAGE_KEY) || 0);
+    if (!requestedAt || Date.now() - requestedAt > 30 * 60 * 1000) {
+      localStorage.removeItem(PASSWORD_RECOVERY_STORAGE_KEY);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+function clearPasswordRecoveryRequest(): void {
+  try { localStorage.removeItem(PASSWORD_RECOVERY_STORAGE_KEY); } catch { /* storage may be unavailable */ }
+}
+
 
 export default function AuthGate({ children }: {
   children: (session: Session, googleAuth: GoogleAuthContext) => ReactNode;
@@ -74,7 +91,7 @@ export default function AuthGate({ children }: {
     const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       authEventReceived = true;
       applySession(nextSession);
-      if (event === "PASSWORD_RECOVERY" || (event === "INITIAL_SESSION" && hasRecoveryType())) {
+      if (event === "PASSWORD_RECOVERY" || (event === "INITIAL_SESSION" && (hasRecoveryType() || (Boolean(nextSession) && hasRecentPasswordRecoveryRequest())))) {
         setRecoveryMode(true);
         setRecoverySuccess(false);
         setError("");
@@ -129,13 +146,15 @@ export default function AuthGate({ children }: {
     setError("");
     setNotice("");
     try {
+      localStorage.setItem(PASSWORD_RECOVERY_STORAGE_KEY, String(Date.now()));
       const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        // Keep the same origin so the PKCE verifier created by Supabase remains available.
+        // Reuse the existing auth callback on this same origin so the PKCE verifier remains available.
         redirectTo: window.location.origin + "/auth/callback",
       });
       if (resetError) throw resetError;
       setNotice("If an account exists for this email, a reset link has been sent. Open it in this same browser to set your new password.");
     } catch (cause) {
+      clearPasswordRecoveryRequest();
       setError(cause instanceof Error ? cause.message : "The password reset email could not be sent.");
     } finally {
       setBusy(false);
@@ -163,6 +182,7 @@ export default function AuthGate({ children }: {
       if (updateError) throw updateError;
       setRecoveryPassword("");
       setRecoveryConfirmation("");
+      clearPasswordRecoveryRequest();
       setRecoverySuccess(true);
       window.history.replaceState({}, document.title, window.location.pathname);
     } catch (cause) {
@@ -173,6 +193,7 @@ export default function AuthGate({ children }: {
   };
 
   const returnToWorkspace = () => {
+    clearPasswordRecoveryRequest();
     setRecoveryMode(false);
     setRecoverySuccess(false);
     setError("");
