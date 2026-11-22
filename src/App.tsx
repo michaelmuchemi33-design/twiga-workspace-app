@@ -261,34 +261,47 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
               {!demo && <button type="button" onClick={() => go("billing")} className="h-10 rounded-xl border border-orange-200 bg-orange-50 px-3 text-sm font-semibold text-orange-800 hover:bg-orange-100">Plan &amp; billing</button>}<InstallApp />{demo && <DemoInterest />}{!demo && onSignOut && <button onClick={onSignOut} className="h-10 rounded-xl border border-neutral-200 px-4 text-sm font-semibold text-neutral-600 hover:bg-neutral-50">Sign out</button>}
             </div>
           </div>
-          <nav aria-label="Business channels" className="mb-6 grid grid-cols-1 gap-2 sm:grid-cols-3">
-            {workspaceShortcuts.map((item) => {
-              const Icon = item.icon;
-              const active = tab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => go(item.id)}
-                  aria-current={active ? "page" : undefined}
-                  className={cn(
-                    "flex min-h-[76px] items-center gap-3 rounded-2xl border px-4 py-3 text-left shadow-sm transition-all",
-                    active
-                      ? "border-orange-500 bg-neutral-950 text-white shadow-orange-500/10 dark:bg-neutral-900"
-                      : "border-neutral-200 bg-white text-neutral-900 hover:border-orange-300 hover:bg-orange-50/40 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:border-orange-500/50"
-                  )}
-                >
-                  <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", active ? "bg-orange-500 text-white" : "bg-orange-50 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300")}>
-                    <Icon className="h-5 w-5" />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-sm font-bold">{item.label}</span>
-                    <span className={cn("mt-0.5 block text-xs leading-5", active ? "text-neutral-300" : "text-neutral-500")}>{item.description}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </nav>
+          {["functions", "customers", "whatsapp"].includes(tab) && (
+            <section aria-label="Social and contacts navigation" className="mb-6">
+              <p className="mb-2 px-1 text-xs font-semibold uppercase tracking-[0.16em] text-orange-600">Social &amp; contacts</p>
+              <nav aria-label="Social and contacts pages" className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {workspaceShortcuts.map((item) => {
+                  const Icon = item.icon;
+                  const active = tab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => go(item.id)}
+                      aria-current={active ? "page" : undefined}
+                      className="flex min-h-[76px] items-center gap-3 rounded-2xl border px-4 py-3 text-left shadow-sm transition-all hover:border-orange-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2"
+                      style={{
+                        backgroundColor: active ? "#0a0a0a" : theme === "dark" ? "#171717" : "#ffffff",
+                        color: active ? "#ffffff" : theme === "dark" ? "#f5f5f5" : "#171717",
+                        borderColor: active ? "#f97316" : theme === "dark" ? "#404040" : "#e5e5e5"
+                      }}
+                    >
+                      <span
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+                        style={{ backgroundColor: "#f97316", color: "#ffffff" }}
+                      >
+                        <Icon className="h-5 w-5" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-bold">{item.label}</span>
+                        <span
+                          className="mt-0.5 block text-xs leading-5"
+                          style={{ color: active ? "#d4d4d4" : theme === "dark" ? "#a3a3a3" : "#737373" }}
+                        >
+                          {item.description}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </nav>
+            </section>
+          )}
           {googleSetupMessage && !demo && <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-950"><span>{autoProvisioning && <span className="mr-2 inline-block h-2 w-2 animate-pulse rounded-full bg-orange-500" />}{googleSetupMessage}</span>{googleSetupMessage.includes("Google connection needs attention") && <button onClick={() => go("connections")} className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-bold">Open Google connections</button>}{googleSetupMessage.includes("could not be created") && <button onClick={() => { autoProvisioned.current = null; void refreshBusinesses(); }} className="rounded-lg border border-orange-300 bg-white px-3 py-1.5 text-xs font-bold">Retry</button>}</div>}
           {demo && <div className="mb-6 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm leading-6 text-orange-900"><strong>This is a sample workspace.</strong> Explore the screens and test the controls. Demo changes are temporary and are not connected to a real customer's business account.</div>}
           {tab === "dashboard" && <Dashboard onSetup={() => go("setup")} onPayments={() => go("payments")} />}
