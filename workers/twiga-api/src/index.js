@@ -939,6 +939,12 @@ async function aiWorker(req, env) {
         await env.DB.prepare('UPDATE business_worker_owner_contacts SET enabled=0,updated_at=? WHERE business_id=?').bind(now(),ctx.biz.id).run();
         return json({ok:true,enabled:false,message:'Owner WhatsApp alerts are paused.'});
       }
+      if (body.enabled === true && !String(body.phone || '').trim()) {
+        const resumed = await env.DB.prepare('UPDATE business_worker_owner_contacts SET enabled=1,updated_at=? WHERE business_id=?').bind(now(),ctx.biz.id).run();
+        if (!resumed.meta || Number(resumed.meta.changes || 0) !== 1) return json({ok:false,error:'Save the owner WhatsApp number before enabling alerts.'},400);
+        await dispatchOwnerWhatsAppOutbox(env,ctx.biz.id,10);
+        return json({ok:true,enabled:true,message:'Owner WhatsApp alerts are enabled again.'});
+      }
       const phone=normalizeWhatsAppPhone(body.phone);
       await env.DB.prepare('INSERT INTO business_worker_owner_contacts (business_id,phone_e164,enabled,updated_at) VALUES (?,?,1,?) ON CONFLICT(business_id) DO UPDATE SET phone_e164=excluded.phone_e164,enabled=1,updated_at=excluded.updated_at')
         .bind(ctx.biz.id,phone,now()).run();
