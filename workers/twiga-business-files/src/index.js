@@ -428,6 +428,7 @@ export default {
         }
         if (req.method === "POST" && !fileId) {
           const body=await req.json().catch(()=>({})),source=["google","csv","manual","phone","pos"].includes(String(body.source||"").toLowerCase())?String(body.source).toLowerCase():"manual";
+          const createdAt=now();
           const list=(Array.isArray(body.contacts)?body.contacts:[]).slice(0,500).map(c=>{
             let purchases=Array.isArray(c.purchases)?c.purchases:(Array.isArray(c.itemsBought)?c.itemsBought:(Array.isArray(c.items_bought)?c.items_bought:[]));
             if(typeof c.purchases==="string"&&c.purchases.trim()){
@@ -455,7 +456,6 @@ export default {
             };
           }).filter(c=>c.name&&c.phone.length>=7);
           if(!list.length)return json(req,{ok:true,saved:0,storage:"cloudflare_d1"});
-          const createdAt=now();
           const statements=list.map(c=>env.DB.prepare(
             "INSERT INTO contacts (business_id,phone,name,email,source,updated_at,purchases_json,notes,preferred_language,marketing_consent,consent_recorded_at,opted_out_at,last_purchase_at,follow_up_at,last_contacted_at,lifetime_value) " +
             "VALUES (?,?,?,?,?,?,?,?,?,COALESCE(?,0),?,?,?,?,?,?) " +
