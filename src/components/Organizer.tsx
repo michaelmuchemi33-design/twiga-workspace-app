@@ -33,6 +33,9 @@ type WorkerStatus = {
   schedulerLastDispatchedBusinesses?: number; schedulerLastFailedBusinesses?: number; schedulerLastPendingBusinesses?: number; schedulerLastError?: string | null;
   counts?: { needsReview: number; pending: number; processing: number; failed: number };
   profileSynced?: boolean; profileSyncError?: string | null;
+  ownerWhatsAppConfigured?: boolean; ownerWhatsAppEnabled?: boolean; ownerWhatsAppLast4?: string;
+  ownerWhatsAppBusinessNumber?: string; ownerWhatsAppPending?: number; ownerWhatsAppLastDeliveryStatus?: string | null;
+  ownerWhatsAppLastDeliveryError?: string | null; ownerWhatsAppLastDeliveryAt?: string | null;
 };
 
 async function readFunctionError(error: any, fallback: string) {
@@ -69,6 +72,8 @@ export default function Organizer() {
   const [workerNotifications, setWorkerNotifications] = useState<WorkerNotification[]>([]);
   const [workerStatus, setWorkerStatus] = useState<WorkerStatus | null>(null);
   const [workerActionBusy, setWorkerActionBusy] = useState(false);
+  const [ownerWhatsAppPhone, setOwnerWhatsAppPhone] = useState("");
+  const [ownerWhatsAppSaving, setOwnerWhatsAppSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (demoMode) {
@@ -256,6 +261,20 @@ export default function Organizer() {
     return payload;
   };
 
+  const saveOwnerWhatsApp = async () => {
+    if (!ownerWhatsAppPhone.trim()) { setMessage("Enter the owner's WhatsApp number first."); return; }
+    setOwnerWhatsAppSaving(true);
+    setMessage("Saving the owner WhatsApp alert destination…");
+    try {
+      const payload = await runWorkerCommand("set_owner_whatsapp", { phone: ownerWhatsAppPhone.trim(), enabled: true });
+      setMessage(String(payload?.message || "Owner WhatsApp number saved."));
+      setOwnerWhatsAppPhone("");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save the owner WhatsApp number.");
+    } finally { setOwnerWhatsAppSaving(false); }
+  };
+
   const runWorkerReview = async () => {
     setWorkerActionBusy(true);
     setMessage("Starting a fresh evidence-based business review…");
@@ -347,11 +366,11 @@ export default function Organizer() {
           <div>
             <p className="text-xs font-bold uppercase tracking-wider text-orange-600">Cloudflare · per-business runtime</p>
             <h2 className="mt-1 text-lg font-semibold text-neutral-950">AI Business Orchestrator</h2>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-600">Cloudflare checks up to 50 business workspaces per scheduler tick and can process up to 50 due jobs for this business per run. Daily reviews are scheduled for 8:00 a.m. Nairobi time. A job only runs automatically when a matching, verified handler exists.</p>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-600">Cloudflare checks up to 50 business workspaces per scheduler tick and can process up to 50 due jobs for this business per run. Daily reviews run at 8:00 a.m. Nairobi time; inbox events and due jobs are processed in the background. Unsupported actions stay in the owner approval queue rather than being falsely marked complete.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className={cn("rounded-full px-3 py-1.5 text-xs font-semibold", workerStatus?.enabled ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600")}>
-              {workerStatus ? (workerStatus.enabled ? "Scheduled reviews on" : "Scheduled reviews paused") : demoMode ? "Demo only" : "Status unavailable"}
+              {workerStatus ? (workerStatus.enabled ? "Worker schedule on" : "Worker schedule paused") : demoMode ? "Demo only" : "Status unavailable"}
             </span>
             {!demoMode && <button type="button" onClick={() => void runWorkerReview()} disabled={!businessId || workerActionBusy} className="rounded-lg bg-orange-500 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-600 disabled:opacity-40">{workerActionBusy ? "Working…" : "Run business review"}</button>}
             {!demoMode && <button type="button" onClick={() => void processWorkerQueue()} disabled={!businessId || workerActionBusy} className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-semibold text-white hover:bg-neutral-800 disabled:opacity-40 dark:bg-white dark:text-neutral-950">{workerActionBusy ? "Working…" : "Process queue now"}</button>}
@@ -373,6 +392,26 @@ export default function Organizer() {
         </div>}
         {workerStatus && workerStatus.schedulerLastFinishedAt && Date.now() - new Date(workerStatus.schedulerLastFinishedAt).getTime() > 3 * 60 * 1000 && <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900">The scheduler heartbeat is more than three minutes old. The Worker may not be receiving Cron ticks.</div>}
         {workerStatus && workerStatus.lastTickAt && Date.now() - new Date(workerStatus.lastTickAt).getTime() > 10 * 60 * 1000 && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">This business has not received a Worker tick in over ten minutes. Use Process queue now or Provision / repair to test it.</div>}
+        <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50/60 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-neutral-950">Owner WhatsApp alerts & quick replies</h3>
+              <p className="mt-1 max-w-2xl text-xs leading-5 text-neutral-600">TWIGA sends high-priority handovers, Worker failures and urgent review findings from the business’s connected official WhatsApp number. Save the owner’s personal WhatsApp number below.</p>
+            </div>
+            <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-700">{workerStatus?.ownerWhatsAppConfigured && workerStatus.ownerWhatsAppEnabled ? "Owner number saved · " + (workerStatus.ownerWhatsAppLast4 || "••••") : "Owner number not configured"}</span>
+          </div>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <input aria-label="Owner WhatsApp number" type="tel" inputMode="tel" autoComplete="tel" value={ownerWhatsAppPhone} onChange={(event) => setOwnerWhatsAppPhone(event.target.value)} placeholder="+2547XXXXXXXX" className="h-10 min-w-0 flex-1 rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-950 outline-none focus:border-orange-400" />
+            <button type="button" onClick={() => void saveOwnerWhatsApp()} disabled={!businessId || ownerWhatsAppSaving || workerActionBusy || ownerWhatsAppPhone.trim().length < 8} className="rounded-lg bg-neutral-950 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">{ownerWhatsAppSaving ? "Saving…" : "Save owner number"}</button>
+          </div>
+          <p className="mt-2 text-xs leading-5 text-neutral-600">Connected business WhatsApp: <strong>{workerStatus?.ownerWhatsAppBusinessNumber || "not connected"}</strong>. After saving, send <strong>START</strong> from the owner’s phone to this business number. This opens Meta’s 24-hour reply window for alerts. When the window expires, send START again or configure an approved Meta message template.</p>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-neutral-600">
+            <span>Outbox: {Number(workerStatus?.ownerWhatsAppPending || 0)} pending / blocked</span>
+            <span>Last delivery: {workerStatus?.ownerWhatsAppLastDeliveryStatus || "none yet"}{workerStatus?.ownerWhatsAppLastDeliveryAt ? " · " + new Date(workerStatus.ownerWhatsAppLastDeliveryAt).toLocaleString("en-KE", { dateStyle: "short", timeStyle: "short" }) : ""}</span>
+          </div>
+          {workerStatus?.ownerWhatsAppLastDeliveryError && <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">{workerStatus.ownerWhatsAppLastDeliveryError}</p>}
+          {workerStatus?.ownerWhatsAppConfigured && <button type="button" onClick={async () => { setWorkerActionBusy(true); try { const result = await runWorkerCommand("set_owner_whatsapp", { enabled: false }); setMessage(String(result?.message || "Owner WhatsApp alerts paused.")); await load(); } catch (error) { setMessage(error instanceof Error ? error.message : "Could not pause owner alerts."); } finally { setWorkerActionBusy(false); } }} disabled={workerActionBusy} className="mt-2 text-xs font-semibold text-neutral-600 underline underline-offset-2">Pause owner WhatsApp alerts</button>}
+        </div>
         <div className="mt-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div><h3 className="text-sm font-semibold text-neutral-950">Business Worker queue & handovers</h3><p className="mt-1 text-xs text-neutral-500">Pending and processing jobs, owner-review tasks, and failed jobs returned by the Cloudflare Worker.</p></div>
