@@ -398,7 +398,7 @@ export default function Organizer() {
               <h3 className="text-sm font-semibold text-neutral-950">Owner WhatsApp alerts & quick replies</h3>
               <p className="mt-1 max-w-2xl text-xs leading-5 text-neutral-600">TWIGA sends high-priority handovers, Worker failures and urgent review findings from the business’s connected official WhatsApp number. Save the owner’s personal WhatsApp number below.</p>
             </div>
-            <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-700">{workerStatus?.ownerWhatsAppConfigured && workerStatus.ownerWhatsAppEnabled ? "Owner number saved · " + (workerStatus.ownerWhatsAppLast4 || "••••") : "Owner number not configured"}</span>
+            <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-neutral-700">{workerStatus?.ownerWhatsAppConfigured ? "Owner number saved · " + (workerStatus.ownerWhatsAppLast4 || "••••") + (workerStatus.ownerWhatsAppEnabled ? " · alerts on" : " · alerts paused") : "Owner number not configured"}</span>
           </div>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <input aria-label="Owner WhatsApp number" type="tel" inputMode="tel" autoComplete="tel" value={ownerWhatsAppPhone} onChange={(event) => setOwnerWhatsAppPhone(event.target.value)} placeholder="+2547XXXXXXXX" className="h-10 min-w-0 flex-1 rounded-lg border border-neutral-200 bg-white px-3 text-sm text-neutral-950 outline-none focus:border-orange-400" />
@@ -411,7 +411,7 @@ export default function Organizer() {
             <span>Last delivery: {workerStatus?.ownerWhatsAppLastDeliveryStatus || "none yet"}{workerStatus?.ownerWhatsAppLastDeliveryAt ? " · " + new Date(workerStatus.ownerWhatsAppLastDeliveryAt).toLocaleString("en-KE", { dateStyle: "short", timeStyle: "short" }) : ""}</span>
           </div>
           {workerStatus?.ownerWhatsAppLastDeliveryError && <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">{workerStatus.ownerWhatsAppLastDeliveryError}</p>}
-          {workerStatus?.ownerWhatsAppConfigured && <button type="button" onClick={async () => { setWorkerActionBusy(true); try { const result = await runWorkerCommand("set_owner_whatsapp", { enabled: false }); setMessage(String(result?.message || "Owner WhatsApp alerts paused.")); await load(); } catch (error) { setMessage(error instanceof Error ? error.message : "Could not pause owner alerts."); } finally { setWorkerActionBusy(false); } }} disabled={workerActionBusy} className="mt-2 text-xs font-semibold text-neutral-600 underline underline-offset-2">Pause owner WhatsApp alerts</button>}
+          {workerStatus?.ownerWhatsAppConfigured && <button type="button" onClick={async () => { setWorkerActionBusy(true); try { const enabled = !workerStatus.ownerWhatsAppEnabled; const result = await runWorkerCommand("set_owner_whatsapp", { enabled }); setMessage(String(result?.message || (enabled ? "Owner WhatsApp alerts enabled." : "Owner WhatsApp alerts paused."))); await load(); } catch (error) { setMessage(error instanceof Error ? error.message : "Could not update owner alerts."); } finally { setWorkerActionBusy(false); } }} disabled={workerActionBusy} className="mt-2 text-xs font-semibold text-neutral-600 underline underline-offset-2">{workerStatus.ownerWhatsAppEnabled ? "Pause owner WhatsApp alerts" : "Resume owner WhatsApp alerts"}</button>}
         </div>
         <div className="mt-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
