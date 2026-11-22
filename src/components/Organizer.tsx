@@ -28,6 +28,7 @@ type WorkerTask = { id: string; task_type: string; title: string; detail: string
 type WorkerNotification = { id: string; notification_type: string; title: string; body: string; priority: string; created_at: string };
 type WorkerStatus = {
   enabled: boolean; schedule: string; nextReviewAt: string | null; lastRunAt: string | null; lastReviewAt: string | null;
+  orchestratorReady?: boolean; orchestratorIsolated?: boolean;
   lastTickAt?: string | null; lastSuccessAt?: string | null; lastErrorAt?: string | null; lastError?: string | null;
   lastProcessedCount?: number; lastFailedCount?: number; schedulerLastStartedAt?: string | null; schedulerLastFinishedAt?: string | null;
   schedulerLastDispatchedBusinesses?: number; schedulerLastFailedBusinesses?: number; schedulerLastPendingBusinesses?: number; schedulerLastError?: string | null;
@@ -120,7 +121,7 @@ export default function Organizer() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(String(payload?.error || "The AI Worker status could not be loaded."));
-      setWorkerStatus(payload.worker ? { ...payload.worker, counts: payload.counts || { needsReview: 0, pending: 0, processing: 0, failed: 0 }, profileSynced: payload.profileSynced, profileSyncError: payload.profileSyncError || null } : null);
+      setWorkerStatus(payload.worker ? { ...payload.worker, orchestratorReady: payload.orchestrator?.ready === true, orchestratorIsolated: payload.orchestrator?.isolated === true, counts: payload.counts || { needsReview: 0, pending: 0, processing: 0, failed: 0 }, profileSynced: payload.profileSynced, profileSyncError: payload.profileSyncError || null } : null);
       setWorkerTasks(Array.isArray(payload.tasks) ? payload.tasks : []);
       setWorkerNotifications(Array.isArray(payload.notifications) ? payload.notifications : []);
     } catch (workerError) {
@@ -370,7 +371,7 @@ export default function Organizer() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className={cn("rounded-full px-3 py-1.5 text-xs font-semibold", workerStatus?.enabled ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600")}>
-              {workerStatus ? (workerStatus.enabled ? "Worker schedule on" : "Worker schedule paused") : demoMode ? "Demo only" : "Status unavailable"}
+              {workerStatus ? (workerStatus.orchestratorReady && workerStatus.orchestratorIsolated ? "Dedicated business orchestrator ready · " : "Orchestrator not registered · ") + (workerStatus.enabled ? "schedule on" : "schedule paused") : demoMode ? "Demo only" : "Status unavailable"}
             </span>
             {!demoMode && <button type="button" onClick={() => void runWorkerReview()} disabled={!businessId || workerActionBusy} className="rounded-lg bg-orange-500 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-600 disabled:opacity-40">{workerActionBusy ? "Working…" : "Run business review"}</button>}
             {!demoMode && <button type="button" onClick={() => void processWorkerQueue()} disabled={!businessId || workerActionBusy} className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-semibold text-white hover:bg-neutral-800 disabled:opacity-40 dark:bg-white dark:text-neutral-950">{workerActionBusy ? "Working…" : "Process queue now"}</button>}
