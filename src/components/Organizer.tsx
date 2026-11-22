@@ -25,7 +25,15 @@ type Task = {
   created_at: string;
 };
 type WorkerTask = { id: string; task_type: string; title: string; detail: string; status: string; priority: string; due_at: string; created_at: string };
-type WorkerStatus = { enabled: boolean; schedule: string; nextReviewAt: string | null; lastRunAt: string | null; lastReviewAt: string | null };
+type WorkerNotification = { id: string; notification_type: string; title: string; body: string; priority: string; created_at: string };
+type WorkerStatus = {
+  enabled: boolean; schedule: string; nextReviewAt: string | null; lastRunAt: string | null; lastReviewAt: string | null;
+  lastTickAt?: string | null; lastSuccessAt?: string | null; lastErrorAt?: string | null; lastError?: string | null;
+  lastProcessedCount?: number; lastFailedCount?: number; schedulerLastStartedAt?: string | null; schedulerLastFinishedAt?: string | null;
+  schedulerLastDispatchedBusinesses?: number; schedulerLastFailedBusinesses?: number; schedulerLastPendingBusinesses?: number; schedulerLastError?: string | null;
+  counts?: { needsReview: number; pending: number; processing: number; failed: number };
+  profileSynced?: boolean; profileSyncError?: string | null;
+};
 
 async function readFunctionError(error: any, fallback: string) {
   const response = error?.context;
@@ -58,6 +66,7 @@ export default function Organizer() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [workerTasks, setWorkerTasks] = useState<WorkerTask[]>([]);
+  const [workerNotifications, setWorkerNotifications] = useState<WorkerNotification[]>([]);
   const [workerStatus, setWorkerStatus] = useState<WorkerStatus | null>(null);
   const [workerActionBusy, setWorkerActionBusy] = useState(false);
 
@@ -83,11 +92,12 @@ export default function Organizer() {
       };
       setItems([approval, ...taskItems]);
       setWorkerTasks([]);
+      setWorkerNotifications([]);
       setWorkerStatus(null);
       setLoading(false);
       return;
     }
-    if (!businessId || !supabase) { setItems([]); setWorkerTasks([]); setWorkerStatus(null); setLoading(false); return; }
+    if (!businessId || !supabase) { setItems([]); setWorkerTasks([]); setWorkerNotifications([]); setWorkerStatus(null); setLoading(false); return; }
     setLoading(true);
     const { data, error } = await supabase.from("twiga_tasks")
       .select("id,title,description,status,kind,category,priority,due_at,approval_required,approval_status,action_type,action_payload,source,created_at")
@@ -105,11 +115,13 @@ export default function Organizer() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(String(payload?.error || "The AI Worker status could not be loaded."));
-      setWorkerStatus(payload.worker || null);
-      setWorkerTasks(Array.isArray(payload.tasks) ? payload.tasks.filter((task: WorkerTask) => task.status === "needs_review" || task.status === "failed") : []);
+      setWorkerStatus(payload.worker ? { ...payload.worker, counts: payload.counts || { needsReview: 0, pending: 0, processing: 0, failed: 0 }, profileSynced: payload.profileSynced, profileSyncError: payload.profileSyncError || null } : null);
+      setWorkerTasks(Array.isArray(payload.tasks) ? payload.tasks : []);
+      setWorkerNotifications(Array.isArray(payload.notifications) ? payload.notifications : []);
     } catch (workerError) {
       setWorkerStatus(null);
       setWorkerTasks([]);
+      setWorkerNotifications([]);
       setMessage(workerError instanceof Error ? "AI Orchestrator: " + workerError.message : "AI Orchestrator status could not be loaded.");
     }
     setLoading(false);
@@ -246,14 +258,45 @@ export default function Organizer() {
 
   const runWorkerReview = async () => {
     setWorkerActionBusy(true);
-    setMessage("Starting a fresh business review…");
+    setMessage("Starting a fresh evidence-based business review…");
     try {
       const payload = await runWorkerCommand("run_review");
       const processed = Number(payload?.result?.processed || 0);
-      setMessage(processed > 0 ? "Business review finished. Refreshing the owner action queue…" : "The review request reached the Worker. Refreshing its current status…");
+      const failed = Number(payload?.result?.failed || 0);
+      const pending = Number(payload?.result?.remainingPending || 0);
+      setMessage("Review request reached the Worker · " + processed + " queued job(s) processed · " + failed + " failed · " + pending + " still pending.");
       await load();
     } catch (error) {
       setMessage(error instanceof Error ? "AI Orchestrator: " + error.message : "The business review could not be started.");
+    } finally {
+      setWorkerActionBusy(false);
+    }
+  };
+
+  const processWorkerQueue = async () => {
+    setWorkerActionBusy(true);
+    setMessage("Processing up to 50 due jobs for this business…");
+    try {
+      const payload = await runWorkerCommand("process_queue");
+      const result = payload?.result || {};
+      setMessage("Worker queue checked · " + Number(result.processed || 0) + " processed · " + Number(result.failed || 0) + " failed · " + Number(result.remainingPending || 0) + " still pending.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? "AI Orchestrator: " + error.message : "The Worker queue could not be processed.");
+    } finally {
+      setWorkerActionBusy(false);
+    }
+  };
+
+  const provisionWorker = async () => {
+    setWorkerActionBusy(true);
+    setMessage("Provisioning this business's isolated Worker and daily review schedule…");
+    try {
+      const payload = await runWorkerCommand("provision");
+      setMessage(payload?.message || "Business Worker provisioned.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? "AI Orchestrator: " + error.message : "The business Worker could not be provisioned.");
     } finally {
       setWorkerActionBusy(false);
     }
@@ -304,39 +347,58 @@ export default function Organizer() {
           <div>
             <p className="text-xs font-bold uppercase tracking-wider text-orange-600">Cloudflare · per-business runtime</p>
             <h2 className="mt-1 text-lg font-semibold text-neutral-950">AI Business Orchestrator</h2>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-600">The Worker checks its queue every minute. Automatic owner reviews run daily at 8:00 a.m. Nairobi time, and supported call and WhatsApp events can wake it immediately. Run a fresh review here at any time.</p>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-600">Cloudflare checks up to 50 business workspaces per scheduler tick and can process up to 50 due jobs for this business per run. Daily reviews are scheduled for 8:00 a.m. Nairobi time. A job only runs automatically when a matching, verified handler exists.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className={cn("rounded-full px-3 py-1.5 text-xs font-semibold", workerStatus?.enabled ? "bg-orange-50 text-orange-800" : "bg-neutral-100 text-neutral-600")}>
               {workerStatus ? (workerStatus.enabled ? "Scheduled reviews on" : "Scheduled reviews paused") : demoMode ? "Demo only" : "Status unavailable"}
             </span>
-            {!demoMode && <button type="button" onClick={() => void runWorkerReview()} disabled={!businessId || workerActionBusy} className="rounded-lg bg-orange-500 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-600 disabled:opacity-40">{workerActionBusy ? "Working…" : "Run review now"}</button>}
-            {!demoMode && workerStatus && <button type="button" onClick={() => void toggleWorkerSchedule()} disabled={workerActionBusy} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-40">{workerStatus.enabled ? "Pause schedule" : "Resume schedule"}</button>}
+            {!demoMode && <button type="button" onClick={() => void runWorkerReview()} disabled={!businessId || workerActionBusy} className="rounded-lg bg-orange-500 px-3 py-2 text-xs font-semibold text-white hover:bg-orange-600 disabled:opacity-40">{workerActionBusy ? "Working…" : "Run business review"}</button>}
+            {!demoMode && <button type="button" onClick={() => void processWorkerQueue()} disabled={!businessId || workerActionBusy} className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-semibold text-white hover:bg-neutral-800 disabled:opacity-40 dark:bg-white dark:text-neutral-950">{workerActionBusy ? "Working…" : "Process queue now"}</button>}
+            {!demoMode && <button type="button" onClick={() => void provisionWorker()} disabled={!businessId || workerActionBusy} className="rounded-lg border border-orange-300 px-3 py-2 text-xs font-semibold text-orange-800 hover:bg-orange-50 disabled:opacity-40 dark:text-orange-300">Provision / repair</button>}
+            {!demoMode && workerStatus && <button type="button" onClick={() => void toggleWorkerSchedule()} disabled={workerActionBusy} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-40">{workerStatus.enabled ? "Pause daily reviews" : "Resume daily reviews"}</button>}
           </div>
         </div>
         {workerStatus && <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Queue check</p><p className="mt-1 text-sm font-semibold text-neutral-950">Every minute</p></div>
-          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Next automatic review</p><p className="mt-1 text-sm font-semibold text-neutral-950">{workerStatus.nextReviewAt ? new Date(workerStatus.nextReviewAt).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" }) : "Not scheduled"}</p></div>
-          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Last Worker run</p><p className="mt-1 text-sm font-semibold text-neutral-950">{workerStatus.lastRunAt ? new Date(workerStatus.lastRunAt).toLocaleString() : "Not recorded yet"}</p></div>
-          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Last business review</p><p className="mt-1 text-sm font-semibold text-neutral-950">{workerStatus.lastReviewAt ? new Date(workerStatus.lastReviewAt).toLocaleString() : "Not run yet"}</p></div>
+          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Scheduler heartbeat</p><p className="mt-1 text-sm font-semibold text-neutral-950">{workerStatus.schedulerLastFinishedAt ? new Date(workerStatus.schedulerLastFinishedAt).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" }) : "No scheduler tick recorded"}</p><p className="mt-1 text-[11px] text-neutral-500">{Number(workerStatus.schedulerLastDispatchedBusinesses || 0)} business(es) dispatched</p></div>
+          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Business Worker heartbeat</p><p className="mt-1 text-sm font-semibold text-neutral-950">{workerStatus.lastTickAt ? new Date(workerStatus.lastTickAt).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" }) : "No business tick yet"}</p><p className="mt-1 text-[11px] text-neutral-500">Last successful tick: {workerStatus.lastSuccessAt ? new Date(workerStatus.lastSuccessAt).toLocaleString("en-KE", { dateStyle: "short", timeStyle: "short" }) : "Not recorded"}</p></div>
+          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Next daily review</p><p className="mt-1 text-sm font-semibold text-neutral-950">{workerStatus.nextReviewAt ? new Date(workerStatus.nextReviewAt).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" }) : "Not scheduled"}</p><p className="mt-1 text-[11px] text-neutral-500">Last review: {workerStatus.lastReviewAt ? new Date(workerStatus.lastReviewAt).toLocaleString("en-KE", { dateStyle: "short", timeStyle: "short" }) : "Not run yet"}</p></div>
+          <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Jobs this business</p><p className="mt-1 text-sm font-semibold text-neutral-950">{Number(workerStatus.counts?.pending || 0)} pending · {Number(workerStatus.counts?.processing || 0)} processing</p><p className="mt-1 text-[11px] text-neutral-500">{Number(workerStatus.counts?.needsReview || 0)} need review · {Number(workerStatus.counts?.failed || 0)} failed</p></div>
         </div>}
+        {workerStatus && (workerStatus.schedulerLastError || workerStatus.lastError || workerStatus.profileSynced === false) && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+          <p className="font-semibold">Worker needs attention</p>
+          {workerStatus.schedulerLastError && <p className="mt-1 text-xs leading-5">Scheduler: {workerStatus.schedulerLastError}</p>}
+          {workerStatus.lastError && <p className="mt-1 text-xs leading-5">Business queue: {workerStatus.lastError}</p>}
+          {workerStatus.profileSynced === false && <p className="mt-1 text-xs leading-5">Profile sync: {workerStatus.profileSyncError || "Business profile could not be refreshed. The saved Worker profile will be used."}</p>}
+        </div>}
+        {workerStatus && workerStatus.schedulerLastFinishedAt && Date.now() - new Date(workerStatus.schedulerLastFinishedAt).getTime() > 3 * 60 * 1000 && <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900">The scheduler heartbeat is more than three minutes old. The Worker may not be receiving Cron ticks.</div>}
+        {workerStatus && workerStatus.lastTickAt && Date.now() - new Date(workerStatus.lastTickAt).getTime() > 10 * 60 * 1000 && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">This business has not received a Worker tick in over ten minutes. Use Process queue now or Provision / repair to test it.</div>}
         <div className="mt-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div><h3 className="text-sm font-semibold text-neutral-950">Staff handovers & Worker exceptions</h3><p className="mt-1 text-xs text-neutral-500">Items waiting for a person to review, plus automated jobs that failed.</p></div>
+            <div><h3 className="text-sm font-semibold text-neutral-950">Business Worker queue & handovers</h3><p className="mt-1 text-xs text-neutral-500">Pending and processing jobs, owner-review tasks, and failed jobs returned by the Cloudflare Worker.</p></div>
             <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-semibold text-neutral-700">{workerTasks.length} waiting</span>
           </div>
           {!workerStatus && !demoMode && <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">The Worker queue could not be read. Refresh to retry; the business task list below remains available.</p>}
-          {workerTasks.length === 0 && workerStatus && <p className="mt-3 rounded-xl border border-dashed border-neutral-200 p-4 text-sm text-neutral-500">No staff handovers or failed Worker tasks are waiting for review.</p>}
+          {workerTasks.length === 0 && workerStatus && <p className="mt-3 rounded-xl border border-dashed border-neutral-200 p-4 text-sm text-neutral-500">No pending, processing, review or failed jobs are currently in this business's Cloudflare Worker queue.</p>}
           <div className="mt-3 space-y-2">
             {workerTasks.map((task) => <article key={task.id} className="rounded-xl border border-neutral-200 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0"><p className="text-sm font-semibold text-neutral-950">{task.title}</p><p className="mt-1 text-xs text-neutral-500">{label(task.task_type)} · {label(task.status)} · {label(task.priority)} priority</p></div>
-                <button onClick={() => void acknowledgeWorkerTask(task.id)} disabled={workerActionBusy} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700 disabled:opacity-40">Acknowledge</button>
+                {["needs_review","failed"].includes(task.status) && <button onClick={() => void acknowledgeWorkerTask(task.id)} disabled={workerActionBusy} className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700 disabled:opacity-40">Acknowledge</button>}
+                {task.status === "pending" && <span className="rounded-lg bg-orange-50 px-2.5 py-1.5 text-[11px] font-semibold text-orange-800">Waiting for Worker</span>}
+                {task.status === "processing" && <span className="rounded-lg bg-blue-50 px-2.5 py-1.5 text-[11px] font-semibold text-blue-800">Worker processing</span>}
               </div>
               {task.detail && <p className="mt-2 whitespace-pre-wrap text-sm leading-5 text-neutral-600">{task.detail}</p>}
             </article>)}
           </div>
         </div>
+        {workerNotifications.length > 0 && <div className="mt-5 border-t border-neutral-200 pt-4">
+          <div className="mb-3 flex items-center justify-between gap-2"><h3 className="text-sm font-semibold text-neutral-950">Worker notifications & run results</h3><span className="text-xs text-neutral-500">Latest {workerNotifications.length}</span></div>
+          <div className="space-y-2">{workerNotifications.map((notice) => <article key={notice.id} className="rounded-xl border border-neutral-200 bg-neutral-50 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-semibold text-neutral-900">{notice.title}</p><span className="text-[11px] text-neutral-500">{new Date(notice.created_at).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" })}</span></div>
+            <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-neutral-600">{notice.body}</p>
+          </article>)}</div>
+        </div>}
       </section>
 
       <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">

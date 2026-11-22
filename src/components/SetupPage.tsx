@@ -274,7 +274,23 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections, onO
         throw new Error(String(payload?.error || invokeError.message || "Business profile could not be saved."));
       }
       if (data?.error) throw new Error(String(data.error));
-      setNotice("Your business profile and receptionist instructions are saved.");
+      let workerNotice = "Your business profile and receptionist instructions are saved.";
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData.session?.access_token;
+        if (!accessToken) throw new Error("Your sign-in session expired.");
+        const workerResponse = await fetch(API + "/ai/worker", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+          body: JSON.stringify({ action: "provision", business_id: businessId })
+        });
+        const workerPayload = await workerResponse.json().catch(() => ({}));
+        if (!workerResponse.ok || workerPayload?.ok === false) throw new Error(String(workerPayload?.error || "The business Worker could not be provisioned."));
+        workerNotice += " The Cloudflare Business Worker is provisioned and its next daily review is scheduled.";
+      } catch (workerError) {
+        workerNotice += " Worker setup needs attention: " + (workerError instanceof Error ? workerError.message : "Open Organize to retry provisioning.");
+      }
+      setNotice(workerNotice);
       onDone();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Business profile could not be saved.");

@@ -593,6 +593,8 @@ async function ensureBusinessWorkerSchema(env) {
       env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_business_worker_tasks_tenant ON business_worker_tasks(business_id, status, created_at)"),
       env.DB.prepare("CREATE TABLE IF NOT EXISTS business_worker_notifications (id TEXT PRIMARY KEY, business_id TEXT NOT NULL, notification_type TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, priority TEXT NOT NULL DEFAULT 'normal', created_at TEXT NOT NULL, read_at TEXT)"),
       env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_business_worker_notifications_tenant ON business_worker_notifications(business_id, created_at)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS business_worker_runtime (business_id TEXT PRIMARY KEY, last_tick_at TEXT, last_success_at TEXT, last_error_at TEXT, last_error TEXT, last_processed_count INTEGER NOT NULL DEFAULT 0, last_failed_count INTEGER NOT NULL DEFAULT 0, last_pending_count INTEGER NOT NULL DEFAULT 0, last_needs_review_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS business_worker_scheduler (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), last_started_at TEXT, last_finished_at TEXT, last_dispatched_businesses INTEGER NOT NULL DEFAULT 0, last_failed_businesses INTEGER NOT NULL DEFAULT 0, last_pending_businesses INTEGER NOT NULL DEFAULT 0, last_error TEXT, updated_at TEXT NOT NULL)"),
       env.DB.prepare("CREATE TABLE IF NOT EXISTS whatsapp_accounts (business_id TEXT PRIMARY KEY, waba_id TEXT NOT NULL, phone_number_id TEXT NOT NULL UNIQUE, display_phone_number TEXT NOT NULL DEFAULT '', verified_name TEXT NOT NULL DEFAULT '', token_cipher TEXT NOT NULL, token_iv TEXT NOT NULL, token_expires_at TEXT, status TEXT NOT NULL DEFAULT 'connected', last_webhook_at TEXT, updated_at TEXT NOT NULL)"),
       env.DB.prepare("CREATE TABLE IF NOT EXISTS whatsapp_messages (message_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, phone_number_id TEXT NOT NULL, wa_id TEXT NOT NULL, direction TEXT NOT NULL, message_type TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, created_at TEXT NOT NULL)"),
       env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_conversation ON whatsapp_messages(business_id, wa_id, created_at)"),
@@ -631,6 +633,17 @@ async function ensureBusinessWorkerSettings(env, businessId) {
   }
 }
 
+async function recordBusinessWorkerRuntime(env, businessId, metrics) {
+  const timestamp = now();
+  const processed = Math.max(0, Number(metrics && metrics.processed || 0));
+  const failed = Math.max(0, Number(metrics && metrics.failed || 0));
+  const pending = Math.max(0, Number(metrics && metrics.pending || 0));
+  const needsReview = Math.max(0, Number(metrics && metrics.needsReview || 0));
+  const error = txt(metrics && metrics.error || '', 500) || null;
+  await env.DB.prepare("INSERT INTO business_worker_runtime (business_id,last_tick_at,last_success_at,last_error_at,last_error,last_processed_count,last_failed_count,last_pending_count,last_needs_review_count,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(business_id) DO UPDATE SET last_tick_at=excluded.last_tick_at,last_success_at=CASE WHEN excluded.last_error IS NULL THEN excluded.last_tick_at ELSE business_worker_runtime.last_success_at END,last_error_at=CASE WHEN excluded.last_error IS NULL THEN business_worker_runtime.last_error_at ELSE excluded.last_tick_at END,last_error=excluded.last_error,last_processed_count=excluded.last_processed_count,last_failed_count=excluded.last_failed_count,last_pending_count=excluded.last_pending_count,last_needs_review_count=excluded.last_needs_review_count,updated_at=excluded.updated_at")
+    .bind(businessId,timestamp,error?null:timestamp,error?timestamp:null,error,processed,failed,pending,needsReview,timestamp).run();
+}
+
 function businessAgentStub(env, businessId) {
   if (!env.BUSINESS_AGENT) throw new Error('The TWIGA Business Worker is not provisioned yet.');
   return env.BUSINESS_AGENT.get(env.BUSINESS_AGENT.idFromName(businessId));
@@ -650,23 +663,40 @@ async function dispatchBusinessAgent(env, businessId) {
 
 async function dispatchDueBusinessWorkers(env) {
   await ensureBusinessWorkerSchema(env);
-  const due = await env.DB.prepare('SELECT business_id FROM business_worker_settings WHERE enabled = 1 AND next_review_at <= ? ORDER BY next_review_at LIMIT 50').bind(now()).all();
-  const businesses = due.results || [];
-  const outcomes = await Promise.allSettled(businesses.map(async (row) => {
-    const businessId = String(row.business_id);
-    const timestamp = now();
-    const taskId = 'daily-' + businessId + '-' + today();
-    await env.DB.prepare("INSERT OR IGNORE INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'daily_review', 'Daily business review', 'Review recent orders, sales, enquiries and work that may need the owner.', 'pending', 'medium', ?, ?, ?)")
-      .bind(taskId, businessId, timestamp, timestamp, timestamp).run();
-    await env.DB.prepare('UPDATE business_worker_settings SET next_review_at = ?, updated_at = ? WHERE business_id = ? AND enabled = 1')
-      .bind(nextNairobiReviewAt(), timestamp, businessId).run();
-    return await dispatchBusinessAgent(env, businessId);
-  }));
-  const staleBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-  const pending = await env.DB.prepare("SELECT DISTINCT business_id FROM business_worker_tasks WHERE (status = 'pending' AND due_at <= ?) OR (status = 'processing' AND updated_at <= ?) ORDER BY business_id LIMIT 50").bind(now(), staleBefore).all();
-  await Promise.allSettled((pending.results || []).map((row) => dispatchBusinessAgent(env, String(row.business_id))));
-  const failed = outcomes.filter((result) => result.status === 'rejected').length;
-  if (failed) console.error('TWIGA business worker scheduler had failures', {businesses: businesses.length, failed});
+  const startedAt = now();
+  await env.DB.prepare("INSERT INTO business_worker_scheduler (singleton,last_started_at,last_finished_at,last_dispatched_businesses,last_failed_businesses,last_pending_businesses,last_error,updated_at) VALUES (1,?,NULL,0,0,0,NULL,?) ON CONFLICT(singleton) DO UPDATE SET last_started_at=excluded.last_started_at,last_error=NULL,updated_at=excluded.updated_at")
+    .bind(startedAt,startedAt).run();
+  try {
+    const due = await env.DB.prepare('SELECT business_id FROM business_worker_settings WHERE enabled = 1 AND next_review_at <= ? ORDER BY next_review_at LIMIT 50').bind(startedAt).all();
+    const dueBusinesses = due.results || [];
+    for (const row of dueBusinesses) {
+      const businessId = String(row.business_id);
+      const taskId = 'daily-' + businessId + '-' + today();
+      await env.DB.prepare("INSERT OR IGNORE INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'daily_review', 'Daily business review', 'Review recent orders, customers, bookings, stock, payments and open work that have real records.', 'pending', 'medium', ?, ?, ?)")
+        .bind(taskId,businessId,startedAt,startedAt,startedAt).run();
+      await env.DB.prepare('UPDATE business_worker_settings SET next_review_at = ?, updated_at = ? WHERE business_id = ? AND enabled = 1')
+        .bind(nextNairobiReviewAt(),startedAt,businessId).run();
+    }
+    const staleBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const pending = await env.DB.prepare("SELECT DISTINCT business_id FROM business_worker_tasks WHERE (status = 'pending' AND due_at <= ?) OR (status = 'processing' AND updated_at <= ?) ORDER BY CASE WHEN business_id IN (SELECT business_id FROM business_worker_settings WHERE enabled = 1 AND next_review_at >= ?) THEN 0 ELSE 1 END, business_id LIMIT 50")
+      .bind(startedAt,staleBefore,startedAt).all();
+    const businessIds = Array.from(new Set([...(dueBusinesses.map((row) => String(row.business_id))), ...((pending.results || []).map((row) => String(row.business_id)))] )).slice(0,50);
+    const outcomes = await Promise.allSettled(businessIds.map((businessId) => dispatchBusinessAgent(env,businessId)));
+    const failed = outcomes.filter((item) => item.status === 'rejected').length;
+    const processed = outcomes.filter((item) => item.status === 'fulfilled').length;
+    const stillPending = await env.DB.prepare("SELECT COUNT(DISTINCT business_id) AS total FROM business_worker_tasks WHERE status IN ('pending','processing') AND due_at <= ?").bind(now()).first();
+    const finishAt = now();
+    await env.DB.prepare("UPDATE business_worker_scheduler SET last_finished_at=?,last_dispatched_businesses=?,last_failed_businesses=?,last_pending_businesses=?,last_error=?,updated_at=? WHERE singleton=1")
+      .bind(finishAt,processed,failed,Number(stillPending && stillPending.total || 0),failed ? failed + ' business worker dispatch(es) failed during this scheduler tick.' : null,finishAt).run();
+    if (failed) console.error('TWIGA business worker scheduler had failures',{businesses:businessIds.length,failed});
+  } catch (error) {
+    const message = txt(error && error.message || error,500);
+    const finishAt = now();
+    await env.DB.prepare("UPDATE business_worker_scheduler SET last_finished_at=?,last_error=?,updated_at=? WHERE singleton=1")
+      .bind(finishAt,message,finishAt).run().catch(() => {});
+    console.error('[TWIGA Worker scheduler] tick failed',message);
+    throw error;
+  }
 }
 
 async function runBusinessReview(env, businessId, taskId) {
@@ -675,24 +705,47 @@ async function runBusinessReview(env, businessId, taskId) {
   const bizName = profileRow ? profileRow.business_name : 'Business';
   const bizType = profileRow ? profileRow.business_type : 'general';
   const ctx = {biz: {id: businessId, name: bizName, business_type: bizType}, role: 'owner'};
+  await ensureBusinessWorkerSchema(env);
+  await ensureChat33Schema(env);
   const results = await Promise.all([
     ACTIONS.summary(env, ctx, {}),
-    ACTIONS.listOrders(env, ctx, {limit: 30}),
-    ACTIONS.listItems(env, ctx, {})
+    ACTIONS.listOrders(env, ctx, {limit: 100}),
+    ACTIONS.listItems(env, ctx, {}),
+    ACTIONS.listContacts(env, ctx, {limit: 100}),
+    ACTIONS.listEvents(env, ctx, {from: today()}),
+    env.DB.prepare("SELECT ref,date,category,amount,method,notes FROM expenses WHERE business_id=? AND date>=date(?,'-6 days') ORDER BY date DESC LIMIT 100").bind(businessId,today()).all(),
+    env.DB.prepare("SELECT wa_id,direction,message_type,body,status,created_at FROM whatsapp_messages WHERE business_id=? AND created_at>=datetime('now','-1 day') ORDER BY created_at DESC LIMIT 100").bind(businessId).all(),
+    env.DB.prepare("SELECT contact_id,platform,name,username,channel_name,last_message_at,updated_at FROM chat33_social_contacts WHERE business_id=? ORDER BY COALESCE(last_message_at,updated_at) DESC LIMIT 100").bind(businessId).all(),
+    env.DB.prepare("SELECT slot,platform,direction,message_text,message_sent_at,created_at,conversation_id,contact_id FROM chat33_social_messages WHERE business_id=? AND created_at>=datetime('now','-1 day') ORDER BY COALESCE(message_sent_at,created_at) DESC LIMIT 100").bind(businessId).all(),
+    env.DB.prepare("SELECT task_type,title,detail,status,priority,due_at,created_at FROM business_worker_tasks WHERE business_id=? AND status IN ('pending','processing','needs_review','failed') ORDER BY created_at DESC LIMIT 100").bind(businessId).all(),
+    listIntegrationsD1(env,businessId),
+    env.DB.prepare("SELECT google_email,granted_scopes,last_sync_at,updated_at FROM google_business_connections WHERE business_id=?").bind(businessId).first(),
+    env.DB.prepare("SELECT display_phone_number,verified_name,status,last_webhook_at,updated_at FROM whatsapp_accounts WHERE business_id=?").bind(businessId).first()
   ]);
-  const summary = results[0];
-  const orders = results[1];
-  const items = results[2];
-  const recentOrders = (orders.orders || []).slice(0, 30);
-  const catalogue = (items.items || []).slice(0, 80);
+  const summary=results[0],orders=results[1],items=results[2];
+  const recentOrders=(orders.orders||[]).slice(0,100);
+  const catalogue=(items.items||[]).slice(0,100);
+  const contacts=results[3].contacts||[];
+  const events=results[4].events||[];
+  const expenses=results[5].results||[];
+  const whatsappMessages=results[6].results||[];
+  const socialContacts=results[7].results||[];
+  const socialMessages=results[8].results||[];
+  const existingWorkerTasks=results[9].results||[];
+  const connectedTools=(results[10]||[]).map(item=>({provider:item.provider_slug,name:item.display_name,type:item.integration_type,status:item.status}));
+  const googleConnection=results[11] ? {connected:true,email:results[11].google_email,grantedScopes:results[11].granted_scopes,lastSyncAt:results[11].last_sync_at} : {connected:false};
+  const whatsappConnection=results[12] ? {connected:results[12].status==='connected',phoneNumber:results[12].display_phone_number,verifiedName:results[12].verified_name,lastWebhookAt:results[12].last_webhook_at} : {connected:false};
   const ordersNeedingOwnerReview = recentOrders.filter((order) => {
     const status = String(order.Status || '').toLowerCase();
     return !['completed', 'cancelled', 'paid', 'quote'].includes(status) || Number(order.Paid || 0) < Number(order.Total || 0);
   }).slice(0, 20);
-  const unpaidOrders = recentOrders.filter((order) => Number(order.Paid || 0) < Number(order.Total || 0) && !['cancelled', 'quote'].includes(String(order.Status || '').toLowerCase())).slice(0, 20);
-  const appointments = recentOrders.filter((order) => String(order.Type || '').toLowerCase() === 'appointment' && !['completed', 'cancelled'].includes(String(order.Status || '').toLowerCase())).slice(0, 15);
+  const unpaidOrders = recentOrders.filter((order) => Number(order.Paid || 0) < Number(order.Total || 0) && !['cancelled', 'quote'].includes(String(order.Status || '').toLowerCase())).slice(0, 50);
+  const appointments = recentOrders.filter((order) => String(order.Type || '').toLowerCase() === 'appointment' && !['completed', 'cancelled'].includes(String(order.Status || '').toLowerCase())).slice(0, 50);
   const zeroStockItems = catalogue.filter((item) => Number(item.Active) !== 0 && Number(item.TrackStock) === 1 && Number(item.Stock || 0) <= 0);
-  const deliveryRequests = recentOrders.filter((order) => /deliver|delivery|drop.?off/i.test(String(order.Notes || ''))).slice(0, 15);
+  const lowStockItems = catalogue.filter((item) => Number(item.Active)!==0 && Number(item.TrackStock)===1 && Number(item.Stock||0)>0 && Number(item.Stock||0)<=3);
+  const deliveryRequests = recentOrders.filter((order) => /deliver|delivery|drop.?off/i.test(String(order.Notes || ''))).slice(0, 50);
+  const inboundWhatsApp = whatsappMessages.filter(row=>row.direction==='inbound');
+  const inboundSocial = socialMessages.filter(row=>row.direction==='inbound');
   const data = {
     business: {name: bizName, type: bizType},
     profile: {
@@ -709,19 +762,32 @@ async function runBusinessReview(env, businessId, taskId) {
     appointments,
     deliveryRequests,
     zeroStockItems,
-    catalogue
+    lowStockItems,
+    catalogue,
+    contacts,
+    upcomingEvents:events.slice(0,100),
+    lastSevenDaysExpenses:expenses,
+    recentWhatsAppMessages:whatsappMessages,
+    inboundWhatsAppCount:inboundWhatsApp.length,
+    recentSocialMessages:socialMessages,
+    inboundSocialMessageCount:inboundSocial.length,
+    socialContacts,
+    connectedTools,
+    googleConnection,
+    whatsappConnection,
+    existingWorkerTasks
   };
   const system = [
     'You are TWIGA Business Worker. Produce a concise, evidence-based owner operations review for one Kenyan business.',
     'Use only the supplied business data. Never invent a customer, order, price, payment, delivery request, stock figure, missed call, appointment or deadline.',
-    'Create useful owner/staff to-do items from real evidence: review and prepare open orders; verify unpaid balances before dispatch; check delivery details only when the order notes explicitly mention delivery; confirm appointment details and staff availability; resolve zero-stock catalogue items before selling them; and check any other clearly evidenced operational issue.',
+    'Review all supplied business areas: orders and unpaid balances; appointment bookings and upcoming calendar events; stock and low-stock items; customers and contacts; delivery notes; weekly expenses; recent WhatsApp conversations and handovers; Chat33 social inbox messages and social contacts; connected Google/WhatsApp/business services; and existing Worker queue backlogs or failures. Create specific tasks only when the supplied records support a real next action.',
     'For every order task, include its real order ID and customer when available. For stock tasks, include the exact catalogue item name. For appointment tasks, include the recorded service/date/time only when supplied.',
     'Prioritise high for urgent customer commitments or blocked orders, medium for outstanding fulfilment, bookings or payment checks, and low for routine stock and follow-up planning. Do not invent due dates.',
-    'Tasks are recommendations for the business owner or staff to review. Do not send messages, place calls, charge customers, change prices, cancel bookings, purchase stock, dispatch a delivery or claim work was completed.',
-    'Return one JSON object only: {"headline":"short status","summary":"2-4 concise sentences","actions":[{"title":"short, specific owner task","detail":"what the owner/staff should check and the evidence behind it","priority":"high|medium|low"}]}. Maximum 10 actions. Return fewer rather than inventing work.',
+    'Tasks are recommendations for the business owner or staff to review. Use existingWorkerTasks to avoid creating duplicates for work already pending, processing, awaiting review or failed. Do not create a repeat task unless the supplied records show a meaningful change. Do not send messages, place calls, charge customers, change prices, cancel bookings, purchase stock, dispatch deliveries, modify staff schedules, send social posts, or claim work was completed. A connected service is not permission to perform an external side effect.',
+    'Return one JSON object only: {"headline":"short status","summary":"2-4 concise sentences","actions":[{"title":"short, specific owner task","detail":"what the owner/staff should check and the evidence behind it","priority":"high|medium|low"}]}. You may return up to 50 distinct actions when the records support them. Group duplicate issues and return fewer rather than inventing work.',
     'Business facts (JSON): ' + JSON.stringify(data)
   ].join('\n\n');
-  const raw = await runBusinessAI(env, businessId, [{role: 'system', content: system}, {role: 'user', content: 'Review the real business records and prepare the owner action list.'}], {max_tokens: 1600});
+  const raw = await runBusinessAI(env, businessId, [{role: 'system', content: system}, {role: 'user', content: 'Review the real business records and prepare the owner action list.'}], {max_tokens: 4096});
   let parsed = null;
   try {
     let candidate = String(raw).trim();
@@ -732,7 +798,7 @@ async function runBusinessReview(env, businessId, taskId) {
   } catch (_) {}
   const headline = txt(parsed && parsed.headline ? parsed.headline : 'Daily review completed', 120);
   const reviewSummary = txt(parsed && parsed.summary ? parsed.summary : 'TWIGA checked the latest business records. Review the pending items below before taking action.', 1000);
-  const actions = Array.isArray(parsed && parsed.actions) ? parsed.actions.slice(0, 10) : [];
+  const actions = Array.isArray(parsed && parsed.actions) ? parsed.actions.slice(0, 50) : [];
   const stamp = now();
   const newTasks = actions.map((action, index) => {
     const title = txt(action && action.title, 140);
@@ -741,7 +807,7 @@ async function runBusinessReview(env, businessId, taskId) {
       id: 'own-' + taskId + '-' + index,
       title: title,
       detail: txt(action && action.detail, 800),
-      priority: String(action && action.priority || '').toLowerCase() === 'high' ? 'high' : String(action && action.priority || '').toLowerCase() === 'low' ? 'low' : 'medium'
+      priority: String(action && action.priority || '').toLowerCase() === 'urgent' ? 'urgent' : String(action && action.priority || '').toLowerCase() === 'high' ? 'high' : String(action && action.priority || '').toLowerCase() === 'low' ? 'low' : 'medium'
     };
   }).filter(Boolean);
   if (newTasks.length) {
@@ -763,7 +829,7 @@ async function runBusinessAgentTasks(env, businessId) {
   const staleBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   await env.DB.prepare("UPDATE business_worker_tasks SET status = 'pending', updated_at = ? WHERE business_id = ? AND status = 'processing' AND updated_at <= ?")
     .bind(now(), businessId, staleBefore).run();
-  const tasks = await env.DB.prepare("SELECT id, task_type, detail FROM business_worker_tasks WHERE business_id = ? AND status = 'pending' AND due_at <= ? ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'normal' THEN 1 ELSE 2 END, due_at LIMIT 10")
+  const tasks = await env.DB.prepare("SELECT id, task_type, detail FROM business_worker_tasks WHERE business_id = ? AND status = 'pending' AND due_at <= ? ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END, due_at LIMIT 50")
     .bind(businessId, now()).all();
   const outcomes = [];
   for (const task of tasks.results || []) {
@@ -788,7 +854,17 @@ async function runBusinessAgentTasks(env, businessId) {
       outcomes.push({id: task.id, ok: false, error: detail});
     }
   }
-  return {ok: true, businessId: businessId, processed: outcomes.length, outcomes: outcomes};
+  const counts = await env.DB.prepare("SELECT SUM(CASE WHEN status='pending' AND due_at<=? THEN 1 ELSE 0 END) AS pending,SUM(CASE WHEN status='needs_review' THEN 1 ELSE 0 END) AS needs_review,SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM business_worker_tasks WHERE business_id=?")
+    .bind(now(),businessId).first();
+  const firstError = outcomes.find((item) => !item.ok);
+  await recordBusinessWorkerRuntime(env,businessId,{
+    processed:outcomes.length,
+    failed:Number(counts && counts.failed || 0),
+    pending:Number(counts && counts.pending || 0),
+    needsReview:Number(counts && counts.needs_review || 0),
+    error:firstError ? firstError.error : null
+  });
+  return {ok: true, businessId: businessId, processed: outcomes.length, remainingPending:Number(counts && counts.pending || 0), failed:Number(counts && counts.failed || 0), needsReview:Number(counts && counts.needs_review || 0), outcomes: outcomes};
 }
 
 async function aiWorker(req, env) {
@@ -800,26 +876,45 @@ async function aiWorker(req, env) {
     const ctx = await authorize(env, token, body.business_id);
     await ensureUsageSchema(env);
     await ensureBusinessWorkerSchema(env);
-    // Queue visibility must not depend on reading the business profile from Supabase.
-    // Sync only when a review is requested, and keep the review runnable if that sync fails.
-    if (body.action === 'run_review') {
+    // Profile sync is best-effort: a Supabase profile read must never hide the D1 queue.
+    let profileSynced = false, profileSyncError = '';
+    if (['provision','overview','run_review'].includes(String(body.action || ''))) {
       try {
-        await syncBusinessWorkerProfile(env, ctx, token);
+        await syncBusinessWorkerProfile(env,ctx,token);
+        profileSynced = true;
       } catch (profileError) {
-        console.warn('[TWIGA Worker] profile sync skipped; continuing with saved business data', txt(profileError && profileError.message || profileError, 180));
+        profileSyncError = txt(profileError && profileError.message || profileError,180);
+        console.warn('[TWIGA Worker] profile sync skipped; continuing with saved business data',profileSyncError);
       }
     }
-    await ensureBusinessWorkerSettings(env, ctx.biz.id);
+    await ensureBusinessWorkerSettings(env,ctx.biz.id);
+    if (body.action === 'provision') {
+      if (!['owner','admin'].includes(String(ctx.role))) return json({ok:false,error:'Only the business owner or administrator can provision the Worker.'},403);
+      const settings = await env.DB.prepare('SELECT enabled,next_review_at FROM business_worker_settings WHERE business_id=?').bind(ctx.biz.id).first();
+      return json({ok:true,provisioned:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,worker:{enabled:Number(settings && settings.enabled !== undefined ? settings.enabled : 1)===1,nextReviewAt:settings && settings.next_review_at || null},message:'The business Worker is provisioned and its daily review schedule is registered.'});
+    }
     if (body.action === 'overview') {
       const result = await Promise.all([
-        env.DB.prepare('SELECT enabled, next_review_at, last_run_at, last_review_at FROM business_worker_settings WHERE business_id = ?').bind(ctx.biz.id).first(),
-        env.DB.prepare("SELECT id, task_type, title, detail, status, priority, due_at, created_at FROM business_worker_tasks WHERE business_id = ? AND status IN ('needs_review','pending','failed') ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'normal' THEN 1 ELSE 2 END, due_at ASC, created_at DESC LIMIT 30").bind(ctx.biz.id).all(),
-        env.DB.prepare('SELECT id, notification_type, title, body, priority, created_at FROM business_worker_notifications WHERE business_id = ? ORDER BY created_at DESC LIMIT 4').bind(ctx.biz.id).all(),
-        env.DB.prepare("SELECT SUM(CASE WHEN status = 'needs_review' THEN 1 ELSE 0 END) AS needs_review, SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed FROM business_worker_tasks WHERE business_id = ?").bind(ctx.biz.id).first()
+        env.DB.prepare('SELECT enabled,next_review_at,last_run_at,last_review_at FROM business_worker_settings WHERE business_id=?').bind(ctx.biz.id).first(),
+        env.DB.prepare("SELECT id,task_type,title,detail,status,priority,due_at,created_at FROM business_worker_tasks WHERE business_id=? AND status IN ('needs_review','pending','processing','failed') ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END,due_at ASC,created_at DESC LIMIT 50").bind(ctx.biz.id).all(),
+        env.DB.prepare('SELECT id,notification_type,title,body,priority,created_at FROM business_worker_notifications WHERE business_id=? ORDER BY created_at DESC LIMIT 6').bind(ctx.biz.id).all(),
+        env.DB.prepare("SELECT SUM(CASE WHEN status='needs_review' THEN 1 ELSE 0 END) AS needs_review,SUM(CASE WHEN status='pending' AND due_at<=? THEN 1 ELSE 0 END) AS pending,SUM(CASE WHEN status='processing' THEN 1 ELSE 0 END) AS processing,SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM business_worker_tasks WHERE business_id=?").bind(now(),ctx.biz.id).first(),
+        env.DB.prepare('SELECT last_tick_at,last_success_at,last_error_at,last_error,last_processed_count,last_failed_count,last_pending_count,last_needs_review_count FROM business_worker_runtime WHERE business_id=?').bind(ctx.biz.id).first(),
+        env.DB.prepare('SELECT last_started_at,last_finished_at,last_dispatched_businesses,last_failed_businesses,last_pending_businesses,last_error FROM business_worker_scheduler WHERE singleton=1').first()
       ]);
-      const settings = result[0] || {};
-      const counts = result[3] || {};
-      return json({ok: true, worker: {enabled: Number(settings.enabled === undefined ? 1 : settings.enabled) === 1, schedule: 'Queue checked every minute · scheduled owner review at 08:00 Africa/Nairobi', nextReviewAt: settings.next_review_at || null, lastRunAt: settings.last_run_at || null, lastReviewAt: settings.last_review_at || null}, tasks: result[1].results || [], notifications: result[2].results || [], counts: {needsReview: Number(counts.needs_review || 0), failed: Number(counts.failed || 0)}});
+      const settings=result[0] || {},counts=result[3] || {},runtime=result[4] || {},scheduler=result[5] || {};
+      return json({ok:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,
+        worker:{enabled:Number(settings.enabled===undefined?1:settings.enabled)===1,schedule:'Queue check every minute · up to 50 businesses and 50 queued tasks per business tick · daily owner review 08:00 Africa/Nairobi',nextReviewAt:settings.next_review_at || null,lastRunAt:settings.last_run_at || null,lastReviewAt:settings.last_review_at || null,
+          lastTickAt:runtime.last_tick_at || null,lastSuccessAt:runtime.last_success_at || null,lastErrorAt:runtime.last_error_at || null,lastError:runtime.last_error || null,lastProcessedCount:Number(runtime.last_processed_count || 0),lastFailedCount:Number(runtime.last_failed_count || 0),
+          schedulerLastStartedAt:scheduler.last_started_at || null,schedulerLastFinishedAt:scheduler.last_finished_at || null,schedulerLastDispatchedBusinesses:Number(scheduler.last_dispatched_businesses || 0),schedulerLastFailedBusinesses:Number(scheduler.last_failed_businesses || 0),schedulerLastPendingBusinesses:Number(scheduler.last_pending_businesses || 0),schedulerLastError:scheduler.last_error || null},
+        tasks:result[1].results || [],notifications:result[2].results || [],
+        counts:{needsReview:Number(counts.needs_review || 0),pending:Number(counts.pending || 0),processing:Number(counts.processing || 0),failed:Number(counts.failed || 0)}
+      });
+    }
+    if (body.action === 'process_queue') {
+      if (!['owner','admin'].includes(String(ctx.role))) return json({ok:false,error:'Only a business owner or administrator can process the Worker queue.'},403);
+      const result = await dispatchBusinessAgent(env,ctx.biz.id);
+      return json({ok:true,result:result});
     }
     if (body.action === 'run_review') {
       if (['owner','admin'].indexOf(String(ctx.role)) < 0) return json({ok: false, error: 'Only a business owner or administrator can run the Worker review.'}, 403);
