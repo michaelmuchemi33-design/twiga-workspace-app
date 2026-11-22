@@ -78,6 +78,10 @@ export default {
     if (path === '/internal/integrations' && req.method === 'POST') return internalIntegrationRoute(req, env, 'integrations');
     if (path === '/internal/google-connection' && req.method === 'POST') return internalIntegrationRoute(req, env, 'google');
     if (path === '/integrations' && req.method === 'POST') return businessIntegrationsRoute(req, env);
+    const aisensyActionMatch = path.match(/^\/aisensy\/([0-9a-f-]{36})\/action$/i);
+    if (aisensyActionMatch && req.method === 'POST') return aisensyActionRoute(req, env, aisensyActionMatch[1]);
+    const aisensyHandoffMatch = path.match(/^\/aisensy\/([0-9a-f-]{36})\/handoff$/i);
+    if (aisensyHandoffMatch && req.method === 'POST') return aisensyHandoffRoute(req, env, aisensyHandoffMatch[1]);
     if (path === '/whatsapp/webhook' && req.method === 'GET') return verifyMetaWebhook(req, env);
     if (path === '/whatsapp/webhook' && req.method === 'POST') return whatsappWebhook(req, env, ctx);
     if (path === '/whatsapp/config' && req.method === 'GET') return whatsappConfig(req, env);
@@ -1414,14 +1418,25 @@ async function dispatchOwnerWhatsAppOutbox(env, businessId, limit) {
     try {
       const account = await env.DB.prepare("SELECT business_id,phone_number_id,display_phone_number,verified_name,token_cipher,token_iv,token_expires_at,status FROM whatsapp_accounts WHERE business_id=? AND status='connected'")
         .bind(row.business_id).first();
-      if (!account) throw new Error('The business official WhatsApp connection is not active.');
+      if (!account) {
+        const sent = await sendAiSensyApiCampaign(env,row.business_id,row.phone_e164,'TWIGA',[row.title,row.body]);
+        const stamp = now();
+        const messageId = txt(sent && (sent.messageId || sent.message_id || sent.id) || 'aisensy-owner-'+crypto.randomUUID(),180);
+        await env.DB.prepare("UPDATE business_worker_whatsapp_outbox SET status='sent',attempts=attempts+1,last_error=NULL,message_id=?,updated_at=? WHERE id=?")
+          .bind(messageId,stamp,row.id).run();
+        results.push({id:row.id,ok:true,provider:'aisensy',messageId});
+        continue;
+      }
       const conversation = await env.DB.prepare('SELECT last_inbound_at FROM whatsapp_conversations WHERE business_id=? AND wa_id=?')
         .bind(row.business_id,row.phone_e164).first();
       const lastInbound = conversation && conversation.last_inbound_at ? Date.parse(conversation.last_inbound_at) : 0;
       if (!lastInbound || !Number.isFinite(lastInbound) || Date.now()-lastInbound >= 24*60*60*1000) {
-        await env.DB.prepare("UPDATE business_worker_whatsapp_outbox SET status='blocked',last_error=?,updated_at=? WHERE id=?")
-          .bind('Waiting for the owner to message the connected business WhatsApp number. Send START to open the 24-hour reply window.',now(),row.id).run();
-        results.push({id:row.id,ok:false,blocked:true});
+        const sent = await sendAiSensyApiCampaign(env,row.business_id,row.phone_e164,'TWIGA',[row.title,row.body]);
+        const stamp = now();
+        const messageId = txt(sent && (sent.messageId || sent.message_id || sent.id) || 'aisensy-owner-'+crypto.randomUUID(),180);
+        await env.DB.prepare("UPDATE business_worker_whatsapp_outbox SET status='sent',attempts=attempts+1,last_error=NULL,message_id=?,updated_at=? WHERE id=?")
+          .bind(messageId,stamp,row.id).run();
+        results.push({id:row.id,ok:true,provider:'aisensy',messageId});
         continue;
       }
       const token = await decryptWhatsAppToken(env,account);
@@ -1963,7 +1978,172 @@ async function validateBusinessIntegration(provider,credentials,model,fromEmail,
     if(!r.ok)throw new Error(r.status===401?'SautiKit rejected this API key.':'SautiKit validation failed (HTTP '+r.status+').');
     return {type:'voice',config:{},message:'SautiKit API key validated.'};
   }
+  if(provider==='aisensy'){
+    if(txt(credentials.api_key,4000).length<12)throw new Error('Enter the AiSensy API campaign key from Developer settings.');
+    return {type:'messaging',config:{channel:'whatsapp',provider:'aisensy'},message:'AiSensy API key format accepted and stored encrypted. Configure and test the agent action in AiSensy before going live.'};
+  }
   return {type:'custom_api',config:{purpose:txt(purpose,500)},message:'Credentials will be encrypted. A dedicated connector is required before TWIGA can execute this custom tool.'};
+}
+
+function constantTimeSecretEqual(provided, expected) {
+  const a=String(provided||''),b=String(expected||'');
+  if(!a||!b||a.length!==b.length)return false;
+  let mismatch=0;for(let i=0;i<a.length;i++)mismatch|=a.charCodeAt(i)^b.charCodeAt(i);
+  return mismatch===0;
+}
+async function authenticateAiSensyRequest(req,env,businessId) {
+  if(!/^[0-9a-f-]{36}$/i.test(String(businessId||'')))return null;
+  const integration=await getIntegrationD1(env,businessId,'aisensy');
+  if(!integration||!integration.credentials||!integration.credentials.action_token)return null;
+  const token=String(req.headers.get('Authorization')||'').replace(/^Bearer\s+/i,'').trim();
+  return constantTimeSecretEqual(token,integration.credentials.action_token)?integration:null;
+}
+function normalizeAiSensyPhone(value) {try{return normalizeWhatsAppPhone(value);}catch(_){return '';}}
+function aiSensyIsOwner(senderPhone,ownerPhone) {
+  const sender=normalizeAiSensyPhone(senderPhone),owner=normalizeAiSensyPhone(ownerPhone);
+  return !!sender&&!!owner&&sender===owner;
+}
+function aiSensyDateRange(period) {
+  const end=today(),date=new Date(end+'T00:00:00Z');let start=new Date(date.getTime());
+  if(period==='week')start.setUTCDate(start.getUTCDate()-((date.getUTCDay()+6)%7));
+  else if(period==='month')start.setUTCDate(1);
+  return {start:start.toISOString().slice(0,10),end};
+}
+async function aiSensySalesReport(env,businessId,period) {
+  const range=aiSensyDateRange(['today','week','month'].includes(period)?period:'today');
+  const rows=await env.DB.prepare("SELECT date,COUNT(*) AS orders,SUM(total) AS sales,SUM(paid) AS paid FROM orders WHERE business_id=? AND date>=? AND date<=? AND lower(status) NOT IN ('cancelled','quote') GROUP BY date ORDER BY date")
+    .bind(businessId,range.start,range.end).all();
+  const keyed=new Map((rows.results||[]).map(row=>[String(row.date),{orders:Number(row.orders||0),sales:Number(row.sales||0),paid:Number(row.paid||0)}]));
+  const labels=[],sales=[],paid=[],orders=[],cursor=new Date(range.start+'T00:00:00Z'),last=new Date(range.end+'T00:00:00Z');
+  while(cursor<=last&&labels.length<32){
+    const label=cursor.toISOString().slice(0,10),entry=keyed.get(label)||{orders:0,sales:0,paid:0};
+    labels.push(label);sales.push(Math.round(entry.sales*100)/100);paid.push(Math.round(entry.paid*100)/100);orders.push(entry.orders);cursor.setUTCDate(cursor.getUTCDate()+1);
+  }
+  const totalSales=sales.reduce((sum,value)=>sum+value,0),totalPaid=paid.reduce((sum,value)=>sum+value,0),totalOrders=orders.reduce((sum,value)=>sum+value,0);
+  return {ok:true,period,startDate:range.start,endDate:range.end,currency:'KES',
+    totals:{sales:Math.round(totalSales*100)/100,paid:Math.round(totalPaid*100)/100,outstanding:Math.round((totalSales-totalPaid)*100)/100,orders:totalOrders},
+    chart:{type:'line',xKey:'date',series:[{name:'Sales',data:sales},{name:'Paid',data:paid}],labels},
+    daily:labels.map((date,index)=>({date,orders:orders[index],sales:sales[index],paid:paid[index],outstanding:Math.round((sales[index]-paid[index])*100)/100})),
+    dashboardUrl:'https://app.twiga.co.ke/#analytics'};
+}
+async function aiSensyCheckAppointment(env,businessId,args) {
+  const date=txt(args.date,10),time=txt(args.time,5);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time))throw new Error('Use a valid date and 24-hour time in Kenya.');
+  const start=new Date(date+'T'+time+':00+03:00');
+  if(!Number.isFinite(start.getTime())||start.getTime()<=Date.now())return {available:false,reason:'That appointment time has already passed.'};
+  const duration=Math.min(180,Math.max(15,Math.round(Number(args.duration_minutes||args.durationMinutes)||30))),end=new Date(start.getTime()+duration*60000);
+  const dayStart=new Date(date+'T00:00:00+03:00').toISOString(),dayEnd=new Date(date+'T23:59:59+03:00').toISOString();
+  const events=await env.DB.prepare('SELECT title,start_at,end_at FROM events WHERE business_id=? AND start_at>=? AND start_at<?').bind(businessId,dayStart,dayEnd).all();
+  for(const event of events.results||[]){const oldStart=new Date(event.start_at),oldEnd=event.end_at?new Date(event.end_at):new Date(oldStart.getTime()+30*60000);if(oldStart<end&&oldEnd>start)return {available:false,reason:'That time overlaps an existing TWIGA calendar event.'};}
+  const bookings=await env.DB.prepare("SELECT order_id,notes FROM orders WHERE business_id=? AND type='Appointment' AND date=? AND status<>'Cancelled'").bind(businessId,date).all();
+  for(const booking of bookings.results||[]){const match=String(booking.notes||'').match(/\b([01]\d|2[0-3]):[0-5]\d\b/);if(!match)return {available:false,reason:'There is an appointment that day without a recorded time. Staff must confirm availability.'};const oldStart=new Date(date+'T'+match[0]+':00+03:00'),oldEnd=new Date(oldStart.getTime()+30*60000);if(oldStart<end&&oldEnd>start)return {available:false,reason:'That time overlaps an existing appointment.'};}
+  return {available:true,date,time,durationMinutes:duration};
+}
+async function aiSensyBookAppointment(env,ctx,args,requestId) {
+  const customerName=txt(args.customer_name||args.customerName,120),customerPhone=txt(args.customer_phone||args.customerPhone,30),serviceItemId=txt(args.service_item_id||args.serviceItemId,40);
+  if(!customerName||!normalizeAiSensyPhone(customerPhone)||!serviceItemId)throw new Error('Customer name, WhatsApp number and an active service are required.');
+  const availability=await aiSensyCheckAppointment(env,ctx.biz.id,args);if(!availability.available)throw new Error(availability.reason);
+  const catalog=(await ACTIONS.listItems(env,ctx,{})).items||[];
+  const service=catalog.find(item=>String(item.ItemId)===serviceItemId&&(Number(item.Active)===1||item.Active===true)&&String(item.Kind).toLowerCase()==='service');
+  if(!service)throw new Error('Choose an active service from this business catalogue.');
+  const request=txt(requestId,120)||crypto.randomUUID(),txn=('aisensy-appt-'+safeToolKey(request)).slice(0,100);
+  const order=await ACTIONS.createOrder(env,ctx,{type:'Appointment',customer:customerName,phone:customerPhone,method:'Booking',paid:false,date:availability.date,notes:'Time: '+availability.time+' ('+availability.durationMinutes+' minutes). Booked via AiSensy WhatsApp.',source:'ai_receptionist',items:[{itemId:service.ItemId,name:service.Name,qty:1,unitPrice:Number(service.Price||0),kind:'service'}]},txn);
+  const eventId=('AIS-'+safeToolKey(request)).slice(0,80),start=new Date(availability.date+'T'+availability.time+':00+03:00'),end=new Date(start.getTime()+availability.durationMinutes*60000);
+  await ACTIONS.saveEvents(env,ctx,{events:[{id:eventId,title:service.Name+' - '+customerName,start:start.toISOString(),end:end.toISOString(),notes:'Customer: '+customerName+'; phone: '+customerPhone+'; order: '+order.orderId+'; source: AiSensy WhatsApp'}]});
+  await ACTIONS.updateOrder(env,ctx,{orderId:order.orderId,status:'Confirmed'},txn+'-confirm');
+  await aiSaveContact(env,ctx,customerName,customerPhone);
+  return {ok:true,appointmentId:eventId,orderId:order.orderId,service:service.Name,date:availability.date,time:availability.time,total:order.total,currency:'KES',status:'Confirmed'};
+}
+async function sendAiSensyApiCampaign(env,businessId,destination,userName,templateParams) {
+  const connection=await getIntegrationD1(env,businessId,'aisensy');
+  if(!connection)throw new Error('AiSensy is not connected for this business.');
+  const apiKey=txt(connection.credentials&&connection.credentials.api_key,4000),config=JSON.parse(connection.row.config_json||'{}'),campaignName=txt(config.campaign_name,120);
+  if(!apiKey||!campaignName)throw new Error('Configure an AiSensy live API campaign with an approved two-variable owner-alert template first.');
+  const response=await fetch('https://backend.aisensy.com/campaign/t1/api/v2',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({apiKey,campaignName,destination:String(destination||'').replace(/[^0-9]/g,''),userName:txt(userName||'TWIGA',80),templateParams:(Array.isArray(templateParams)?templateParams:[]).slice(0,2).map(value=>txt(value,1000))}),signal:AbortSignal.timeout(20000)});
+  const result=await response.json().catch(()=>({}));
+  if(!response.ok||result.success===false||String(result.status||'').toLowerCase()==='error')throw new Error('AiSensy campaign send failed: '+txt(result.message||result.error||'HTTP '+response.status,180));
+  return result;
+}
+async function aisensyActionRoute(req,env,businessId) {
+  try{
+    const raw=await req.text();if(raw.length>30000)return json({ok:false,error:'Action request is too large.'},413);
+    let body={};try{body=JSON.parse(raw||'{}');}catch(_){return json({ok:false,error:'Invalid JSON action request.'},400);}
+    const integration=await authenticateAiSensyRequest(req,env,businessId);
+    if(!integration)return json({ok:false,error:'AiSensy action authentication failed. Check the business action token.'},401);
+    await ensureBusinessWorkerSchema(env);await ensureUsageSchema(env);
+    const profile=await env.DB.prepare('SELECT business_name,business_type,profile_json FROM business_worker_profiles WHERE business_id=?').bind(businessId).first();
+    const ctx={biz:{id:businessId,name:profile&&profile.business_name||'Business',business_type:profile&&profile.business_type||'general'},role:'owner'};
+    const operation=txt(body.operation||body.action||body.task,60).toLowerCase().replace(/[^a-z0-9_-]/g,'_');
+    const senderPhone=txt(body.sender_phone||body.contact_phone||body.from,40);
+    const owner=await env.DB.prepare('SELECT phone_e164,enabled FROM business_worker_owner_contacts WHERE business_id=?').bind(businessId).first();
+    const isOwner=!!(owner&&Number(owner.enabled)===1&&aiSensyIsOwner(senderPhone,owner.phone_e164));
+    const requireOwner=()=>{if(!isOwner)throw new Error('This report or management command is available only to the registered business owner.');};
+    if(operation==='get_business_info'||operation==='business_info'){
+      const saved=profile?JSON.parse(profile.profile_json||'{}'):{};
+      return json({ok:true,business:ctx.biz,summary:txt(saved.business_summary||saved.what_they_do||saved.what_they_sell,1200),productsAndServices:txt(saved.products_and_services||saved.what_they_sell,1000),openingHours:txt(saved.opening_hours,400),serviceArea:txt(saved.service_area,300),faq:txt(saved.frequently_asked_questions,1200)});
+    }
+    if(operation==='list_products'||operation==='catalogue')return json({ok:true,...await aiListProducts(env,ctx),currency:'KES'});
+    if(operation==='lookup_order'||operation==='order_status'){
+      const orderId=txt(body.order_id||body.orderId,50),customerPhone=normalizeAiSensyPhone(body.customer_phone||body.customerPhone);
+      if(!orderId||!customerPhone)throw new Error('Provide the order reference and the WhatsApp phone number used for the order.');
+      const order=await env.DB.prepare('SELECT order_id,customer,phone,type,status,total,paid,date,notes,created_at FROM orders WHERE business_id=? AND order_id=?').bind(businessId,orderId).first();
+      if(!order||normalizeAiSensyPhone(order.phone)!==customerPhone)return json({ok:false,error:'We could not find an order matching that reference and WhatsApp number.'},404);
+      return json({ok:true,order:{orderId:order.order_id,customer:order.customer,type:order.type,status:order.status,total:Number(order.total||0),paid:Number(order.paid||0),outstanding:Math.max(0,Number(order.total||0)-Number(order.paid||0)),date:order.date,notes:txt(order.notes,250)},currency:'KES'});
+    }
+    if(operation==='sales_report'||operation==='dashboard_chart'||operation==='owner_report'){
+      requireOwner();const period=txt(body.period,20).toLowerCase();
+      return json(Object.assign(await aiSensySalesReport(env,businessId,['today','week','month'].includes(period)?period:'today'),{ownerVerified:true}));
+    }
+    if(operation==='owner_summary'||operation==='worker_status'||operation==='list_owner_tasks'){
+      requireOwner();
+      const [report,tasks,counts,stock]=await Promise.all([
+        aiSensySalesReport(env,businessId,txt(body.period,20).toLowerCase()==='week'?'week':'today'),
+        env.DB.prepare("SELECT id,title,detail,status,priority,due_at FROM business_worker_tasks WHERE business_id=? AND status IN ('needs_review','pending','processing','failed') ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,created_at DESC LIMIT 20").bind(businessId).all(),
+        env.DB.prepare("SELECT SUM(CASE WHEN status='needs_review' THEN 1 ELSE 0 END) AS review,SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM business_worker_tasks WHERE business_id=?").bind(businessId).first(),
+        env.DB.prepare('SELECT name,stock FROM items WHERE business_id=? AND active=1 AND track_stock=1 AND stock<=3 ORDER BY stock LIMIT 20').bind(businessId).all()
+      ]);
+      return json({ok:true,ownerVerified:true,report,worker:{counts:{needsReview:Number(counts&&counts.review||0),pending:Number(counts&&counts.pending||0),failed:Number(counts&&counts.failed||0)},tasks:tasks.results||[]},lowStock:stock.results||[]});
+    }
+    if(operation==='create_order'||operation==='save_order'){
+      if(!(body.confirmed===true||String(body.confirmed).toLowerCase()==='true'))throw new Error('Do not create the order until the customer has confirmed the complete order summary.');
+      let items=body.items;if(typeof items==='string'){try{items=JSON.parse(items);}catch(_){items=[];}}
+      if(!Array.isArray(items)||!items.length)throw new Error('Provide one or more catalogue item IDs and quantities.');
+      const customerName=txt(body.customer_name||body.customerName,120),customerPhone=txt(body.customer_phone||body.customerPhone,30);
+      if(!customerName||!normalizeAiSensyPhone(customerPhone))throw new Error('Customer name and a valid customer WhatsApp number are required.');
+      const result=await aiCreateOrder(env,ctx,{customerName,customerPhone,items,notes:txt(body.notes,250)},txt(body.request_id,120)||crypto.randomUUID(),'aisensy-order');
+      return json(Object.assign({ok:true,currency:'KES'},result));
+    }
+    if(operation==='check_appointment'||operation==='check_availability')return json({ok:true,...await aiSensyCheckAppointment(env,businessId,{date:body.date,time:body.time,duration_minutes:body.duration_minutes||body.durationMinutes})});
+    if(operation==='book_appointment'||operation==='create_booking'){
+      if(!(body.confirmed===true||String(body.confirmed).toLowerCase()==='true'))throw new Error('Do not book until the customer has confirmed the service, date, time and location.');
+      return json(Object.assign({ok:true},await aiSensyBookAppointment(env,ctx,body,txt(body.request_id,120)||crypto.randomUUID())));
+    }
+    if(operation==='save_lead'||operation==='save_contact'){
+      const result=await aiSaveCustomerContact(env,ctx,{customerName:body.customer_name||body.customerName,customerPhone:body.customer_phone||body.customerPhone,email:body.email});
+      return json({ok:true,...result});
+    }
+    if(operation==='human_handoff'||operation==='request_staff'){
+      const name=txt(body.customer_name||body.customerName,120),phone=txt(body.customer_phone||body.customerPhone||senderPhone,40),reason=txt(body.reason||'Customer requested a staff member',180),message=txt(body.message||body.query,700);
+      if(!message)throw new Error('Include the customer request so staff know what needs attention.');
+      const taskId='aisensy-handoff-'+safeToolKey(txt(body.request_id,120)||crypto.randomUUID());
+      await createWhatsAppOwnerTask(env,businessId,'whatsapp_handover','WhatsApp handover · '+(name||phone||'Customer'),['Customer: '+(name||'Not provided'),'Phone: '+(phone||'Not provided'),'Reason: '+reason,'Message: '+message,'Channel: AiSensy WhatsApp'].join('\n'),taskId);
+      return json({ok:true,recorded:true,status:'needs_review',message:'The request has been sent to the business team for follow-up.'});
+    }
+    return json({ok:false,error:'Unknown TWIGA action. Use get_business_info, list_products, lookup_order, sales_report, owner_summary, create_order, check_appointment, book_appointment, save_lead or human_handoff.'},400);
+  }catch(error){return json({ok:false,error:txt(error&&error.message||error,300)},400);}
+}
+async function aisensyHandoffRoute(req,env,businessId) {
+  try{
+    const integration=await authenticateAiSensyRequest(req,env,businessId);if(!integration)return json({ok:false,error:'AiSensy handoff authentication failed.'},401);
+    const raw=await req.text();if(raw.length>20000)return json({ok:false,error:'Handoff request is too large.'},413);
+    let body={};try{body=JSON.parse(raw||'{}');}catch(_){return json({ok:false,error:'Invalid handoff JSON.'},400);}
+    await ensureBusinessWorkerSchema(env);
+    const customer=body.customer||body.contact||body.user||{},name=txt(body.customer_name||body.name||customer.name||customer.full_name,120);
+    const phone=txt(body.customer_phone||body.phone||customer.phone||customer.phone_number,40),reason=txt(body.reason||body.type||'Human handoff requested',160);
+    const message=txt(body.message||body.query||body.last_message||body.transcript,800),id='aisensy-webhook-'+safeToolKey(txt(body.event_id||body.id,140)||crypto.randomUUID());
+    await createWhatsAppOwnerTask(env,businessId,'whatsapp_handover','AiSensy handoff · '+(name||phone||'Customer'),['Customer: '+(name||'Not provided'),'Phone: '+(phone||'Not provided'),'Reason: '+reason,'Message: '+(message||'Customer requested a human agent.'),'Channel: AiSensy WhatsApp'].join('\n'),id);
+    return json({ok:true,recorded:true});
+  }catch(error){return json({ok:false,error:txt(error&&error.message||error,250)},400);}
 }
 async function businessIntegrationsRoute(req,env) {
   try {
@@ -1986,6 +2166,13 @@ async function businessIntegrationsRoute(req,env) {
       const provider=txt(body.provider,48).toLowerCase(),name=txt(body.displayName,100);
       let credentials=body.credentials;
       if(!credentials||typeof credentials!=='object'||Array.isArray(credentials))return json({ok:false,error:'Enter credentials in the secure form.'},400);
+      let aisensyActionToken='';
+      if(provider==='aisensy'){
+        const apiKey=txt(credentials.api_key,4000);
+        if(apiKey.length<12)return json({ok:false,error:'Enter the AiSensy API campaign key from Developer settings.'},400);
+        aisensyActionToken=Array.from(crypto.getRandomValues(new Uint8Array(32))).map(value=>value.toString(16).padStart(2,'0')).join('');
+        credentials={api_key:apiKey,action_token:aisensyActionToken};
+      }
       if(provider==='palpluss'&&credentials.basic_authorization){
         const encoded=String(credentials.basic_authorization).replace(/^Basic\\s+/i,'').replace(/\\s+/g,'');let decoded='';
         try{decoded=atob(encoded);}catch(_){return json({ok:false,error:'PalPluss Base64 Basic credential is invalid.'},400);}
@@ -1994,8 +2181,17 @@ async function businessIntegrationsRoute(req,env) {
       }
       const model=txt(body.model,180),validation=await validateBusinessIntegration(provider,credentials,model,body.fromEmail,body.purpose);
       const slug=provider==='custom'?'custom_'+integrationSlug(name).slice(0,40):provider;
-      const saved=await saveIntegrationD1(env,{businessId:biz,provider:slug,displayName:name,integrationType:validation.type,config:validation.config,credentials,isPrimaryAI:body.isPrimaryAI===true,status:provider==='custom'?'saved':'verified',lastTestMessage:validation.message,actorUserId:actor.userId,actorRole:actor.role,assistedByAdmin:actor.admin,assistanceNote:note});
-      return json({ok:true,saved:true,integration:saved,providerSlug:slug,message:validation.message+" Credentials are encrypted in this business's Cloudflare D1 workspace."});
+      const integrationConfig=provider==='aisensy'?Object.assign({},validation.config,{campaign_name:txt(body.campaignName,120)}):validation.config;
+      const saved=await saveIntegrationD1(env,{businessId:biz,provider:slug,displayName:name,integrationType:validation.type,config:integrationConfig,credentials,isPrimaryAI:body.isPrimaryAI===true,status:provider==='custom'||provider==='aisensy'?'saved':'verified',lastTestMessage:validation.message,actorUserId:actor.userId,actorRole:actor.role,assistedByAdmin:actor.admin,assistanceNote:note});
+      let ownerConfigured=false;
+      if(provider==='aisensy'&&String(body.ownerPhone||'').trim()){
+        await ensureBusinessWorkerSchema(env);
+        const ownerPhone=normalizeWhatsAppPhone(body.ownerPhone);
+        await env.DB.prepare('INSERT INTO business_worker_owner_contacts (business_id,phone_e164,enabled,updated_at) VALUES (?,?,1,?) ON CONFLICT(business_id) DO UPDATE SET phone_e164=excluded.phone_e164,enabled=1,updated_at=excluded.updated_at')
+          .bind(biz,ownerPhone,now()).run();
+        ownerConfigured=true;
+      }
+      return json({ok:true,saved:true,integration:saved,providerSlug:slug,message:validation.message+" Credentials are encrypted in this business's Cloudflare D1 workspace.",...(provider==='aisensy'?{actionToken:aisensyActionToken,actionUrl:'https://twiga-api.twiga-ke.workers.dev/aisensy/'+biz+'/action',handoffUrl:'https://twiga-api.twiga-ke.workers.dev/aisensy/'+biz+'/handoff',ownerConfigured}: {})});
     }
     if(action==='email.send'){
       if(body.approved!==true)return json({ok:false,error:'The business owner must explicitly approve this email before TWIGA sends it.'},403);
