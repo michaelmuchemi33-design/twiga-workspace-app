@@ -1178,6 +1178,9 @@ async function queueOwnerWhatsAppAlert(env, businessId, notificationId, title, b
 }
 async function dispatchOwnerWhatsAppOutbox(env, businessId, limit) {
   await ensureBusinessWorkerSchema(env);
+  const staleBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  await env.DB.prepare("UPDATE business_worker_whatsapp_outbox SET status='retry',next_attempt_at=?,last_error=COALESCE(last_error,'Recovered an interrupted owner alert delivery.'),updated_at=? WHERE status='processing' AND updated_at<=?")
+    .bind(now(),now(),staleBefore).run();
   const cap = Math.max(1, Math.min(Number(limit || 25), 50));
   const params = [now()];
   let sql = "SELECT id,business_id,notification_id,phone_e164,title,body,priority,attempts FROM business_worker_whatsapp_outbox WHERE status IN ('pending','retry') AND next_attempt_at<=?";
