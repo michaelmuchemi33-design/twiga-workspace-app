@@ -276,6 +276,7 @@ Deno.serve(async (req: Request) => {
             notes: safe(item?.notes, 1000),
             preferredLanguage: safe(item?.preferredLanguage || item?.preferred_language || "", 80),
             lastPurchaseAt: safe(item?.lastPurchaseAt || item?.last_purchase_at || "", 40),
+            followUpAt: safe(item?.followUpAt || item?.follow_up_at || "", 40),
           },
         }));
         if (contacts.some((contact: any) => !contact.phone)) return json({ error: "One or more phone numbers are invalid. Use Kenyan 07… / 01… or international +country format." }, 400);
@@ -362,7 +363,12 @@ Deno.serve(async (req: Request) => {
     const { data: platformKeyData, error: platformKeyError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "sautikit_platform_api_key" });
     if (platformKeyError) throw platformKeyError;
     const platformApiKey = String(platformKeyData || "");
-    const ownerReportQueue = await enqueueOwnerReportCalls(admin);
+    let ownerReportQueue = { queued: 0, date: reportDateKey(new Date(), "Africa/Nairobi"), error: "" };
+    try { ownerReportQueue = await enqueueOwnerReportCalls(admin); }
+    catch (ownerReportError) {
+      ownerReportQueue.error = ownerReportError instanceof Error ? ownerReportError.message.slice(0, 500) : "Owner report jobs could not be queued.";
+      console.error("Owner report scheduling failed:", ownerReportQueue.error);
+    }
     // Match the receptionist's credential policy: use TWIGA's shared key first,
     // then a business-owned SautiKit key only for that same business.
     const getSautiKitKey = async (targetBusinessId: string) => {
@@ -387,7 +393,7 @@ Deno.serve(async (req: Request) => {
         const callData = callStatus.call || callStatus.data?.call || (callStatus.data && typeof callStatus.data === "object" ? callStatus.data : callStatus);
         const rawProviderStatus = String(callData.status || callData.state || "").toLowerCase().replace(/-/g, "_");
         const failureCode = String(callData.failure_code || callData.failureCode || callData.error_code || "").toLowerCase();
-        const noAnswer = rawProviderStatus === "no_answer" || /no.?answer/.test(failureCode);
+        const noAnswer = rawProviderStatus === "no_answer" || rawProviderStatus === "busy" || /no.?answer/.test(failureCode);
         const invalidNumber = ["invalid_number", "invalid_destination", "invalid_phone"].includes(rawProviderStatus)
           || /invalid.*(number|destination|phone|e164)|(?:number|destination|phone|e164).*invalid/.test(failureCode);
         const providerStatus = invalidNumber ? "invalid_number" : noAnswer ? "no_answer" : rawProviderStatus;
@@ -504,7 +510,7 @@ Deno.serve(async (req: Request) => {
     const { data: jobs, error: claimError } = await admin.rpc("twiga_claim_scheduled_calls", { p_limit: 10 });
     if (claimError) throw claimError;
     const claimed = Array.isArray(jobs) ? jobs : [];
-    const summary = { ok: true, claimed: claimed.length, submitted: 0, polled: polledCalls, deferred: 0, skipped: 0, failed: 0, ownerReportCallsQueued: ownerReportQueue.queued, ownerReportDate: ownerReportQueue.date };
+    const summary = { ok: true, claimed: claimed.length, submitted: 0, polled: polledCalls, deferred: 0, skipped: 0, failed: 0, ownerReportCallsQueued: ownerReportQueue.queued, ownerReportDate: ownerReportQueue.date, ownerReportQueueError: ownerReportQueue.error };
 
     for (const job of claimed) {
       try {
