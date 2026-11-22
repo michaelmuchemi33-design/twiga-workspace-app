@@ -961,6 +961,16 @@ async function aiWorker(req, env) {
     // Any authenticated business workspace that opens the Worker is assigned
     // its own Durable Object instance, not just the first business to run jobs.
     const orchestratorRegistration = await registerBusinessAgent(env,ctx.biz.id);
+    if (body.action === 'ensure_orchestrator') {
+      return json({
+        ok:true,
+        orchestrator:{
+          ready:orchestratorRegistration.registered===true,
+          isolated:orchestratorRegistration.isolated===true,
+          scope:'one_business'
+        }
+      });
+    }
     if (body.action === 'provision') {
       if (!['owner','admin'].includes(String(ctx.role))) return json({ok:false,error:'Only the business owner or administrator can provision the Worker.'},403);
       const settings = await env.DB.prepare('SELECT enabled,next_review_at FROM business_worker_settings WHERE business_id=?').bind(ctx.biz.id).first();
