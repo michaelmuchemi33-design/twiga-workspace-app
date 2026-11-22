@@ -91,6 +91,7 @@ export default function AuthGate({ children }: {
     const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       authEventReceived = true;
       applySession(nextSession);
+      if (event === "SIGNED_IN") clearPasswordRecoveryRequest();
       if (event === "PASSWORD_RECOVERY" || (event === "INITIAL_SESSION" && (hasRecoveryType() || (Boolean(nextSession) && hasRecentPasswordRecoveryRequest())))) {
         setRecoveryMode(true);
         setRecoverySuccess(false);
