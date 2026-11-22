@@ -598,8 +598,10 @@ async function ensureBusinessWorkerSchema(env) {
       env.DB.prepare("CREATE TABLE IF NOT EXISTS whatsapp_accounts (business_id TEXT PRIMARY KEY, waba_id TEXT NOT NULL, phone_number_id TEXT NOT NULL UNIQUE, display_phone_number TEXT NOT NULL DEFAULT '', verified_name TEXT NOT NULL DEFAULT '', token_cipher TEXT NOT NULL, token_iv TEXT NOT NULL, token_expires_at TEXT, status TEXT NOT NULL DEFAULT 'connected', last_webhook_at TEXT, updated_at TEXT NOT NULL)"),
       env.DB.prepare("CREATE TABLE IF NOT EXISTS whatsapp_messages (message_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, phone_number_id TEXT NOT NULL, wa_id TEXT NOT NULL, direction TEXT NOT NULL, message_type TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, created_at TEXT NOT NULL)"),
       env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_conversation ON whatsapp_messages(business_id, wa_id, created_at)"),
-      env.DB.prepare("CREATE TABLE IF NOT EXISTS whatsapp_conversations (business_id TEXT NOT NULL, phone_number_id TEXT NOT NULL, wa_id TEXT NOT NULL, last_inbound_at TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (business_id, wa_id))")
-    ]).catch((error) => { businessWorkerSchemaReady = null; throw error; });
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS whatsapp_conversations (business_id TEXT NOT NULL, phone_number_id TEXT NOT NULL, wa_id TEXT NOT NULL, last_inbound_at TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (business_id, wa_id))"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS business_worker_owner_contacts (business_id TEXT PRIMARY KEY, phone_e164 TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS business_worker_whatsapp_outbox (id TEXT PRIMARY KEY, business_id TEXT NOT NULL, notification_id TEXT NOT NULL, phone_e164 TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, priority TEXT NOT NULL DEFAULT 'normal', status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, last_error TEXT, message_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (business_id, notification_id))"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_worker_whatsapp_outbox_due ON business_worker_whatsapp_outbox(status, next_attempt_at, priority)")    ]).catch((error) => { businessWorkerSchemaReady = null; throw error; });
   }
   return businessWorkerSchemaReady;
 }
@@ -658,6 +660,7 @@ async function dispatchBusinessAgent(env, businessId) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.ok === false) throw new Error(data.error || 'The business worker did not finish its task.');
+  await dispatchOwnerWhatsAppOutbox(env,businessId,10).catch((error) => console.error('[TWIGA owner WhatsApp] delivery dispatch failed',txt(error && error.message || error,240)));
   return data;
 }
 
@@ -688,6 +691,7 @@ async function dispatchDueBusinessWorkers(env) {
     const finishAt = now();
     await env.DB.prepare("UPDATE business_worker_scheduler SET last_finished_at=?,last_dispatched_businesses=?,last_failed_businesses=?,last_pending_businesses=?,last_error=?,updated_at=? WHERE singleton=1")
       .bind(finishAt,processed,failed,Number(stillPending && stillPending.total || 0),failed ? failed + ' business worker dispatch(es) failed during this scheduler tick.' : null,finishAt).run();
+    await dispatchOwnerWhatsAppOutbox(env,null,50).catch((error) => console.error('[TWIGA owner WhatsApp] scheduled delivery failed',txt(error && error.message || error,240)));
     if (failed) console.error('TWIGA business worker scheduler had failures',{businesses:businessIds.length,failed});
   } catch (error) {
     const message = txt(error && error.message || error,500);
@@ -815,8 +819,14 @@ async function runBusinessReview(env, businessId, taskId) {
       .bind(item.id, businessId, item.title, item.detail, item.priority, stamp, stamp, stamp)));
   }
   const notificationId = 'review-' + taskId;
+  const highTasks = newTasks.filter((item) => item.priority === 'high' || item.priority === 'urgent');
+  const reviewBody = reviewSummary + (newTasks.length ? ' ' + newTasks.length + ' item(s) need your review.' : ' No owner action was identified.');
   await env.DB.prepare('INSERT OR IGNORE INTO business_worker_notifications (id, business_id, notification_type, title, body, priority, created_at) VALUES (?,?,?,?,?,?,?)')
-    .bind(notificationId, businessId, 'daily_review', headline, reviewSummary + (newTasks.length ? ' ' + newTasks.length + ' item(s) need your review.' : ' No owner action was identified.'), newTasks.some((item) => item.priority === 'high') ? 'high' : 'normal', stamp).run();
+    .bind(notificationId, businessId, 'daily_review', headline, reviewBody, highTasks.length ? 'high' : 'normal', stamp).run();
+  if (highTasks.length) {
+    const priorityLines = highTasks.slice(0,4).map((item) => '• ' + item.title).join('\n');
+    await queueOwnerWhatsAppAlert(env,businessId,notificationId,headline,reviewSummary + '\nHigh-priority items:\n' + priorityLines,'high');
+  }
   await env.DB.prepare("UPDATE business_worker_tasks SET status = 'done', result_json = ?, updated_at = ? WHERE business_id = ? AND id = ?")
     .bind(JSON.stringify({summary: reviewSummary, actionsCreated: newTasks.length}), stamp, businessId, taskId).run();
   await env.DB.prepare('UPDATE business_worker_settings SET last_run_at = ?, last_review_at = ?, updated_at = ? WHERE business_id = ?')
@@ -850,7 +860,8 @@ async function runBusinessAgentTasks(env, businessId) {
         .bind(detail, now(), businessId, task.id).run();
       const notificationId = 'failed-' + task.id;
       await env.DB.prepare('INSERT OR IGNORE INTO business_worker_notifications (id, business_id, notification_type, title, body, priority, created_at) VALUES (?,?,?,?,?,?,?)')
-        .bind(notificationId, businessId, 'worker_error', 'TWIGA review needs attention', 'The scheduled review could not finish: ' + detail, 'high', now()).run();
+        .bind(notificationId, businessId, 'worker_error', 'TWIGA Worker needs attention', 'The scheduled job could not finish: ' + detail, 'high', now()).run();
+      await queueOwnerWhatsAppAlert(env,businessId,notificationId,'TWIGA Worker needs attention',detail,'high');
       outcomes.push({id: task.id, ok: false, error: detail});
     }
   }
@@ -891,7 +902,9 @@ async function aiWorker(req, env) {
     if (body.action === 'provision') {
       if (!['owner','admin'].includes(String(ctx.role))) return json({ok:false,error:'Only the business owner or administrator can provision the Worker.'},403);
       const settings = await env.DB.prepare('SELECT enabled,next_review_at FROM business_worker_settings WHERE business_id=?').bind(ctx.biz.id).first();
-      return json({ok:true,provisioned:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,worker:{enabled:Number(settings && settings.enabled !== undefined ? settings.enabled : 1)===1,nextReviewAt:settings && settings.next_review_at || null},message:'The business Worker is provisioned and its daily review schedule is registered.'});
+      const ownerContact = await env.DB.prepare('SELECT phone_e164,enabled FROM business_worker_owner_contacts WHERE business_id=?').bind(ctx.biz.id).first();
+      const waAccount = await env.DB.prepare("SELECT display_phone_number,status FROM whatsapp_accounts WHERE business_id=?").bind(ctx.biz.id).first();
+      return json({ok:true,provisioned:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,worker:{enabled:Number(settings && settings.enabled !== undefined ? settings.enabled : 1)===1,nextReviewAt:settings && settings.next_review_at || null,ownerWhatsAppConfigured:!!(ownerContact&&ownerContact.phone_e164),ownerWhatsAppEnabled:!!(ownerContact&&Number(ownerContact.enabled)===1),ownerWhatsAppLast4:maskWhatsAppPhone(ownerContact&&ownerContact.phone_e164),ownerWhatsAppBusinessNumber:waAccount&&waAccount.status==='connected'?waAccount.display_phone_number||'Connected WhatsApp number':'Not connected'},message:'The business Worker is provisioned. Add the owner WhatsApp number and send START to the connected business WhatsApp number to receive alerts.'});
     }
     if (body.action === 'overview') {
       const result = await Promise.all([
@@ -903,13 +916,40 @@ async function aiWorker(req, env) {
         env.DB.prepare('SELECT last_started_at,last_finished_at,last_dispatched_businesses,last_failed_businesses,last_pending_businesses,last_error FROM business_worker_scheduler WHERE singleton=1').first()
       ]);
       const settings=result[0] || {},counts=result[3] || {},runtime=result[4] || {},scheduler=result[5] || {};
+      const ownerState = await Promise.all([
+        env.DB.prepare('SELECT phone_e164,enabled FROM business_worker_owner_contacts WHERE business_id=?').bind(ctx.biz.id).first(),
+        env.DB.prepare("SELECT status,last_error,updated_at FROM business_worker_whatsapp_outbox WHERE business_id=? ORDER BY created_at DESC LIMIT 1").bind(ctx.biz.id).first(),
+        env.DB.prepare("SELECT display_phone_number,status FROM whatsapp_accounts WHERE business_id=?").bind(ctx.biz.id).first(),
+        env.DB.prepare("SELECT COUNT(*) AS pending FROM business_worker_whatsapp_outbox WHERE business_id=? AND status IN ('pending','retry','processing','blocked')").bind(ctx.biz.id).first()
+      ]);
+      const ownerContact=ownerState[0]||{},ownerDelivery=ownerState[1]||{},waAccount=ownerState[2]||{},ownerPending=ownerState[3]||{};
       return json({ok:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,
         worker:{enabled:Number(settings.enabled===undefined?1:settings.enabled)===1,schedule:'Queue check every minute · up to 50 businesses and 50 queued tasks per business tick · daily owner review 08:00 Africa/Nairobi',nextReviewAt:settings.next_review_at || null,lastRunAt:settings.last_run_at || null,lastReviewAt:settings.last_review_at || null,
           lastTickAt:runtime.last_tick_at || null,lastSuccessAt:runtime.last_success_at || null,lastErrorAt:runtime.last_error_at || null,lastError:runtime.last_error || null,lastProcessedCount:Number(runtime.last_processed_count || 0),lastFailedCount:Number(runtime.last_failed_count || 0),
-          schedulerLastStartedAt:scheduler.last_started_at || null,schedulerLastFinishedAt:scheduler.last_finished_at || null,schedulerLastDispatchedBusinesses:Number(scheduler.last_dispatched_businesses || 0),schedulerLastFailedBusinesses:Number(scheduler.last_failed_businesses || 0),schedulerLastPendingBusinesses:Number(scheduler.last_pending_businesses || 0),schedulerLastError:scheduler.last_error || null},
+          schedulerLastStartedAt:scheduler.last_started_at || null,schedulerLastFinishedAt:scheduler.last_finished_at || null,schedulerLastDispatchedBusinesses:Number(scheduler.last_dispatched_businesses || 0),schedulerLastFailedBusinesses:Number(scheduler.last_failed_businesses || 0),schedulerLastPendingBusinesses:Number(scheduler.last_pending_businesses || 0),schedulerLastError:scheduler.last_error || null,
+          ownerWhatsAppConfigured:!!ownerContact.phone_e164,ownerWhatsAppEnabled:Number(ownerContact.enabled)===1,ownerWhatsAppLast4:maskWhatsAppPhone(ownerContact.phone_e164),ownerWhatsAppBusinessNumber:waAccount.status==='connected'?waAccount.display_phone_number||'Connected':'Not connected',
+          ownerWhatsAppPending:Number(ownerPending.pending||0),ownerWhatsAppLastDeliveryStatus:ownerDelivery.status||null,ownerWhatsAppLastDeliveryError:ownerDelivery.last_error||null,ownerWhatsAppLastDeliveryAt:ownerDelivery.updated_at||null},
         tasks:result[1].results || [],notifications:result[2].results || [],
         counts:{needsReview:Number(counts.needs_review || 0),pending:Number(counts.pending || 0),processing:Number(counts.processing || 0),failed:Number(counts.failed || 0)}
       });
+    }
+    if (body.action === 'set_owner_whatsapp') {
+      if (!['owner','admin'].includes(String(ctx.role))) return json({ok:false,error:'Only the business owner or administrator can set the owner WhatsApp number.'},403);
+      if (body.enabled === false) {
+        await env.DB.prepare('UPDATE business_worker_owner_contacts SET enabled=0,updated_at=? WHERE business_id=?').bind(now(),ctx.biz.id).run();
+        return json({ok:true,enabled:false,message:'Owner WhatsApp alerts are paused.'});
+      }
+      if (body.enabled === true && !String(body.phone || '').trim()) {
+        const resumed = await env.DB.prepare('UPDATE business_worker_owner_contacts SET enabled=1,updated_at=? WHERE business_id=?').bind(now(),ctx.biz.id).run();
+        if (!resumed.meta || Number(resumed.meta.changes || 0) !== 1) return json({ok:false,error:'Save the owner WhatsApp number before enabling alerts.'},400);
+        await dispatchOwnerWhatsAppOutbox(env,ctx.biz.id,10);
+        return json({ok:true,enabled:true,message:'Owner WhatsApp alerts are enabled again.'});
+      }
+      const phone=normalizeWhatsAppPhone(body.phone);
+      await env.DB.prepare('INSERT INTO business_worker_owner_contacts (business_id,phone_e164,enabled,updated_at) VALUES (?,?,1,?) ON CONFLICT(business_id) DO UPDATE SET phone_e164=excluded.phone_e164,enabled=1,updated_at=excluded.updated_at')
+        .bind(ctx.biz.id,phone,now()).run();
+      const waAccount=await env.DB.prepare("SELECT display_phone_number,status FROM whatsapp_accounts WHERE business_id=?").bind(ctx.biz.id).first();
+      return json({ok:true,enabled:true,configured:true,ownerLast4:maskWhatsAppPhone(phone),businessWhatsAppNumber:waAccount&&waAccount.status==='connected'?waAccount.display_phone_number||'Connected':'Not connected',message:'Owner WhatsApp number saved. Send START from that phone to the connected business WhatsApp number to open the reply window and receive alerts.'});
     }
     if (body.action === 'process_queue') {
       if (!['owner','admin'].includes(String(ctx.role))) return json({ok:false,error:'Only a business owner or administrator can process the Worker queue.'},403);
@@ -1119,13 +1159,93 @@ async function verifyMetaSignature(raw, header, secret) {
   for (let i=0;i<hex.length;i++) diff |= hex.charCodeAt(i) ^ supplied.charCodeAt(i);
   return diff === 0;
 }
+
+function normalizeWhatsAppPhone(value) {
+  let digits = String(value || '').replace(/[^0-9]/g, '');
+  if (/^0[17][0-9]{8}$/.test(digits)) digits = '254' + digits.slice(1);
+  if (!/^[1-9][0-9]{7,14}$/.test(digits)) throw new Error('Enter a valid WhatsApp number in international format, for example +2547XXXXXXXX.');
+  return digits;
+}
+function maskWhatsAppPhone(value) {
+  const digits = String(value || '').replace(/[^0-9]/g, '');
+  return digits.length >= 4 ? '•••• ' + digits.slice(-4) : '';
+}
+async function queueOwnerWhatsAppAlert(env, businessId, notificationId, title, body, priority) {
+  const level = String(priority || 'normal').toLowerCase();
+  if (!['high','urgent'].includes(level)) return {queued:false,reason:'not_important'};
+  await ensureBusinessWorkerSchema(env);
+  const contact = await env.DB.prepare('SELECT phone_e164,enabled FROM business_worker_owner_contacts WHERE business_id=?').bind(businessId).first();
+  if (!contact || Number(contact.enabled) !== 1 || !contact.phone_e164) return {queued:false,reason:'owner_whatsapp_not_configured'};
+  const stamp = now();
+  const id = 'owner-alert-' + String(notificationId).replace(/[^a-zA-Z0-9_-]/g,'-').slice(0,150);
+  await env.DB.prepare("INSERT OR IGNORE INTO business_worker_whatsapp_outbox (id,business_id,notification_id,phone_e164,title,body,priority,status,attempts,next_attempt_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'pending',0,?,?,?)")
+    .bind(id,businessId,String(notificationId),String(contact.phone_e164),txt(title,140),txt(body,1200),level,stamp,stamp,stamp).run();
+  return {queued:true,id};
+}
+async function dispatchOwnerWhatsAppOutbox(env, businessId, limit) {
+  await ensureBusinessWorkerSchema(env);
+  const staleBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  await env.DB.prepare("UPDATE business_worker_whatsapp_outbox SET status='retry',next_attempt_at=?,last_error=COALESCE(last_error,'Recovered an interrupted owner alert delivery.'),updated_at=? WHERE status='processing' AND updated_at<=?")
+    .bind(now(),now(),staleBefore).run();
+  const cap = Math.max(1, Math.min(Number(limit || 25), 50));
+  const params = [now()];
+  let sql = "SELECT id,business_id,notification_id,phone_e164,title,body,priority,attempts FROM business_worker_whatsapp_outbox WHERE status IN ('pending','retry') AND next_attempt_at<=?";
+  if (businessId) { sql += ' AND business_id=?'; params.push(businessId); }
+  sql += " ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,next_attempt_at LIMIT ?";
+  params.push(cap);
+  const rows = await env.DB.prepare(sql).bind(...params).all();
+  const results = [];
+  for (const row of rows.results || []) {
+    const claimed = await env.DB.prepare("UPDATE business_worker_whatsapp_outbox SET status='processing',updated_at=? WHERE id=? AND status IN ('pending','retry')")
+      .bind(now(),row.id).run();
+    if (!claimed.meta || Number(claimed.meta.changes || 0) !== 1) continue;
+    try {
+      const account = await env.DB.prepare("SELECT business_id,phone_number_id,display_phone_number,verified_name,token_cipher,token_iv,token_expires_at,status FROM whatsapp_accounts WHERE business_id=? AND status='connected'")
+        .bind(row.business_id).first();
+      if (!account) throw new Error('The business official WhatsApp connection is not active.');
+      const conversation = await env.DB.prepare('SELECT last_inbound_at FROM whatsapp_conversations WHERE business_id=? AND wa_id=?')
+        .bind(row.business_id,row.phone_e164).first();
+      const lastInbound = conversation && conversation.last_inbound_at ? Date.parse(conversation.last_inbound_at) : 0;
+      if (!lastInbound || !Number.isFinite(lastInbound) || Date.now()-lastInbound >= 24*60*60*1000) {
+        await env.DB.prepare("UPDATE business_worker_whatsapp_outbox SET status='blocked',last_error=?,updated_at=? WHERE id=?")
+          .bind('Waiting for the owner to message the connected business WhatsApp number. Send START to open the 24-hour reply window.',now(),row.id).run();
+        results.push({id:row.id,ok:false,blocked:true});
+        continue;
+      }
+      const token = await decryptWhatsAppToken(env,account);
+      const message = 'TWIGA · ' + txt(row.title,100) + '\n' + txt(row.body,1100) + '\n\nReply TASKS to review, STATUS for worker health, or HELP for commands.';
+      const sent = await sendWhatsAppText(env,account,token,row.phone_e164,message);
+      const messageId = txt(sent && sent.messages && sent.messages[0] && sent.messages[0].id || 'twiga-owner-'+crypto.randomUUID(),180);
+      const stamp = now();
+      await env.DB.batch([
+        env.DB.prepare("UPDATE business_worker_whatsapp_outbox SET status='sent',attempts=attempts+1,last_error=NULL,message_id=?,updated_at=? WHERE id=?").bind(messageId,stamp,row.id),
+        env.DB.prepare("INSERT OR REPLACE INTO whatsapp_messages (message_id,business_id,phone_number_id,wa_id,direction,message_type,body,status,created_at) VALUES (?,?,?,?,'outbound','text',?,'submitted',?)").bind(messageId,row.business_id,account.phone_number_id,row.phone_e164,message,stamp)
+      ]);
+      results.push({id:row.id,ok:true,messageId});
+    } catch (error) {
+      const attempt = Number(row.attempts || 0) + 1;
+      const delaySeconds = [15,60,300,900,1800][Math.min(attempt-1,4)];
+      const failed = attempt >= 5;
+      const detail = txt(error && error.message || error,300);
+      await env.DB.prepare("UPDATE business_worker_whatsapp_outbox SET status=?,attempts=?,next_attempt_at=?,last_error=?,updated_at=? WHERE id=?")
+        .bind(failed?'failed':'retry',attempt,new Date(Date.now()+delaySeconds*1000).toISOString(),detail,now(),row.id).run();
+      results.push({id:row.id,ok:false,failed,error:detail});
+    }
+  }
+  return results;
+}
+
 async function createWhatsAppOwnerTask(env, businessId, type, title, detail, taskId) {
   const stamp = now();
   const id = taskId || 'wa-owner-' + crypto.randomUUID();
   await env.DB.prepare("INSERT OR IGNORE INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?,?, ?, ?, 'needs_review', 'normal', ?, ?, ?)")
     .bind(id,businessId,type,title,txt(detail,1000),stamp,stamp,stamp).run();
+  const important = ['whatsapp_handover','whatsapp_call','whatsapp_window_expired','whatsapp_setup','worker_error'].includes(String(type));
+  const priority = important ? 'high' : 'normal';
+  const noticeId = 'notice-' + id;
   await env.DB.prepare('INSERT OR IGNORE INTO business_worker_notifications (id, business_id, notification_type, title, body, priority, created_at) VALUES (?,?,?,?,?,?,?)')
-    .bind('notice-' + id,businessId,type,title,txt(detail,1000),'normal',stamp).run();
+    .bind(noticeId,businessId,type,title,txt(detail,1000),priority,stamp).run();
+  if (important) await queueOwnerWhatsAppAlert(env,businessId,noticeId,title,detail,'high');
 }
 async function sendWhatsAppText(env, account, token, to, text) {
   const result = await metaGraph(env, token, account.phone_number_id + '/messages', 'POST', {
@@ -1148,6 +1268,73 @@ async function transcribeWhatsAppAudio(env, token, mediaId) {
   const result = await env.AI.run('@cf/openai/whisper', {audio:Array.from(new Uint8Array(buffer))});
   return txt(result && result.text ? result.text : '', 4000);
 }
+
+async function sendWhatsAppOwnerReply(env, account, token, ownerPhone, message) {
+  const sent = await sendWhatsAppText(env,account,token,ownerPhone,message);
+  const messageId = txt(sent && sent.messages && sent.messages[0] && sent.messages[0].id || 'twiga-owner-reply-'+crypto.randomUUID(),180);
+  await env.DB.prepare("INSERT OR REPLACE INTO whatsapp_messages (message_id,business_id,phone_number_id,wa_id,direction,message_type,body,status,created_at) VALUES (?,?,?,?,'outbound','text',?,'submitted',?)")
+    .bind(messageId,account.business_id,account.phone_number_id,ownerPhone,txt(message,3500),now()).run();
+  return messageId;
+}
+async function processWhatsAppOwnerMessage(env,businessId,account,token,ownerPhone,incomingText) {
+  const command = String(incomingText || '').trim();
+  const upper = command.toUpperCase();
+  let reply = '';
+  if (/^(START|HELP|HI|HELLO|MENU)$/.test(upper)) {
+    reply = 'TWIGA owner line is connected. Commands: STATUS (Worker health), SUMMARY (today’s figures), TASKS (important open work), PAUSE, RESUME, DISMISS <task-id>, or REPLY <customer-number> | <message> to reply to a customer. Sensitive actions remain approval-gated.';
+  } else if (upper === 'STATUS') {
+    const result = await Promise.all([
+      env.DB.prepare('SELECT enabled,last_run_at,last_review_at FROM business_worker_settings WHERE business_id=?').bind(businessId).first(),
+      env.DB.prepare("SELECT SUM(CASE WHEN status='pending' AND due_at<=? THEN 1 ELSE 0 END) AS pending,SUM(CASE WHEN status='processing' THEN 1 ELSE 0 END) AS processing,SUM(CASE WHEN status='needs_review' THEN 1 ELSE 0 END) AS needs_review,SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM business_worker_tasks WHERE business_id=?").bind(now(),businessId).first(),
+      env.DB.prepare('SELECT last_tick_at,last_success_at,last_error FROM business_worker_runtime WHERE business_id=?').bind(businessId).first()
+    ]);
+    const settings=result[0]||{}, counts=result[1]||{}, runtime=result[2]||{};
+    reply = 'TWIGA Worker: ' + (Number(settings.enabled)===1?'ON':'PAUSED') + '. Queue: ' + Number(counts.pending||0) + ' pending, ' + Number(counts.processing||0) + ' processing, ' + Number(counts.needs_review||0) + ' need review, ' + Number(counts.failed||0) + ' failed. Last successful run: ' + (runtime.last_success_at||'not recorded') + (runtime.last_error?'. Last error: '+txt(runtime.last_error,260):'. No recorded runtime error.');
+  } else if (upper === 'SUMMARY') {
+    const profileRow=await env.DB.prepare('SELECT business_name,business_type FROM business_worker_profiles WHERE business_id=?').bind(businessId).first();
+    const summary=await ACTIONS.summary(env,{biz:{id:businessId,name:profileRow&&profileRow.business_name||'Business',business_type:profileRow&&profileRow.business_type||'general'},role:'owner'},{});
+    reply='Today’s business summary: '+Number(summary.ordersToday||0)+' orders; KSh '+Number(summary.revenueToday||0).toLocaleString('en-KE')+' received; KSh '+Number(summary.expensesToday||0).toLocaleString('en-KE')+' expenses; '+Number(summary.unpaid||0)+' unpaid order(s). Reply TASKS to see open work.';
+  } else if (upper === 'TASKS' || upper === 'OPEN TASKS') {
+    const tasks=await env.DB.prepare("SELECT id,title,status,priority,detail FROM business_worker_tasks WHERE business_id=? AND status IN ('needs_review','pending','processing','failed') ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,created_at DESC LIMIT 6").bind(businessId).all();
+    const items=tasks.results||[];
+    reply=items.length?'Open TWIGA work:\n'+items.map((task)=>'• '+txt(task.priority,12).toUpperCase()+' · '+txt(task.title,110)+' ['+txt(task.id,90)+']').join('\n')+'\nUse DISMISS <task-id> to close a recommendation after reviewing it.':'No open Worker tasks.';
+  } else if (upper === 'PAUSE' || upper === 'PAUSE WORKER') {
+    await env.DB.prepare('UPDATE business_worker_settings SET enabled=0,updated_at=? WHERE business_id=?').bind(now(),businessId).run();
+    reply='Daily automatic reviews are paused. Incoming WhatsApp replies and queued owner alerts will still be handled.';
+  } else if (upper === 'RESUME' || upper === 'RESUME WORKER') {
+    await env.DB.prepare('UPDATE business_worker_settings SET enabled=1,next_review_at=?,updated_at=? WHERE business_id=?').bind(nextNairobiReviewAt(),now(),businessId).run();
+    reply='Daily automatic reviews are resumed. The next review is scheduled for 8:00 a.m. Nairobi time.';
+  } else {
+    const dismiss=command.match(/^DISMISS\s+([A-Za-z0-9_-]{5,180})$/i);
+    const customerReply=command.match(/^REPLY\s+([+0-9][0-9\s()+-]{6,22})\s*[|:]\s*([\s\S]{1,1500})$/i);
+    if (dismiss) {
+      const changed=await env.DB.prepare("UPDATE business_worker_tasks SET status='done',result_json=?,updated_at=? WHERE business_id=? AND id=? AND status IN ('needs_review','failed')").bind(JSON.stringify({dismissedByOwner:true,source:'owner_whatsapp'}),now(),businessId,dismiss[1]).run();
+      reply=Number(changed.meta&&changed.meta.changes||0)===1?'That Worker recommendation has been dismissed.':'I could not find an open recommendation with that task ID.';
+    } else if (customerReply) {
+      const recipient=normalizeWhatsAppPhone(customerReply[1]);
+      if(recipient===ownerPhone) throw new Error('Use a customer number, not your own owner number.');
+      const conversation=await env.DB.prepare('SELECT last_inbound_at FROM whatsapp_conversations WHERE business_id=? AND wa_id=?').bind(businessId,recipient).first();
+      const lastInbound=conversation&&conversation.last_inbound_at?Date.parse(conversation.last_inbound_at):0;
+      if(!lastInbound||!Number.isFinite(lastInbound)||Date.now()-lastInbound>=24*60*60*1000) {
+        reply='I cannot send this reply because that customer has no open 24-hour WhatsApp reply window. Ask the customer to message the business first or use an approved Meta template.';
+      } else {
+        const text=txt(customerReply[2],1500);
+        const sent=await sendWhatsAppText(env,account,token,recipient,text);
+        const outboundId=txt(sent&&sent.messages&&sent.messages[0]&&sent.messages[0].id||'twiga-owner-customer-'+crypto.randomUUID(),180);
+        await env.DB.prepare("INSERT OR REPLACE INTO whatsapp_messages (message_id,business_id,phone_number_id,wa_id,direction,message_type,body,status,created_at) VALUES (?,?,?,?,'outbound','text',?,'submitted',?)").bind(outboundId,businessId,account.phone_number_id,recipient,text,now()).run();
+        reply='Your reply has been submitted to customer '+recipient+'.';
+      }
+    } else {
+      reply='I did not recognise that command. Reply HELP to see commands, STATUS for Worker health, SUMMARY for today’s figures, or TASKS for open items.';
+    }
+  }
+  await sendWhatsAppOwnerReply(env,account,token,ownerPhone,reply);
+  await env.DB.prepare("UPDATE business_worker_whatsapp_outbox SET status='pending',next_attempt_at=?,last_error=NULL,updated_at=? WHERE business_id=? AND phone_e164=? AND status='blocked'")
+    .bind(now(),now(),businessId,ownerPhone).run();
+  await dispatchOwnerWhatsAppOutbox(env,businessId,5);
+  return {ok:true,ownerCommand:true};
+}
+
 async function processWhatsAppMessage(env, businessId, detail) {
   const account = await whatsappAccountForNumber(env, detail.phoneNumberId);
   if (!account) throw new Error('This WhatsApp number is no longer connected.');
@@ -1167,7 +1354,6 @@ async function processWhatsAppMessage(env, businessId, detail) {
   } catch (error) {
     console.error('TWIGA WhatsApp read/typing signal failed', txt(error && error.message ? error.message : error, 160));
   }
-  await new Promise((resolve) => setTimeout(resolve, 2000));
   let incomingText = '';
   if (message.type === 'text') incomingText = txt(message.text && message.text.body, 3500);
   else if (message.type === 'audio') incomingText = await transcribeWhatsAppAudio(env, token, String(message.audio && message.audio.id || ''));
@@ -1181,6 +1367,11 @@ async function processWhatsAppMessage(env, businessId, detail) {
     .bind(messageId,businessId,account.phone_number_id,from,txt(message.type,30),incomingText,inboundAt).run();
   await env.DB.prepare('INSERT INTO whatsapp_conversations (business_id, phone_number_id, wa_id, last_inbound_at, updated_at) VALUES (?,?,?,?,?) ON CONFLICT(business_id, wa_id) DO UPDATE SET phone_number_id=excluded.phone_number_id, last_inbound_at=excluded.last_inbound_at, updated_at=excluded.updated_at')
     .bind(businessId,account.phone_number_id,from,inboundAt,now()).run();
+  const owner = await env.DB.prepare('SELECT phone_e164,enabled FROM business_worker_owner_contacts WHERE business_id=?').bind(businessId).first();
+  if (owner && Number(owner.enabled)===1 && normalizeWhatsAppPhone(owner.phone_e164)===normalizeWhatsAppPhone(from)) {
+    return processWhatsAppOwnerMessage(env,businessId,account,token,normalizeWhatsAppPhone(from),incomingText);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 2000));
   const withinWindow = Date.now() - timestamp * 1000 < 24 * 60 * 60 * 1000;
   if (!withinWindow) {
     await createWhatsAppOwnerTask(env,businessId,'whatsapp_window_expired','WhatsApp reply needs an approved template','A customer message was received outside the 24-hour reply window. No free-form WhatsApp response was sent.','wa-window-' + messageId);
@@ -1300,8 +1491,13 @@ async function handleWhatsAppWebhook(env, body) {
           .bind(messageId,account.business_id,phoneNumberId,from,txt(message.type,30),text,stamp).run();
         if (result.meta && Number(result.meta.changes || 0) === 1) {
           const taskId = 'wa-' + messageId;
-          await env.DB.prepare("INSERT OR IGNORE INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'whatsapp_reply', 'Reply to WhatsApp message', ?, 'pending', 'normal', ?, ?, ?)")
-            .bind(taskId,account.business_id,JSON.stringify({phoneNumberId:phoneNumberId,from:from,message:message}),now(),now(),now()).run();
+          const ownerContact = await env.DB.prepare('SELECT phone_e164,enabled FROM business_worker_owner_contacts WHERE business_id=?').bind(account.business_id).first();
+          let ownerSender = false;
+          if (ownerContact && Number(ownerContact.enabled)===1) {
+            try { ownerSender = normalizeWhatsAppPhone(ownerContact.phone_e164) === normalizeWhatsAppPhone(from); } catch (_) {}
+          }
+          await env.DB.prepare("INSERT OR IGNORE INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'whatsapp_reply', ?, ?, 'pending', ?, ?, ?, ?)")
+            .bind(taskId,account.business_id,ownerSender?'Process owner WhatsApp command':'Reply to WhatsApp message',JSON.stringify({phoneNumberId:phoneNumberId,from:from,message:message}),ownerSender?'urgent':'normal',now(),now(),now()).run();
           dispatch.add(account.business_id);
         }
       }
