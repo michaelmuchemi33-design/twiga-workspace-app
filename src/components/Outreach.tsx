@@ -90,6 +90,9 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
   const [testText, setTestText] = useState("A customer asks: What is the offer, how much does it cost, and how can I book?");
   const [testReply, setTestReply] = useState("");
   const [phoneLine, setPhoneLine] = useState<any>(null);
+  const [providerConnected, setProviderConnected] = useState(false);
+  const [numberVerified, setNumberVerified] = useState(false);
+  const [providerNumber, setProviderNumber] = useState("");
   const [providerError, setProviderError] = useState("");
   const [configLoading, setConfigLoading] = useState(true);
   const refreshPhoneConfig = async () => {
@@ -98,6 +101,9 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     if (invokeError) throw new Error(invokeError.message);
     if (data?.error) throw new Error(String(data.error));
     setPhoneLine(data?.phoneLine || null);
+    setProviderConnected(data?.providerConnected === true);
+    setNumberVerified(data?.numberVerified === true);
+    setProviderNumber(String(data?.providerNumber || ""));
     setProviderError(String(data?.providerError || ""));
     if (data?.scripts?.greeting) setGreeting(String(data.scripts.greeting));
     if (data?.scripts?.inbound) setInboundPrompt(String(data.scripts.inbound));
@@ -111,6 +117,9 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
       if (invokeError) { setProviderError(invokeError.message); return; }
       if (!data) return;
       setPhoneLine(data.phoneLine || null);
+      setProviderConnected(data.providerConnected === true);
+      setNumberVerified(data.numberVerified === true);
+      setProviderNumber(String(data.providerNumber || ""));
       setProviderError(String(data.providerError || ""));
       if (data.scripts?.greeting) setGreeting(String(data.scripts.greeting));
       if (data.scripts?.inbound) setInboundPrompt(String(data.scripts.inbound));
@@ -150,6 +159,10 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     const to = normalizePhone(testNumber);
     if (!to) { setError("Enter a valid Kenyan mobile number."); return; }
     if (!testConsent) { setError("Confirm you own this number or have permission to receive the test call."); return; }
+    if (!providerConnected || !numberVerified || !providerNumber) {
+      setError("A real, verified SautiKit caller number is not connected to this workspace yet. Connect/claim a dialable number in SautiKit and have TWIGA verify it before placing a test call.");
+      return;
+    }
     if (!supabase || !businessId) { setError("Select a business workspace first."); return; }
     if (!window.confirm("Place a real AI test call to " + to + "? Provider call charges may apply.")) return;
     setTesting(true); setError(""); setMessage("Sending your AI test call request…");
@@ -165,7 +178,7 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     if (!offer.trim()) { setError("Publish an offer before starting the campaign."); return; }
     if (!optedIn.length) { setError("Your CSV needs a consent/opt-in column, and at least one contact must have agreed to promotional calls."); return; }
     if (!days.length) { setError("Choose at least one calling day."); return; }
-    if (phoneLine?.outbound_enabled !== true || phoneLine?.outbound_status !== "active") {
+    if (!providerConnected || !numberVerified || !providerNumber || phoneLine?.outbound_enabled !== true || phoneLine?.outbound_status !== "active") {
       setError("Campaigns cannot be dispatched yet. This business's SautiKit outbound line is not verified and active. TWIGA must verify and enable outbound calling before calls can be placed. No campaign was queued.");
       return;
     }
@@ -219,10 +232,10 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-bold uppercase tracking-wide text-orange-700">Outbound readiness</p>
-          <p className="mt-1 text-sm font-semibold text-neutral-950">{configLoading ? "Checking the phone service…" : phoneLine?.outbound_enabled === true && phoneLine?.outbound_status === "active" ? "Outbound calling is active" : "Outbound calling is not enabled yet"}</p>
-          <p className="mt-1 text-xs leading-5 text-neutral-700">{configLoading ? "Reading the live SautiKit line status." : phoneLine ? "Line status: " + String(phoneLine.outbound_status || "not configured") + " · " + (phoneLine.outbound_enabled === true ? "Enabled" : "Disabled") + (phoneLine.line_number ? " · " + String(phoneLine.line_number) : "") : "No SautiKit phone line is assigned to this business."}</p>
+          <p className="mt-1 text-sm font-semibold text-neutral-950">{configLoading ? "Checking the phone service…" : !providerConnected || !numberVerified || !providerNumber ? "No verified SautiKit caller number" : phoneLine?.outbound_enabled === true && phoneLine?.outbound_status === "active" ? "Outbound calling is active" : "Caller number found · outbound is not enabled"}</p>
+          <p className="mt-1 text-xs leading-5 text-neutral-700">{configLoading ? "Reading the live SautiKit line status." : !providerConnected || !numberVerified || !providerNumber ? "No verified, dialable SautiKit number is connected to this workspace." : phoneLine ? "Verified caller: " + providerNumber + " · Line status: " + String(phoneLine.outbound_status || "not configured") + " · " + (phoneLine.outbound_enabled === true ? "Enabled" : "Disabled") : "No SautiKit phone line is assigned to this business."}</p>
           {providerError && <p className="mt-1 text-xs leading-5 text-neutral-600">{providerError}</p>}
-          {phoneLine?.outbound_enabled !== true || phoneLine?.outbound_status !== "active" ? <p className="mt-2 text-xs font-medium leading-5 text-amber-950">Weekend selection and queue scheduling do not activate a phone line. A TWIGA administrator must verify the provider number, published agent and outbound permission before campaign calls can be sent.</p> : <p className="mt-2 text-xs text-neutral-700">Campaign calls will respect the selected Nairobi days and time window.</p>}
+          {!providerConnected || !numberVerified || !providerNumber || phoneLine?.outbound_enabled !== true || phoneLine?.outbound_status !== "active" ? <p className="mt-2 text-xs font-medium leading-5 text-amber-950">The connected SautiKit workspace must contain a dialable number, and TWIGA must verify that number and enable outbound. The campaign will stay blocked until all three checks pass.</p> : <p className="mt-2 text-xs text-neutral-700">Campaign calls will respect the selected Nairobi days and time window.</p>}
         </div>
         <button type="button" onClick={() => { setConfigLoading(true); void refreshPhoneConfig().catch(e => setProviderError(e instanceof Error ? e.message : "Could not refresh phone status.")).finally(() => setConfigLoading(false)); }} disabled={configLoading} className="shrink-0 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 disabled:opacity-50">Refresh phone status</button>
       </div>
@@ -250,10 +263,10 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
       <div className="mt-3 flex flex-wrap gap-2">{DAY_OPTIONS.map(d => <button type="button" key={d.id} aria-pressed={days.includes(d.id)} onClick={() => setDays(old => old.includes(d.id) ? old.filter(x => x !== d.id) : [...old, d.id])} className={"rounded-xl border px-4 py-2 text-sm font-semibold transition-colors " + (days.includes(d.id) ? "border-orange-400 bg-orange-500 text-white" : "border-neutral-200 bg-white text-neutral-600 hover:border-orange-300")}>{d.label}</button>)}</div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-sm font-semibold text-neutral-700">Start time (Kenya time)<input type="time" value={start} onChange={e => setStart(e.target.value)} className="mt-1 block w-full rounded-xl border border-neutral-200 p-3" /></label><label className="text-sm font-semibold text-neutral-700">End time (Kenya time)<input type="time" value={end} onChange={e => setEnd(e.target.value)} className="mt-1 block w-full rounded-xl border border-neutral-200 p-3" /></label></div>
       <p className="mt-3 text-xs text-neutral-500">Calls are queued at least five minutes apart and only for contacts marked opted-in. Check local rules and your customers' preferences before launching.</p>
-      <button onClick={() => void launch()} disabled={launching || !optedIn.length || configLoading || phoneLine?.outbound_enabled !== true || phoneLine?.outbound_status !== "active"} className="mt-4 w-full rounded-xl bg-neutral-950 px-4 py-3 text-sm font-bold text-white hover:bg-neutral-800 disabled:opacity-40">{launching ? "Scheduling campaign…" : "Start outreach campaign · " + optedIn.length + " opted-in contacts"}</button>
+      <button onClick={() => void launch()} disabled={launching || !optedIn.length || configLoading || !providerConnected || !numberVerified || !providerNumber || phoneLine?.outbound_enabled !== true || phoneLine?.outbound_status !== "active"} className="mt-4 w-full rounded-xl bg-neutral-950 px-4 py-3 text-sm font-bold text-white hover:bg-neutral-800 disabled:opacity-40">{launching ? "Scheduling campaign…" : "Start outreach campaign · " + optedIn.length + " opted-in contacts"}</button>
     </section>
     <section className="grid gap-5 lg:grid-cols-2">
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-bold uppercase tracking-wide text-orange-600">04 · Real test call</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Call yourself first</h2><p className="mt-1 text-sm text-neutral-600">Your requested number is prefilled. This places a real provider call and may incur call charges.</p><label className="mt-4 block text-sm font-semibold text-neutral-700">Your mobile number<input value={testNumber} onChange={e => setTestNumber(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-200 p-3" /></label><label className="mt-3 flex items-start gap-2 text-xs text-neutral-600"><input type="checkbox" checked={testConsent} onChange={e => setTestConsent(e.target.checked)} className="mt-0.5" />I own this number or have permission to receive this test call.</label><button onClick={() => void testCall()} disabled={testing || configLoading} className="mt-4 w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">{testing ? "Calling…" : "Call me · 0793832286"}</button></div>
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-bold uppercase tracking-wide text-orange-600">04 · Real test call</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Call yourself first</h2><p className="mt-1 text-sm text-neutral-600">Your requested number is prefilled. This places a real provider call and may incur call charges.</p><label className="mt-4 block text-sm font-semibold text-neutral-700">Your mobile number<input value={testNumber} onChange={e => setTestNumber(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-200 p-3" /></label><label className="mt-3 flex items-start gap-2 text-xs text-neutral-600"><input type="checkbox" checked={testConsent} onChange={e => setTestConsent(e.target.checked)} className="mt-0.5" />I own this number or have permission to receive this test call.</label><button onClick={() => void testCall()} disabled={testing || configLoading || !providerConnected || !numberVerified || !providerNumber} className="mt-4 w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">{testing ? "Calling…" : "Call me · 0793832286"}</button></div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-bold uppercase tracking-wide text-orange-600">05 · AI test space</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Try a customer question</h2><p className="mt-1 text-sm text-neutral-600">Preview your script and think through common questions before the live call.</p><textarea value={testText} onChange={e => setTestText(e.target.value)} rows={3} className="mt-4 w-full rounded-xl border border-neutral-200 p-3 text-sm" /><button onClick={runTextTest} className="mt-2 rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-bold text-neutral-800 hover:bg-neutral-50">Preview response</button>{testReply && <div className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm leading-6 text-neutral-800">{testReply}</div>}<p className="mt-3 text-xs text-neutral-500">This text preview is a rehearsal aid, not a live model response. Use the real test call above to hear the configured voice.</p></div>
     </section>
   </div>;
