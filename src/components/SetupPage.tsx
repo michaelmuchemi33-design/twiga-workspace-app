@@ -69,7 +69,7 @@ function readableText(value: unknown, fallback = "", depth = 0): string {
   return fallback;
 }
 
-export default function SetupPage({ demo = false, onDone, onOpenConnections }: {
+export default function SetupPage({ demo = false, onDone, onOpenConnections, onOpenCoreConnections }: {
   demo?: boolean;
   businessId?: string;
   onDone: () => void;
