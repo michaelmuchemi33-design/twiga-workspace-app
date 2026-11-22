@@ -281,6 +281,51 @@ Deno.serve(async (req: Request) => {
         }));
         if (contacts.some((contact: any) => !contact.phone)) return json({ error: "One or more phone numbers are invalid. Use Kenyan 07… / 01… or international +country format." }, 400);
         if (new Set(contacts.map((contact: any) => contact.phone)).size !== contacts.length) return json({ error: "The recipient list contains duplicate phone numbers. Remove duplicates before scheduling." }, 400);
+        const requestedPhones = contacts.map((contact: any) => contact.phone);
+        const [savedCustomersResult, paidOrdersResult] = await Promise.all([
+          admin.from("twiga_customers").select("name,phone,email,notes").eq("business_id", businessId).in("phone", requestedPhones).limit(500),
+          admin.from("twiga_orders").select("customer_phone,items,description,total_amount,currency,created_at,payment_status,status").eq("business_id", businessId).in("customer_phone", requestedPhones).limit(1000),
+        ]);
+        if (savedCustomersResult.error) throw savedCustomersResult.error;
+        if (paidOrdersResult.error) throw paidOrdersResult.error;
+        const savedCustomerByPhone = new Map<string, any>();
+        for (const person of savedCustomersResult.data || []) {
+          const normalized = normalizePhone(person.phone);
+          if (normalized) savedCustomerByPhone.set(normalized, person);
+        }
+        const purchasedByPhone = new Map<string, { items: string[]; lastPurchaseAt: string }>();
+        for (const order of paidOrdersResult.data || []) {
+          const paymentStatus = String(order.payment_status || "").toLowerCase();
+          const orderStatus = String(order.status || "").toLowerCase();
+          if (paymentStatus !== "paid" && !["completed", "delivered", "fulfilled"].includes(orderStatus)) continue;
+          const normalized = normalizePhone(order.customer_phone);
+          if (!normalized) continue;
+          let items: any[] = [];
+          if (Array.isArray(order.items)) items = order.items;
+          else if (typeof order.items === "string" && order.items.trim()) {
+            try { const parsed = JSON.parse(order.items); items = Array.isArray(parsed) ? parsed : []; } catch { items = []; }
+          }
+          const itemText = items.map((item: any) => {
+            const name = safe(item?.name || item?.product_name || item?.item || "", 100);
+            const quantity = Math.max(1, Number(item?.quantity || 1));
+            return name ? name + (quantity > 1 ? " x" + quantity : "") : "";
+          }).filter(Boolean);
+          if (!itemText.length && safe(order.description, 160)) itemText.push(safe(order.description, 160));
+          const entry = purchasedByPhone.get(normalized) || { items: [], lastPurchaseAt: "" };
+          entry.items.push(...itemText);
+          if (!entry.lastPurchaseAt || String(order.created_at || "") > entry.lastPurchaseAt) entry.lastPurchaseAt = String(order.created_at || "");
+          purchasedByPhone.set(normalized, entry);
+        }
+        for (const contact of contacts) {
+          const savedCustomer = savedCustomerByPhone.get(contact.phone);
+          const purchaseHistory = purchasedByPhone.get(contact.phone);
+          if (!contact.name && savedCustomer?.name) contact.name = safe(savedCustomer.name, 120);
+          if (!contact.profile.email && savedCustomer?.email) contact.profile.email = safe(savedCustomer.email, 180);
+          if (!contact.profile.notes && savedCustomer?.notes) contact.profile.notes = safe(savedCustomer.notes, 1000);
+          if (!contact.profile.itemsBought && purchaseHistory?.items.length) contact.profile.itemsBought = Array.from(new Set(purchaseHistory.items)).slice(0, 12).join(", ").slice(0, 1500);
+          if (!contact.profile.lastPurchaseAt && purchaseHistory?.lastPurchaseAt) contact.profile.lastPurchaseAt = purchaseHistory.lastPurchaseAt.slice(0, 40);
+        }
+
         const invalidSchedule = contacts.find((contact: any) => !contact.scheduledAt || !Number.isFinite(contact.scheduledAt.getTime()) || contact.scheduledAt.getTime() < Date.now() + 30000);
         if (invalidSchedule) return json({ error: "Every recipient needs a future calling time at least 30 seconds from now." }, 400);
         const reason = safe(body.reason, 500);
