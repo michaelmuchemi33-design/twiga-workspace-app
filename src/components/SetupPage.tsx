@@ -70,6 +70,7 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections }: {
   const [notice, setNotice] = useState("");
   const [documents, setDocuments] = useState<SetupDocument[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [publisherOpen, setPublisherOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -287,7 +288,6 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections }: {
           {documents.length > 0 && <div className="mb-3 flex flex-wrap gap-2">
             {documents.map((document) => <span key={document.id} className="inline-flex max-w-full items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-2.5 py-1.5 text-xs text-neutral-700 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-200"><IconFile className="h-3.5 w-3.5 shrink-0 text-orange-500" /><span className="min-w-0"><span className="block truncate font-semibold">{document.name}</span><span className="block text-[10px] text-neutral-500">{document.extractionStatus} · {Math.ceil(document.sizeBytes / 1024)} KB</span></span><button type="button" onClick={() => setDocuments((current) => current.filter((item) => item.id !== document.id))} className="rounded p-1 hover:bg-neutral-200 dark:hover:bg-neutral-800" aria-label={"Remove " + document.name}><IconClose className="h-3 w-3" /></button></span>)}
           </div>}
-          <div className="mb-3"><Chat33QuickPublisher compact /></div>
           <div className="flex items-end gap-2">
             <Textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder="Describe your business, services, prices, or how you work…" rows={2} className="min-h-[54px] resize-y rounded-xl border-neutral-200 text-sm" disabled={demo || sending || building} />
             <Button onClick={() => void sendMessage()} disabled={demo || sending || building || !input.trim()} className="h-[54px] rounded-xl bg-neutral-950 px-4 text-white hover:bg-neutral-800 dark:bg-black dark:text-white"><IconSend className="h-4 w-4" /><span className="sr-only">Send</span></Button>
@@ -297,6 +297,56 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections }: {
           </div>
         </div>
       </section>
+
+      <div className="flex justify-center">
+        <Button
+          type="button"
+          onClick={() => setPublisherOpen(true)}
+          className="flex h-auto min-h-14 w-full max-w-xl items-center justify-start gap-3 rounded-2xl border border-orange-500 bg-orange-500 px-5 py-3 text-left text-white shadow-sm transition-colors hover:border-orange-600 hover:bg-orange-600"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15 text-white">
+            <IconSend className="h-5 w-5" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold">Publish to your socials</span>
+            <span className="mt-0.5 block text-xs font-normal text-white/85">Create one post for your connected Chat33 channels</span>
+          </span>
+        </Button>
+      </div>
+
+      <div
+        className={publisherOpen ? "fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6" : "hidden"}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Publish to your socials"
+        aria-hidden={!publisherOpen}
+      >
+        <button
+          type="button"
+          aria-label="Close social publisher"
+          onClick={() => setPublisherOpen(false)}
+          className="absolute inset-0 bg-neutral-950/70 backdrop-blur-sm"
+        />
+        <div className="relative z-10 flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-2xl dark:border-neutral-700 dark:bg-neutral-950">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800 sm:px-5">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-orange-500 text-white">
+                <IconSend className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-neutral-950 dark:text-neutral-100">Publish to your socials</p>
+                <p className="text-xs text-neutral-500">Choose channels, add your media and publish through Chat33</p>
+              </div>
+            </div>
+            <Button type="button" variant="outline" onClick={() => setPublisherOpen(false)} className="shrink-0 rounded-xl border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-100 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800">
+              <IconClose className="mr-1.5 h-4 w-4" /> Close
+            </Button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
+            <Chat33QuickPublisher compact />
+          </div>
+        </div>
+      </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-xl text-xs leading-5 text-neutral-500 dark:text-neutral-400">TWIGA will identify the apps and API keys required for the workflows you describe, then prompt you to connect each missing provider through secure forms. Never send keys or PINs in the chat.</p>
