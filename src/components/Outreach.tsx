@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import { supabase } from "@/lib/supabase";
 
-type Contact = { name: string; phone: string; consent: boolean };
+type Contact = { name: string; phone: string; consent: boolean; optOut?: boolean; email?: string; itemsBought?: string; notes?: string; preferredLanguage?: string; lastPurchaseAt?: string; followUpAt?: string };
 const DEFAULT_SCRIPT = "Hello, this is the AI assistant calling on behalf of {{business_name}}. We have a special offer: {{offer}}. Would you like me to tell you more? If you are not interested, I can end the call and make sure we do not contact you about this offer again.";
 const DAY_OPTIONS = [{ id: 1, label: "Mon" }, { id: 2, label: "Tue" }, { id: 3, label: "Wed" }, { id: 4, label: "Thu" }, { id: 5, label: "Fri" }, { id: 6, label: "Sat" }, { id: 0, label: "Sun" }];
 const NAIROBI_TIME_ZONE = "Africa/Nairobi";
@@ -28,14 +29,29 @@ function parseCsv(text: string): Contact[] {
   row.push(cell.trim()); if (row.some(Boolean)) rows.push(row);
   if (rows.length < 2) return [];
   const headers = rows[0].map(h => h.toLowerCase().replace(/[ _-]/g, ""));
-  const phoneIndex = headers.findIndex(h => ["phone", "phonenumber", "mobile", "number"].includes(h));
-  const nameIndex = headers.findIndex(h => ["name", "customer", "customername", "firstname"].includes(h));
-  const consentIndex = headers.findIndex(h => ["consent", "optin", "optedin", "permission"].includes(h));
-  if (phoneIndex < 0 || consentIndex < 0) throw new Error("CSV must include phone and consent columns. Use consent values yes/true/1/opted-in for people who agreed to promotional calls.");
+  const index = (names: string[]) => headers.findIndex(h => names.includes(h));
+  const phoneIndex = index(["phone", "phonenumber", "mobile", "number"]);
+  const nameIndex = index(["name", "customer", "customername", "firstname"]);
+  const consentIndex = index(["consent", "optin", "optedin", "permission", "marketingconsent"]);
+  const optOutIndex = index(["optout", "unsubscribe", "unsubscribed", "donotcontact"]);
+  const emailIndex = index(["email", "emailaddress"]);
+  const purchasesIndex = index(["itemsbought", "purchases", "purchasehistory", "productsbought", "productinterest", "items"]);
+  const notesIndex = index(["notes", "customernotes", "context"]);
+  const languageIndex = index(["preferredlanguage", "language", "customerlanguage"]);
+  const lastPurchaseIndex = index(["lastpurchaseat", "lastpurchase", "lastpurchasedate"]);
+  const followUpIndex = index(["followupat", "followupdate"]);
+  if (phoneIndex < 0 || consentIndex < 0) throw new Error("Your CSV/XLSX needs phone and consent columns. Add name, email, items_bought, notes, preferred_language and last_purchase_at where available.");
   return rows.slice(1).map(r => ({
     name: nameIndex >= 0 ? (r[nameIndex] || "Customer") : "Customer",
     phone: normalizePhone(r[phoneIndex] || ""),
     consent: ["yes", "true", "1", "opt-in", "opted-in", "consented"].includes(String(r[consentIndex] || "").toLowerCase().trim()),
+    optOut: optOutIndex >= 0 && ["yes", "true", "1", "unsubscribe", "opted-out"].includes(String(r[optOutIndex] || "").toLowerCase().trim()),
+    email: emailIndex >= 0 ? String(r[emailIndex] || "").trim() : "",
+    itemsBought: purchasesIndex >= 0 ? String(r[purchasesIndex] || "").trim() : "",
+    notes: notesIndex >= 0 ? String(r[notesIndex] || "").trim() : "",
+    preferredLanguage: languageIndex >= 0 ? String(r[languageIndex] || "").trim() : "",
+    lastPurchaseAt: lastPurchaseIndex >= 0 ? String(r[lastPurchaseIndex] || "").trim() : "",
+    followUpAt: followUpIndex >= 0 ? String(r[followUpIndex] || "").trim() : "",
   })).filter(c => c.phone);
 }
 function nairobiDateParts(date: Date) {
@@ -80,8 +96,8 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
   const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5, 6, 0]);
   const [start, setStart] = useState("09:00");
   const [end, setEnd] = useState("17:00");
-  const [testNumber, setTestNumber] = useState("0793832286");
-  const [testConsent, setTestConsent] = useState(true);
+  const [testNumber, setTestNumber] = useState("");
+  const [testConsent, setTestConsent] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -127,7 +143,7 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     }).finally(() => { if (active) setConfigLoading(false); });
     return () => { active = false; };
   }, [businessId, demo]);
-  const optedIn = contacts.filter(c => c.consent);
+  const optedIn = contacts.filter(c => c.consent && !c.optOut);
   const invalidCount = useMemo(() => contacts.length - optedIn.length, [contacts, optedIn.length]);
   const publishedPrompt = useMemo(() => script.replaceAll("{{offer}}", offer || "our current offer"), [script, offer]);
 
@@ -135,11 +151,64 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     if (!file) return;
     setError(""); setMessage("");
     try {
-      if (!file.name.toLowerCase().endsWith(".csv")) throw new Error("Please upload a .csv file.");
-      const parsed = parseCsv(await file.text());
-      if (!parsed.length) throw new Error("No valid Kenyan phone numbers were found in this CSV.");
-      setContacts(parsed); setFileName(file.name);
-      setMessage("Imported " + parsed.length + " valid numbers. " + parsed.filter(c => c.consent).length + " have recorded promotional-call consent.");
+      const extension = file.name.toLowerCase().split(".").pop() || "";
+      if (!["csv", "xlsx", "xls"].includes(extension)) throw new Error("Upload a CSV or Excel workbook (.csv, .xlsx or .xls).");
+      let sourceText = "";
+      if (extension === "csv") sourceText = await file.text();
+      else {
+        const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+        const firstSheet = workbook.SheetNames[0];
+        if (!firstSheet) throw new Error("The Excel workbook has no worksheet.");
+        sourceText = XLSX.utils.sheet_to_csv(workbook.Sheets[firstSheet]);
+      }
+      const parsed = parseCsv(sourceText);
+      const deduped = Array.from(new Map(parsed.map(contact => [contact.phone, contact])).values());
+      if (!deduped.length) throw new Error("No valid Kenyan phone numbers were found in this file.");
+      if (deduped.length > 500) throw new Error("Upload up to 500 contacts per file. Split larger lists into separate files.");
+      if (!supabase || !businessId) throw new Error("Select a signed-in business workspace first.");
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !sessionData.session?.access_token) throw new Error("Your sign-in has expired. Sign in again.");
+      const endpoint = "https://twiga-business-files.twiga-ke.workers.dev/v1/contacts/" + encodeURIComponent(businessId);
+      const authHeaders = { Authorization: "Bearer " + sessionData.session.access_token };
+      const existingResponse = await fetch(endpoint + "?limit=500", { headers: authHeaders });
+      const existingPayload = await existingResponse.json().catch(() => ({}));
+      if (!existingResponse.ok || existingPayload?.ok !== true) throw new Error(String(existingPayload?.error || "Saved customer profiles could not be loaded."));
+      const existingByPhone = new Map<string, any>((Array.isArray(existingPayload.contacts) ? existingPayload.contacts : []).map((person: any) => [normalizePhone(person.Phone || person.phone), person]));
+      const enriched = deduped.map(contact => {
+        const existing = existingByPhone.get(contact.phone) || {};
+        let priorPurchases = "";
+        try {
+          const parsed = typeof existing.Purchases === "string" ? JSON.parse(existing.Purchases) : existing.Purchases;
+          priorPurchases = Array.isArray(parsed) ? parsed.map((item: any) => typeof item === "string" ? item : String(item?.name || item?.item || "")).filter(Boolean).join(", ") : "";
+        } catch { priorPurchases = ""; }
+        return {
+          ...contact,
+          email: contact.email || existing.Email || "",
+          itemsBought: contact.itemsBought || priorPurchases,
+          notes: contact.notes || existing.Notes || "",
+          preferredLanguage: contact.preferredLanguage || existing.PreferredLanguage || "",
+          lastPurchaseAt: contact.lastPurchaseAt || existing.LastPurchaseAt || "",
+          followUpAt: contact.followUpAt || existing.FollowUpAt || "",
+          optOut: contact.optOut === true || !!existing.OptedOutAt,
+        };
+      });
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: "csv",
+          contacts: enriched.map(contact => ({
+            name: contact.name, phone: contact.phone, email: contact.email || "",
+            purchases: contact.itemsBought || "", notes: contact.notes || "",
+            preferredLanguage: contact.preferredLanguage || "", lastPurchaseAt: contact.lastPurchaseAt || "",
+            followUpAt: contact.followUpAt || "", marketingConsent: contact.consent, optOut: contact.optOut === true,
+          })),
+        }),
+      });
+      const saved = await response.json().catch(() => ({}));
+      if (!response.ok || saved?.ok !== true) throw new Error(String(saved?.error || "Customer profiles could not be saved to this business workspace."));
+      setContacts(enriched); setFileName(file.name);
+      setMessage("Imported and saved " + Number(saved.saved || enriched.length) + " customer profiles to this business. " + enriched.filter(c => c.consent && !c.optOut).length + " have recorded promotional-call consent; saved opt-outs remain excluded.");
     } catch (e) { setError(e instanceof Error ? e.message : "Could not read this CSV."); }
   };
   const publish = async () => {
@@ -188,11 +257,11 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     if (!window.confirm("Queue " + optedIn.length + " consented contacts for promotional calls during " + start + "–" + end + " on your selected days? Calls will be scheduled, not placed all at once.")) return;
     setLaunching(true); setError(""); setMessage("Scheduling opted-in contacts…");
     try {
-      const scheduledContacts: { name: string; phone: string; scheduledAt: string }[] = [];
+      const scheduledContacts: { name: string; phone: string; scheduledAt: string; email?: string; itemsBought?: string; notes?: string; preferredLanguage?: string; lastPurchaseAt?: string }[] = [];
       let cursor = new Date(Date.now() + 5 * 60_000);
       for (const contact of optedIn) {
         const slot = nextSlot(cursor, days, start, end);
-        scheduledContacts.push({ name: contact.name, phone: contact.phone, scheduledAt: slot.toISOString() });
+        scheduledContacts.push({ name: contact.name, phone: contact.phone, scheduledAt: slot.toISOString(), email: contact.email, itemsBought: contact.itemsBought, notes: contact.notes, preferredLanguage: contact.preferredLanguage, lastPurchaseAt: contact.lastPurchaseAt });
         cursor = new Date(slot.getTime() + 5 * 60_000);
       }
       const { data, error: scheduleError } = await supabase.functions.invoke("twiga-scheduled-calls", {
@@ -207,7 +276,8 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
           callingWindowEnd: end,
           allowedDays: days,
           triggerType: "timer",
-          retryOnNoAnswer: false,
+          retryOnNoAnswer: true,
+          retryDelayMinutes: 30,
         },
       });
       if (scheduleError) throw new Error(scheduleError.message);
@@ -249,9 +319,9 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
         <button onClick={() => void publish()} disabled={publishing} className="w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">{publishing ? "Publishing…" : "Publish offer to AI"}</button>
       </div>
       <div className="space-y-4 rounded-2xl border border-neutral-200 bg-white p-5">
-        <div><p className="text-xs font-bold uppercase tracking-wide text-orange-600">02 · Contact list</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Upload your CSV</h2><p className="mt-1 text-sm text-neutral-600">Required columns: phone and consent. Optional: name. Only people who agreed to promotional calls will be queued.</p></div>
-        <button onClick={() => fileRef.current?.click()} className="flex w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 px-4 py-8 text-center hover:border-orange-400"><span className="text-2xl">↑</span><span className="mt-2 text-sm font-bold text-neutral-800">Choose CSV file</span><span className="mt-1 text-xs text-neutral-500">{fileName || "Upload .csv · max 200 opted-in contacts per batch"}</span></button>
-        <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={e => void importFile(e.target.files?.[0])} />
+        <div><p className="text-xs font-bold uppercase tracking-wide text-orange-600">02 · Contact list</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Upload your CSV or Excel list</h2><p className="mt-1 text-sm text-neutral-600">Required columns: phone and consent. Optional: name, email, items_bought, notes, preferred_language and last_purchase_at. Each contact is saved to this business's private customer directory.</p></div>
+        <button onClick={() => fileRef.current?.click()} className="flex w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 px-4 py-8 text-center hover:border-orange-400"><span className="text-2xl">↑</span><span className="mt-2 text-sm font-bold text-neutral-800">Choose CSV or Excel file</span><span className="mt-1 text-xs text-neutral-500">{fileName || "Upload .csv, .xlsx or .xls · up to 500 saved profiles"}</span></button>
+        <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" className="hidden" onChange={e => void importFile(e.target.files?.[0])} />
         <div className="grid grid-cols-3 gap-2"><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Valid numbers</p><p className="text-xl font-bold text-neutral-900">{contacts.length}</p></div><div className="rounded-xl bg-orange-50 p-3"><p className="text-xs text-orange-700">Opted in</p><p className="text-xl font-bold text-neutral-900">{optedIn.length}</p></div><div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-500">Not eligible</p><p className="text-xl font-bold text-neutral-900">{invalidCount}</p></div></div>
         <p className="text-xs text-neutral-500">Example CSV: <code>name,phone,consent</code> then <code>Jane,0712345678,yes</code>. Keep proof of consent and honour opt-outs.</p>
         {contacts.length > 0 && <div className="max-h-36 overflow-y-auto rounded-xl border border-neutral-200"><div className="grid grid-cols-3 bg-neutral-50 px-3 py-2 text-xs font-bold text-neutral-600"><span>Name</span><span>Phone</span><span>Permission</span></div>{contacts.slice(0, 8).map((c, i) => <div key={i} className="grid grid-cols-3 border-t border-neutral-100 px-3 py-2 text-xs"><span className="truncate">{c.name}</span><span>{c.phone}</span><span className={c.consent ? "text-orange-700" : "text-neutral-500"}>{c.consent ? "Opted in" : "Not eligible"}</span></div>)}</div>}
@@ -266,7 +336,7 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
       <button onClick={() => void launch()} disabled={launching || !optedIn.length || configLoading || !providerConnected || !numberVerified || !providerNumber || phoneLine?.outbound_enabled !== true || phoneLine?.outbound_status !== "active"} className="mt-4 w-full rounded-xl bg-neutral-950 px-4 py-3 text-sm font-bold text-white hover:bg-neutral-800 disabled:opacity-40">{launching ? "Scheduling campaign…" : "Start outreach campaign · " + optedIn.length + " opted-in contacts"}</button>
     </section>
     <section className="grid gap-5 lg:grid-cols-2">
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-bold uppercase tracking-wide text-orange-600">04 · Real test call</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Call yourself first</h2><p className="mt-1 text-sm text-neutral-600">Your requested number is prefilled. This places a real provider call and may incur call charges.</p><label className="mt-4 block text-sm font-semibold text-neutral-700">Your mobile number<input value={testNumber} onChange={e => setTestNumber(e.target.value)} className="mt-1 w-full rounded-xl border border-neutral-200 p-3" /></label><label className="mt-3 flex items-start gap-2 text-xs text-neutral-600"><input type="checkbox" checked={testConsent} onChange={e => setTestConsent(e.target.checked)} className="mt-0.5" />I own this number or have permission to receive this test call.</label><button onClick={() => void testCall()} disabled={testing || configLoading || !providerConnected || !numberVerified || !providerNumber} className="mt-4 w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">{testing ? "Calling…" : "Call me · 0793832286"}</button></div>
+      <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-bold uppercase tracking-wide text-orange-600">04 · Real test call</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Call yourself first</h2><p className="mt-1 text-sm text-neutral-600">Enter your own number only when you are ready to place a real test call. Provider charges may apply.</p><label className="mt-4 block text-sm font-semibold text-neutral-700">Your mobile number<input value={testNumber} onChange={e => setTestNumber(e.target.value)} placeholder="+2547XXXXXXXX" autoComplete="tel" className="mt-1 w-full rounded-xl border border-neutral-200 p-3" /></label><label className="mt-3 flex items-start gap-2 text-xs text-neutral-600"><input type="checkbox" checked={testConsent} onChange={e => setTestConsent(e.target.checked)} className="mt-0.5" />I own this number or have permission to receive this test call.</label><button onClick={() => void testCall()} disabled={testing || configLoading || !providerConnected || !numberVerified || !providerNumber || !testNumber.trim() || !testConsent} className="mt-4 w-full rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">{testing ? "Calling…" : "Place test call"}</button></div>
       <div className="rounded-2xl border border-neutral-200 bg-white p-5"><p className="text-xs font-bold uppercase tracking-wide text-orange-600">05 · AI test space</p><h2 className="mt-1 text-xl font-bold text-neutral-950">Try a customer question</h2><p className="mt-1 text-sm text-neutral-600">Preview your script and think through common questions before the live call.</p><textarea value={testText} onChange={e => setTestText(e.target.value)} rows={3} className="mt-4 w-full rounded-xl border border-neutral-200 p-3 text-sm" /><button onClick={runTextTest} className="mt-2 rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-bold text-neutral-800 hover:bg-neutral-50">Preview response</button>{testReply && <div className="mt-3 rounded-xl bg-neutral-50 p-3 text-sm leading-6 text-neutral-800">{testReply}</div>}<p className="mt-3 text-xs text-neutral-500">This text preview is a rehearsal aid, not a live model response. Use the real test call above to hear the configured voice.</p></div>
     </section>
   </div>;

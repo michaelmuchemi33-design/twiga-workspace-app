@@ -699,12 +699,20 @@ Deno.serve(async (req: Request) => {
         } else {
           providerError = "The shared SautiKit API connection is not configured yet. The TWIGA administrator must connect it in Profile → Platform settings.";
         }
+        const savedScripts: Row = profileSetup.sautikit_scripts && typeof profileSetup.sautikit_scripts === "object" ? profileSetup.sautikit_scripts : {};
         return json({
           phoneLine: null, keyConfigured: !!key, keyLast4: keyRef?.secret_last4 || "",
           keyScope: keySource.startsWith("business") ? "business" : keySource, keySource,
           serverProxyReady: !!key, serverDirectReady: !!key, isPlatformAdmin,
           availableNumbers, providerError,
           voicePreference: { voice: savedVoicePreference.voice || "Woman", gender: savedVoicePreference.gender || (savedVoicePreference.voice === "Man" ? "male" : "female"), model: savedVoicePreference.model || "sautikit-flash" },
+          ownerReportCall: profileSetup.owner_report_call || null,
+          corePrompt: String(profileSetup.sautikit_core_prompt || ""),
+          scripts: {
+            greeting: String(savedScripts.greeting || "Hello, karibu! Thank you for calling {{business_name}}. How can I help you today?"),
+            inbound: String(savedScripts.inbound || "Answer in the caller's language, use only this business's verified information, and save customer requests only with permission."),
+            outbound: String(savedScripts.outbound || "Only call people when this business has authorised the follow-up. Identify the business, explain the reason, and honour opt-outs."),
+          },
         });
       }
       const verificationAt = String(settings.provider_verified_at || "");
@@ -804,7 +812,13 @@ Deno.serve(async (req: Request) => {
         providerError = "The shared TWIGA SautiKit workspace API key is not configured. The platform administrator must connect it before phone service can be activated.";
       }
 
-      const scripts = settings.sautikit_scripts && typeof settings.sautikit_scripts === "object" ? settings.sautikit_scripts : {};
+      const lineScripts: Row = settings.sautikit_scripts && typeof settings.sautikit_scripts === "object" ? settings.sautikit_scripts : {};
+      const profileScripts: Row = profileSetup.sautikit_scripts && typeof profileSetup.sautikit_scripts === "object" ? profileSetup.sautikit_scripts : {};
+      const scripts = {
+        greeting: lineScripts.greeting || profileScripts.greeting || "Hello, karibu! Thank you for calling {{business_name}}. How can I help you today?",
+        inbound: lineScripts.inbound || profileScripts.inbound || "Answer in the caller's language, use only this business's verified information, and save customer requests only with permission.",
+        outbound: lineScripts.outbound || profileScripts.outbound || "Only call people when this business has authorised the follow-up. Identify the business, explain the reason, and honour opt-outs.",
+      };
       return json({
         isPlatformAdmin,
         keyConfigured: !!key,
@@ -840,11 +854,9 @@ Deno.serve(async (req: Request) => {
         number: verifiedNumber,
         models,
         availableNumbers,
-        scripts: {
-          greeting: scripts.greeting || "Hello, karibu! Thank you for calling {{business_name}}. How can I help you today?",
-          inbound: scripts.inbound || "Answer in the caller's language (Kenyan English or Kiswahili). Identify why they are calling, use verified business information, and capture appointment or order requests for the team to confirm. Never claim that a booking, order or payment is complete until TWIGA confirms it was saved.",
-          outbound: scripts.outbound || "Only call a person when the business has authorised the callback. Introduce yourself and the business, explain the reason for the call, ask whether it is a convenient time, keep the conversation brief, and respect requests not to be called again.",
-        },
+        scripts,
+        ownerReportCall: profileSetup.owner_report_call || null,
+        corePrompt: String(profileSetup.sautikit_core_prompt || verifiedAgent?.base_prompt || ""),
         providerError,
         inboundBound: liveInboundVerified || savedProviderVerification,
         inboundVerified: liveInboundVerified || savedProviderVerification,
@@ -980,10 +992,11 @@ Deno.serve(async (req: Request) => {
       const providerVoice = resolveProviderVoice(voices, voice);
       if (!providerVoice) return json({ error: "SautiKit does not list a matching " + (voice === "Man" ? "male" : "female") + " provider voice for this model." }, 400);
 
+      const profileScripts: Row = profile.setup_details?.sautikit_scripts && typeof profile.setup_details.sautikit_scripts === "object" ? profile.setup_details.sautikit_scripts : {};
       const scripts = {
-        greeting: String(body.greeting || settings.sautikit_scripts?.greeting || "Hello, karibu! Thank you for calling " + businessName + ". How can I help you today?").slice(0, 1200),
-        inbound: String(body.inboundPrompt || settings.sautikit_scripts?.inbound || "Answer in the caller's preferred language. Use this business's verified profile, understand the reason for the call, and capture booking or order requests for the team to confirm. Never claim an action is complete unless TWIGA confirms it was saved.").slice(0, 5000),
-        outbound: String(body.outboundPrompt || settings.sautikit_scripts?.outbound || "Only call people when this business has authorised a callback. Identify the business and reason for calling, ask whether it is convenient, keep it brief, and respect requests not to be called again.").slice(0, 5000),
+        greeting: String(body.greeting || settings.sautikit_scripts?.greeting || profileScripts.greeting || "Hello, karibu! Thank you for calling " + businessName + ". How can I help you today?").slice(0, 1200),
+        inbound: String(body.inboundPrompt || settings.sautikit_scripts?.inbound || profileScripts.inbound || "Answer in the caller's preferred language. Use this business's verified profile, understand the reason for the call, and capture booking or order requests for the team to confirm. Never claim an action is complete unless TWIGA confirms it was saved.").slice(0, 5000),
+        outbound: String(body.outboundPrompt || settings.sautikit_scripts?.outbound || profileScripts.outbound || "Only call people when this business has authorised a callback. Identify the business and reason for calling, ask whether it is convenient, keep it brief, and respect requests not to be called again.").slice(0, 5000),
       };
       const profileFacts = [
         "BUSINESS NAME: " + businessName,
@@ -1001,7 +1014,7 @@ Deno.serve(async (req: Request) => {
         "FREQUENTLY ASKED QUESTIONS: " + String(profile.frequently_asked_questions || "").slice(0, 2500),
         "BRAND VOICE: " + String(profile.brand_voice || "Warm, professional and concise").slice(0, 500),
         "REPLY LANGUAGE: " + String(profile.reply_language || businessSettings.language_mode || "Kenyan English and Kiswahili").slice(0, 300),
-        "BUSINESS-SPECIFIC INSTRUCTIONS: " + String(profile.assistant_instructions || body.corePrompt || "").slice(0, 5000),
+        "BUSINESS-SPECIFIC INSTRUCTIONS: " + String(body.corePrompt || profile.setup_details?.sautikit_core_prompt || profile.assistant_instructions || "").slice(0, 10000),
         "ADDITIONAL SETUP DETAILS:\n" + setupDetailLines(profile.setup_details),
       ].filter((value) => !value.endsWith(": "));
       const corePrompt = [

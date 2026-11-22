@@ -228,6 +228,14 @@ export default function Customers({ onOpenCoreFunctions }: { onOpenCoreFunctions
   const callContacts = Array.from(callContactMap.values());
   const searchTerm = contactSearch.trim().toLowerCase();
   const matchesContact = (values: unknown[]) => !searchTerm || values.some(value=>String(value || "").toLowerCase().includes(searchTerm));
+  const profilePurchases = (person: any): string => {
+    const raw = person.Purchases || person.purchases_json || "[]";
+    try {
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      return Array.isArray(parsed) ? parsed.map((item:any) => typeof item === "string" ? item : String(item?.name || item?.item || "")).filter(Boolean).join(", ") : "";
+    } catch { return String(raw || ""); }
+  };
+
   const filteredCloudContacts = cloudContacts.filter((person:any)=>matchesContact([person.Name,person.name,person.Phone,person.phone,person.Email,person.email,person.Source,person.source]));
   const filteredSocialContacts = socialContacts.filter((person:any)=>matchesContact([person.name,person.username,person.phone,person.platform,person.channel,person.source]));
   const filteredCallContacts = callContacts.filter((person:any)=>matchesContact([person.name,person.phone,person.direction]));
@@ -286,6 +294,18 @@ export default function Customers({ onOpenCoreFunctions }: { onOpenCoreFunctions
             {filteredCloudContacts.map((person: any, i: number) => <div key={person.Phone || person.phone || i} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-100 px-3 py-2.5">
               <div><p className="text-sm font-semibold text-neutral-900">{person.Name || person.name || "Contact"}</p><p className="mt-0.5 text-xs text-neutral-500">{person.Phone || person.phone || ""}{(person.Email || person.email) ? " · " + (person.Email || person.email) : ""}</p></div>
               <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-[10px] font-semibold text-neutral-500">Cloudflare · {person.Source || person.source || "Contact"}</span>
+              <details className="w-full rounded-lg bg-neutral-50 px-3 py-2 dark:bg-neutral-900">
+                <summary className="cursor-pointer text-xs font-semibold text-neutral-700 dark:text-neutral-200">Customer mini-profile · purchases, preferences & follow-up</summary>
+                <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                  <p><strong>Previous purchases:</strong> {profilePurchases(person) || "Not recorded"}</p>
+                  <p><strong>Preferred language:</strong> {person.PreferredLanguage || "Not recorded"}</p>
+                  <p><strong>Last purchase:</strong> {person.LastPurchaseAt || "Not recorded"}</p>
+                  <p><strong>Next follow-up:</strong> {person.FollowUpAt || "Not scheduled"}</p>
+                  <p><strong>Lifetime value:</strong> {Number(person.LifetimeValue || 0).toLocaleString("en-KE", { style: "currency", currency: "KES" })}</p>
+                  <p><strong>Marketing permission:</strong> {person.OptedOutAt ? "Opted out" : Number(person.MarketingConsent || 0) === 1 ? "Opted in" : "Not opted in"}</p>
+                  <p className="sm:col-span-2"><strong>Notes:</strong> {person.Notes || "No notes recorded"}</p>
+                </div>
+              </details>
             </div>)}
             {filteredSocialContacts.map((person: any, i: number) => <div key={"social:" + person.slot + ":" + person.platform + ":" + (person.id || i)} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-orange-100 bg-orange-50/30 px-3 py-2.5">
               <div><p className="text-sm font-semibold text-neutral-900">{person.name || person.username || "Social contact"}</p><p className="mt-0.5 text-xs text-neutral-500">{person.username ? "@" + person.username + " · " : ""}{person.channel ? person.channel + " · " : ""}{person.platform ? person.platform.toUpperCase() : "SOCIAL"}{person.slot ? " · Chat33 account " + person.slot : ""}</p></div>
