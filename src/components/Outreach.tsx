@@ -90,6 +90,9 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
   const [testText, setTestText] = useState("A customer asks: What is the offer, how much does it cost, and how can I book?");
   const [testReply, setTestReply] = useState("");
   const [phoneLine, setPhoneLine] = useState<any>(null);
+  const [providerConnected, setProviderConnected] = useState(false);
+  const [numberVerified, setNumberVerified] = useState(false);
+  const [providerNumber, setProviderNumber] = useState("");
   const [providerError, setProviderError] = useState("");
   const [configLoading, setConfigLoading] = useState(true);
   const refreshPhoneConfig = async () => {
@@ -98,6 +101,9 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     if (invokeError) throw new Error(invokeError.message);
     if (data?.error) throw new Error(String(data.error));
     setPhoneLine(data?.phoneLine || null);
+    setProviderConnected(data?.providerConnected === true);
+    setNumberVerified(data?.numberVerified === true);
+    setProviderNumber(String(data?.providerNumber || ""));
     setProviderError(String(data?.providerError || ""));
     if (data?.scripts?.greeting) setGreeting(String(data.scripts.greeting));
     if (data?.scripts?.inbound) setInboundPrompt(String(data.scripts.inbound));
@@ -111,6 +117,9 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
       if (invokeError) { setProviderError(invokeError.message); return; }
       if (!data) return;
       setPhoneLine(data.phoneLine || null);
+      setProviderConnected(data.providerConnected === true);
+      setNumberVerified(data.numberVerified === true);
+      setProviderNumber(String(data.providerNumber || ""));
       setProviderError(String(data.providerError || ""));
       if (data.scripts?.greeting) setGreeting(String(data.scripts.greeting));
       if (data.scripts?.inbound) setInboundPrompt(String(data.scripts.inbound));
@@ -150,6 +159,10 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     const to = normalizePhone(testNumber);
     if (!to) { setError("Enter a valid Kenyan mobile number."); return; }
     if (!testConsent) { setError("Confirm you own this number or have permission to receive the test call."); return; }
+    if (!providerConnected || !numberVerified || !providerNumber) {
+      setError("A real, verified SautiKit caller number is not connected to this workspace yet. Connect/claim a dialable number in SautiKit and have TWIGA verify it before placing a test call.");
+      return;
+    }
     if (!supabase || !businessId) { setError("Select a business workspace first."); return; }
     if (!window.confirm("Place a real AI test call to " + to + "? Provider call charges may apply.")) return;
     setTesting(true); setError(""); setMessage("Sending your AI test call request…");
@@ -165,7 +178,7 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     if (!offer.trim()) { setError("Publish an offer before starting the campaign."); return; }
     if (!optedIn.length) { setError("Your CSV needs a consent/opt-in column, and at least one contact must have agreed to promotional calls."); return; }
     if (!days.length) { setError("Choose at least one calling day."); return; }
-    if (phoneLine?.outbound_enabled !== true || phoneLine?.outbound_status !== "active") {
+    if (!providerConnected || !numberVerified || !providerNumber || phoneLine?.outbound_enabled !== true || phoneLine?.outbound_status !== "active") {
       setError("Campaigns cannot be dispatched yet. This business's SautiKit outbound line is not verified and active. TWIGA must verify and enable outbound calling before calls can be placed. No campaign was queued.");
       return;
     }
@@ -220,7 +233,7 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
         <div className="min-w-0">
           <p className="text-xs font-bold uppercase tracking-wide text-orange-700">Outbound readiness</p>
           <p className="mt-1 text-sm font-semibold text-neutral-950">{configLoading ? "Checking the phone service…" : phoneLine?.outbound_enabled === true && phoneLine?.outbound_status === "active" ? "Outbound calling is active" : "Outbound calling is not enabled yet"}</p>
-          <p className="mt-1 text-xs leading-5 text-neutral-700">{configLoading ? "Reading the live SautiKit line status." : phoneLine ? "Line status: " + String(phoneLine.outbound_status || "not configured") + " · " + (phoneLine.outbound_enabled === true ? "Enabled" : "Disabled") + (phoneLine.line_number ? " · " + String(phoneLine.line_number) : "") : "No SautiKit phone line is assigned to this business."}</p>
+          <p className="mt-1 text-xs leading-5 text-neutral-700">{configLoading ? "Reading the live SautiKit line status." : !providerConnected || !numberVerified || !providerNumber ? "No verified, dialable SautiKit number is connected to this workspace." : phoneLine ? "Verified caller: " + providerNumber + " · Line status: " + String(phoneLine.outbound_status || "not configured") + " · " + (phoneLine.outbound_enabled === true ? "Enabled" : "Disabled") : "No SautiKit phone line is assigned to this business."}</p>
           {providerError && <p className="mt-1 text-xs leading-5 text-neutral-600">{providerError}</p>}
           {phoneLine?.outbound_enabled !== true || phoneLine?.outbound_status !== "active" ? <p className="mt-2 text-xs font-medium leading-5 text-amber-950">Weekend selection and queue scheduling do not activate a phone line. A TWIGA administrator must verify the provider number, published agent and outbound permission before campaign calls can be sent.</p> : <p className="mt-2 text-xs text-neutral-700">Campaign calls will respect the selected Nairobi days and time window.</p>}
         </div>
