@@ -115,7 +115,7 @@ export default function Organizer() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(String(payload?.error || "The AI Worker status could not be loaded."));
-      setWorkerStatus(payload.worker ? { ...payload.worker, counts: payload.counts || { needsReview: 0, pending: 0, processing: 0, failed: 0 } } : null);
+      setWorkerStatus(payload.worker ? { ...payload.worker, counts: payload.counts || { needsReview: 0, pending: 0, processing: 0, failed: 0 }, profileSynced: payload.profileSynced, profileSyncError: payload.profileSyncError || null } : null);
       setWorkerTasks(Array.isArray(payload.tasks) ? payload.tasks : []);
       setWorkerNotifications(Array.isArray(payload.notifications) ? payload.notifications : []);
     } catch (workerError) {
