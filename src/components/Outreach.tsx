@@ -263,7 +263,11 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
         const raw = String(contact.followUpAt || "").trim();
         const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
         const requested = raw ? new Date(dateOnly ? raw + "T" + start + ":00+03:00" : raw) : null;
-        return { contact, index, requestedAt: requested && Number.isFinite(requested.getTime()) && requested.getTime() >= cursor.getTime() ? requested : null };
+        const futureRequest = requested && Number.isFinite(requested.getTime()) && requested.getTime() >= cursor.getTime() ? requested : null;
+        // Move a requested follow-up to the next permitted day/window when it falls
+        // outside this campaign's selected weekdays or Kenya-time calling hours.
+        const requestedAt = futureRequest ? nextSlot(futureRequest, days, start, end) : null;
+        return { contact, index, requestedAt };
       }).sort((a, b) => {
         if (a.requestedAt && b.requestedAt) return a.requestedAt.getTime() - b.requestedAt.getTime();
         if (a.requestedAt) return -1;
