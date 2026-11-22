@@ -101,6 +101,130 @@ async function setJob(admin: any, id: string, values: Record<string, unknown>) {
   const { error } = await admin.from("twiga_scheduled_calls").update({ ...values, updated_at: new Date().toISOString() }).eq("id", id);
   if (error) throw error;
 }
+
+
+function plusMinutes(date: Date, minutes: number) {
+  return new Date(date.getTime() + minutes * 60000);
+}
+function reportDateKey(date: Date, timezone: string) {
+  const p = partsInZone(date, timezone);
+  return [p.year, String(p.month).padStart(2, "0"), String(p.day).padStart(2, "0")].join("-");
+}
+async function buildOwnerReportSummary(admin: any, businessId: string, dateKey: string, timezone: string) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const startAt = localToUtc(year, month, day, 0, 0, timezone).toISOString();
+  const nextDay = new Date(Date.UTC(year, month - 1, day + 1));
+  const endAt = localToUtc(nextDay.getUTCFullYear(), nextDay.getUTCMonth() + 1, nextDay.getUTCDate(), 0, 0, timezone).toISOString();
+  const [ordersResult, tasksResult, appointmentsResult, callsResult, productsResult] = await Promise.all([
+    admin.from("twiga_orders").select("total_amount,payment_status,status").eq("business_id", businessId).gte("created_at", startAt).lt("created_at", endAt).limit(1000),
+    admin.from("twiga_tasks").select("status").eq("business_id", businessId).limit(1000),
+    admin.from("twiga_appointments").select("status").eq("business_id", businessId).gte("scheduled_at", startAt).lt("scheduled_at", endAt).limit(1000),
+    admin.from("twiga_call_records").select("direction,status").eq("business_id", businessId).gte("created_at", startAt).lt("created_at", endAt).limit(1000),
+    admin.from("twiga_products").select("name,stock_quantity,low_stock_threshold,track_stock,is_active").eq("business_id", businessId).eq("is_active", true).limit(1000),
+  ]);
+  const unavailable: string[] = [];
+  if (ordersResult.error) unavailable.push("orders and sales");
+  if (tasksResult.error) unavailable.push("tasks");
+  if (appointmentsResult.error) unavailable.push("appointments");
+  if (callsResult.error) unavailable.push("call records");
+  if (productsResult.error) unavailable.push("inventory");
+  const orders = ordersResult.error ? [] : (ordersResult.data || []);
+  const tasks = tasksResult.error ? [] : (tasksResult.data || []);
+  const appointments = appointmentsResult.error ? [] : (appointmentsResult.data || []);
+  const calls = callsResult.error ? [] : (callsResult.data || []);
+  const products = productsResult.error ? [] : (productsResult.data || []);
+  const totalValue = orders.reduce((sum: number, row: any) => sum + Math.max(0, Number(row.total_amount || 0)), 0);
+  const paid = orders.filter((row: any) => String(row.payment_status || "").toLowerCase() === "paid").length;
+  const unpaid = orders.filter((row: any) => String(row.payment_status || "").toLowerCase() === "unpaid").length;
+  const openTasks = tasks.filter((row: any) => !["done", "completed", "cancelled", "closed", "dismissed"].includes(String(row.status || "").toLowerCase())).length;
+  const activeAppointments = appointments.filter((row: any) => !["cancelled", "canceled"].includes(String(row.status || "").toLowerCase())).length;
+  const inboundCalls = calls.filter((row: any) => String(row.direction || "").toLowerCase() === "inbound").length;
+  const outboundCalls = calls.filter((row: any) => String(row.direction || "").toLowerCase() === "outbound").length;
+  const lowStock = products.filter((row: any) => row.track_stock === true && Number(row.stock_quantity || 0) <= Number(row.low_stock_threshold || 0));
+  const lines = [
+    "Daily business report for " + dateKey + ".",
+    "Orders recorded: " + orders.length + ". Total order value: " + new Intl.NumberFormat("en-KE", { style: "currency", currency: "KES", maximumFractionDigits: 0 }).format(totalValue) + ". Paid orders: " + paid + ". Unpaid orders: " + unpaid + ".",
+    "Appointments scheduled today: " + activeAppointments + ". Inbound calls: " + inboundCalls + ". Outbound calls: " + outboundCalls + ".",
+    "Open staff tasks: " + openTasks + ". Low-stock products: " + lowStock.length + (lowStock.length ? " (" + lowStock.slice(0, 5).map((row: any) => String(row.name || "item").slice(0, 60)).join(", ") + ")" : "") + ".",
+  ];
+  if (unavailable.length) lines.push("Data not available for: " + unavailable.join(", ") + ". Do not guess these figures.");
+  lines.push("Keep the spoken report short, read out the important numbers, and ask whether the owner wants any item escalated to staff. Do not disclose customer names, phone numbers or private customer notes.");
+  return lines.join(" ");
+}
+async function enqueueOwnerReportCalls(admin: any) {
+  const timezone = "Africa/Nairobi";
+  const now = new Date();
+  const parts = partsInZone(now, timezone);
+  const dateKey = reportDateKey(now, timezone);
+  const profilesResult = await admin.from("twiga_business_profiles")
+    .select("business_id,owner_name,updated_by,setup_details").limit(1000);
+  if (profilesResult.error) throw profilesResult.error;
+  let queued = 0;
+  for (const profile of profilesResult.data || []) {
+    const details = profile.setup_details && typeof profile.setup_details === "object" ? profile.setup_details : {};
+    const settings = details.owner_report_call && typeof details.owner_report_call === "object" ? details.owner_report_call : {};
+    if (settings.enabled !== true) continue;
+    const callTime = safe(settings.callTime || "16:30", 5);
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(callTime)) continue;
+    const [hour, minute] = callTime.split(":").map(Number);
+    const minutesLate = parts.hour * 60 + parts.minute - (hour * 60 + minute);
+    if (minutesLate < 0 || minutesLate > 10) continue;
+    const primaryName = safe(settings.ownerName || profile.owner_name, 120);
+    const primaryPhone = normalizePhone(settings.ownerPhone);
+    const nextName = safe(settings.nextOwnerName, 120);
+    const nextPhone = normalizePhone(settings.nextOwnerPhone);
+    if (!primaryName || !primaryPhone || !nextName || !nextPhone || primaryPhone === nextPhone) continue;
+    const businessId = String(profile.business_id || "");
+    if (!businessId) continue;
+    const { data: existing, error: existingError } = await admin.from("twiga_scheduled_calls")
+      .select("id").eq("business_id", businessId)
+      .filter("metadata->>owner_report_date", "eq", dateKey).limit(1);
+    if (existingError) throw existingError;
+    if ((existing || []).length) continue;
+    const { data: business, error: businessError } = await admin.from("businesses")
+      .select("name").eq("id", businessId).maybeSingle();
+    if (businessError) throw businessError;
+    const businessName = safe(business?.name || "your business", 120);
+    const reportSummary = await buildOwnerReportSummary(admin, businessId, dateKey, timezone);
+    const seriesId = crypto.randomUUID();
+    const firstAt = localToUtc(parts.year, parts.month, parts.day, hour, minute, timezone);
+    const rows = [
+      { attempt: 1, name: primaryName, phone: primaryPhone, role: "primary" },
+      { attempt: 2, name: primaryName, phone: primaryPhone, role: "primary" },
+      { attempt: 3, name: nextName, phone: nextPhone, role: "backup" },
+    ].map((target) => ({
+      business_id: businessId,
+      customer_name: target.name,
+      phone_number: target.phone,
+      reason: "Daily business report for " + dateKey,
+      scheduled_at: plusMinutes(firstAt, (target.attempt - 1) * 30).toISOString(),
+      timezone,
+      consent_status: "opted_in",
+      trigger_type: "timer",
+      trigger_conditions: { owner_report: true, owner_report_date: dateKey, allowed_calling_days: [0, 1, 2, 3, 4, 5, 6] },
+      calling_window_start: "08:00",
+      calling_window_end: "20:00",
+      status: "scheduled",
+      attempt_count: 0,
+      max_attempts: 1,
+      retry_interval_minutes: 30,
+      created_by: profile.updated_by || null,
+      metadata: {
+        owner_report_series_id: seriesId,
+        owner_report_date: dateKey,
+        owner_report_attempt: target.attempt,
+        owner_report_recipient_role: target.role,
+        owner_report_business_name: businessName,
+        owner_report_summary: reportSummary,
+        dispatch_status: "pending",
+      },
+    }));
+    const { error: insertError } = await admin.from("twiga_scheduled_calls").insert(rows);
+    if (insertError) throw insertError;
+    queued += rows.length;
+  }
+  return { queued, date: dateKey };
+}
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "POST only." }, 405);
@@ -146,6 +270,13 @@ Deno.serve(async (req: Request) => {
           scheduledAt: item && typeof item === "object" && item.scheduledAt
             ? new Date(item.scheduledAt)
             : defaultScheduledAt,
+          profile: {
+            email: safe(item?.email, 180),
+            itemsBought: safe(item?.itemsBought || item?.items_bought || item?.purchases || "", 1500),
+            notes: safe(item?.notes, 1000),
+            preferredLanguage: safe(item?.preferredLanguage || item?.preferred_language || "", 80),
+            lastPurchaseAt: safe(item?.lastPurchaseAt || item?.last_purchase_at || "", 40),
+          },
         }));
         if (contacts.some((contact: any) => !contact.phone)) return json({ error: "One or more phone numbers are invalid. Use Kenyan 07… / 01… or international +country format." }, 400);
         if (new Set(contacts.map((contact: any) => contact.phone)).size !== contacts.length) return json({ error: "The recipient list contains duplicate phone numbers. Remove duplicates before scheduling." }, 400);
@@ -161,6 +292,7 @@ Deno.serve(async (req: Request) => {
         const repeat = ["daily", "weekly"].includes(String(body.repeat)) ? String(body.repeat) : "none";
         const repeatCount = repeat === "none" ? 1 : Math.max(2, Math.min(30, Number(body.repeatCount) || 4));
         const retryOnNoAnswer = body.retryOnNoAnswer !== false;
+        const retryDelayMinutes = Math.min(60, Math.max(1, Number(body.retryDelayMinutes) || 5));
         const triggerTypes = ["timer", "missed_call", "appointment_reminder", "follow_up", "conditional"];
         const triggerType = triggerTypes.includes(String(body.triggerType)) ? String(body.triggerType) : "timer";
         const onlyIfMissed = body.onlyIfMissed === true || triggerType === "missed_call";
@@ -193,7 +325,8 @@ Deno.serve(async (req: Request) => {
           status: "scheduled", attempt_count: 0, max_attempts: 3, retry_interval_minutes: 30, created_by: user.id,
           metadata: {
             series_id: seriesId, repeat, repeat_remaining: repeatCount, dispatch_status: "pending",
-            no_answer_retry: { enabled: retryOnNoAnswer, attempts: 0, max_attempts: 2, delay_minutes: 5 },
+            ...(contact.profile && Object.values(contact.profile).some(Boolean) ? { contact_profile: contact.profile } : {}),
+            no_answer_retry: { enabled: retryOnNoAnswer, attempts: 0, max_attempts: 2, delay_minutes: retryDelayMinutes },
           },
         }));
         const { data: inserted, error } = await admin.from("twiga_scheduled_calls").insert(rows).select("id");
@@ -229,6 +362,7 @@ Deno.serve(async (req: Request) => {
     const { data: platformKeyData, error: platformKeyError } = await admin.rpc("twiga_get_platform_secret", { p_provider: "sautikit_platform_api_key" });
     if (platformKeyError) throw platformKeyError;
     const platformApiKey = String(platformKeyData || "");
+    const ownerReportQueue = await enqueueOwnerReportCalls(admin);
     // Match the receptionist's credential policy: use TWIGA's shared key first,
     // then a business-owned SautiKit key only for that same business.
     const getSautiKitKey = async (targetBusinessId: string) => {
@@ -361,7 +495,7 @@ Deno.serve(async (req: Request) => {
     const { data: jobs, error: claimError } = await admin.rpc("twiga_claim_scheduled_calls", { p_limit: 10 });
     if (claimError) throw claimError;
     const claimed = Array.isArray(jobs) ? jobs : [];
-    const summary = { ok: true, claimed: claimed.length, submitted: 0, polled: polledCalls, deferred: 0, skipped: 0, failed: 0 };
+    const summary = { ok: true, claimed: claimed.length, submitted: 0, polled: polledCalls, deferred: 0, skipped: 0, failed: 0, ownerReportCallsQueued: ownerReportQueue.queued, ownerReportDate: ownerReportQueue.date };
 
     for (const job of claimed) {
       try {
