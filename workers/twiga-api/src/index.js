@@ -705,24 +705,47 @@ async function runBusinessReview(env, businessId, taskId) {
   const bizName = profileRow ? profileRow.business_name : 'Business';
   const bizType = profileRow ? profileRow.business_type : 'general';
   const ctx = {biz: {id: businessId, name: bizName, business_type: bizType}, role: 'owner'};
+  await ensureBusinessWorkerSchema(env);
+  await ensureChat33Schema(env);
   const results = await Promise.all([
     ACTIONS.summary(env, ctx, {}),
-    ACTIONS.listOrders(env, ctx, {limit: 30}),
-    ACTIONS.listItems(env, ctx, {})
+    ACTIONS.listOrders(env, ctx, {limit: 100}),
+    ACTIONS.listItems(env, ctx, {}),
+    ACTIONS.listContacts(env, ctx, {limit: 100}),
+    ACTIONS.listEvents(env, ctx, {from: today()}),
+    env.DB.prepare("SELECT ref,date,category,amount,method,notes FROM expenses WHERE business_id=? AND date>=date(?,'-6 days') ORDER BY date DESC LIMIT 100").bind(businessId,today()).all(),
+    env.DB.prepare("SELECT wa_id,direction,message_type,body,status,created_at FROM whatsapp_messages WHERE business_id=? AND created_at>=datetime('now','-1 day') ORDER BY created_at DESC LIMIT 100").bind(businessId).all(),
+    env.DB.prepare("SELECT contact_id,platform,name,username,channel_name,last_message_at,updated_at FROM chat33_social_contacts WHERE business_id=? ORDER BY COALESCE(last_message_at,updated_at) DESC LIMIT 100").bind(businessId).all(),
+    env.DB.prepare("SELECT slot,platform,direction,message_text,message_sent_at,created_at,conversation_id,contact_id FROM chat33_social_messages WHERE business_id=? AND created_at>=datetime('now','-1 day') ORDER BY COALESCE(message_sent_at,created_at) DESC LIMIT 100").bind(businessId).all(),
+    env.DB.prepare("SELECT task_type,title,detail,status,priority,due_at,created_at FROM business_worker_tasks WHERE business_id=? AND status IN ('pending','processing','needs_review','failed') ORDER BY created_at DESC LIMIT 100").bind(businessId).all(),
+    listIntegrationsD1(env,businessId),
+    env.DB.prepare("SELECT google_email,granted_scopes,last_sync_at,updated_at FROM google_business_connections WHERE business_id=?").bind(businessId).first(),
+    env.DB.prepare("SELECT display_phone_number,verified_name,status,last_webhook_at,updated_at FROM whatsapp_accounts WHERE business_id=?").bind(businessId).first()
   ]);
-  const summary = results[0];
-  const orders = results[1];
-  const items = results[2];
-  const recentOrders = (orders.orders || []).slice(0, 30);
-  const catalogue = (items.items || []).slice(0, 80);
+  const summary=results[0],orders=results[1],items=results[2];
+  const recentOrders=(orders.orders||[]).slice(0,100);
+  const catalogue=(items.items||[]).slice(0,100);
+  const contacts=results[3].contacts||[];
+  const events=results[4].events||[];
+  const expenses=results[5].results||[];
+  const whatsappMessages=results[6].results||[];
+  const socialContacts=results[7].results||[];
+  const socialMessages=results[8].results||[];
+  const existingWorkerTasks=results[9].results||[];
+  const connectedTools=(results[10]||[]).map(item=>({provider:item.provider_slug,name:item.display_name,type:item.integration_type,status:item.status}));
+  const googleConnection=results[11] ? {connected:true,email:results[11].google_email,grantedScopes:results[11].granted_scopes,lastSyncAt:results[11].last_sync_at} : {connected:false};
+  const whatsappConnection=results[12] ? {connected:results[12].status==='connected',phoneNumber:results[12].display_phone_number,verifiedName:results[12].verified_name,lastWebhookAt:results[12].last_webhook_at} : {connected:false};
   const ordersNeedingOwnerReview = recentOrders.filter((order) => {
     const status = String(order.Status || '').toLowerCase();
     return !['completed', 'cancelled', 'paid', 'quote'].includes(status) || Number(order.Paid || 0) < Number(order.Total || 0);
   }).slice(0, 20);
-  const unpaidOrders = recentOrders.filter((order) => Number(order.Paid || 0) < Number(order.Total || 0) && !['cancelled', 'quote'].includes(String(order.Status || '').toLowerCase())).slice(0, 20);
-  const appointments = recentOrders.filter((order) => String(order.Type || '').toLowerCase() === 'appointment' && !['completed', 'cancelled'].includes(String(order.Status || '').toLowerCase())).slice(0, 15);
+  const unpaidOrders = recentOrders.filter((order) => Number(order.Paid || 0) < Number(order.Total || 0) && !['cancelled', 'quote'].includes(String(order.Status || '').toLowerCase())).slice(0, 50);
+  const appointments = recentOrders.filter((order) => String(order.Type || '').toLowerCase() === 'appointment' && !['completed', 'cancelled'].includes(String(order.Status || '').toLowerCase())).slice(0, 50);
   const zeroStockItems = catalogue.filter((item) => Number(item.Active) !== 0 && Number(item.TrackStock) === 1 && Number(item.Stock || 0) <= 0);
-  const deliveryRequests = recentOrders.filter((order) => /deliver|delivery|drop.?off/i.test(String(order.Notes || ''))).slice(0, 15);
+  const lowStockItems = catalogue.filter((item) => Number(item.Active)!==0 && Number(item.TrackStock)===1 && Number(item.Stock||0)>0 && Number(item.Stock||0)<=3);
+  const deliveryRequests = recentOrders.filter((order) => /deliver|delivery|drop.?off/i.test(String(order.Notes || ''))).slice(0, 50);
+  const inboundWhatsApp = whatsappMessages.filter(row=>row.direction==='inbound');
+  const inboundSocial = socialMessages.filter(row=>row.direction==='inbound');
   const data = {
     business: {name: bizName, type: bizType},
     profile: {
@@ -739,15 +762,28 @@ async function runBusinessReview(env, businessId, taskId) {
     appointments,
     deliveryRequests,
     zeroStockItems,
-    catalogue
+    lowStockItems,
+    catalogue,
+    contacts,
+    upcomingEvents:events.slice(0,100),
+    lastSevenDaysExpenses:expenses,
+    recentWhatsAppMessages:whatsappMessages,
+    inboundWhatsAppCount:inboundWhatsApp.length,
+    recentSocialMessages:socialMessages,
+    inboundSocialMessageCount:inboundSocial.length,
+    socialContacts,
+    connectedTools,
+    googleConnection,
+    whatsappConnection,
+    existingWorkerTasks
   };
   const system = [
     'You are TWIGA Business Worker. Produce a concise, evidence-based owner operations review for one Kenyan business.',
     'Use only the supplied business data. Never invent a customer, order, price, payment, delivery request, stock figure, missed call, appointment or deadline.',
-    'Create useful owner/staff to-do items from real evidence: review and prepare open orders; verify unpaid balances before dispatch; check delivery details only when the order notes explicitly mention delivery; confirm appointment details and staff availability; resolve zero-stock catalogue items before selling them; and check any other clearly evidenced operational issue.',
+    'Review all supplied business areas: orders and unpaid balances; appointment bookings and upcoming calendar events; stock and low-stock items; customers and contacts; delivery notes; weekly expenses; recent WhatsApp conversations and handovers; Chat33 social inbox messages and social contacts; connected Google/WhatsApp/business services; and existing Worker queue backlogs or failures. Create specific tasks only when the supplied records support a real next action.',
     'For every order task, include its real order ID and customer when available. For stock tasks, include the exact catalogue item name. For appointment tasks, include the recorded service/date/time only when supplied.',
     'Prioritise high for urgent customer commitments or blocked orders, medium for outstanding fulfilment, bookings or payment checks, and low for routine stock and follow-up planning. Do not invent due dates.',
-    'Tasks are recommendations for the business owner or staff to review. Do not send messages, place calls, charge customers, change prices, cancel bookings, purchase stock, dispatch a delivery or claim work was completed.',
+    'Tasks are recommendations for the business owner or staff to review. Do not send messages, place calls, charge customers, change prices, cancel bookings, purchase stock, dispatch deliveries, modify staff schedules, send social posts, or claim work was completed. A connected service is not permission to perform an external side effect.',
     'Return one JSON object only: {"headline":"short status","summary":"2-4 concise sentences","actions":[{"title":"short, specific owner task","detail":"what the owner/staff should check and the evidence behind it","priority":"high|medium|low"}]}. You may return up to 50 distinct actions when the records support them. Group duplicate issues and return fewer rather than inventing work.',
     'Business facts (JSON): ' + JSON.stringify(data)
   ].join('\n\n');
@@ -771,7 +807,7 @@ async function runBusinessReview(env, businessId, taskId) {
       id: 'own-' + taskId + '-' + index,
       title: title,
       detail: txt(action && action.detail, 800),
-      priority: String(action && action.priority || '').toLowerCase() === 'high' ? 'high' : String(action && action.priority || '').toLowerCase() === 'low' ? 'low' : 'medium'
+      priority: String(action && action.priority || '').toLowerCase() === 'urgent' ? 'urgent' : String(action && action.priority || '').toLowerCase() === 'high' ? 'high' : String(action && action.priority || '').toLowerCase() === 'low' ? 'low' : 'medium'
     };
   }).filter(Boolean);
   if (newTasks.length) {
