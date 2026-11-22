@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { RetellWebClient } from "retell-client-js-sdk";
 import { supabase } from "@/lib/supabase";
 import {
@@ -57,6 +57,53 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
   const filesApi = String(import.meta.env.VITE_TWIGA_FILES_API_URL || "https://twiga-business-files.twiga-ke.workers.dev").replace(/\/$/, "");
   const [tab, setTab] = useState<Tab>("basic");
   const [saved, setSaved] = useState(false);
+  const [accountPassword, setAccountPassword] = useState("");
+  const [accountPasswordConfirm, setAccountPasswordConfirm] = useState("");
+  const [accountPasswordBusy, setAccountPasswordBusy] = useState(false);
+  const [accountPasswordMessage, setAccountPasswordMessage] = useState("");
+  const [accountPasswordError, setAccountPasswordError] = useState(false);
+
+  const changeAccountPassword = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setAccountPasswordMessage("");
+    setAccountPasswordError(false);
+    if (demo) {
+      setAccountPasswordError(true);
+      setAccountPasswordMessage("Sign in to change the password for your TWIGA account.");
+      return;
+    }
+    if (!supabase) {
+      setAccountPasswordError(true);
+      setAccountPasswordMessage("Supabase authentication is not configured.");
+      return;
+    }
+    if (accountPassword.length < 8) {
+      setAccountPasswordError(true);
+      setAccountPasswordMessage("Use at least 8 characters for your new password.");
+      return;
+    }
+    if (accountPassword !== accountPasswordConfirm) {
+      setAccountPasswordError(true);
+      setAccountPasswordMessage("The new password and confirmation do not match.");
+      return;
+    }
+    setAccountPasswordBusy(true);
+    try {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
+      if (!sessionData.session) throw new Error("Your session has expired. Sign in again, then change your password.");
+      const { error } = await supabase.auth.updateUser({ password: accountPassword });
+      if (error) throw error;
+      setAccountPassword("");
+      setAccountPasswordConfirm("");
+      setAccountPasswordMessage("Your TWIGA account password has been updated successfully.");
+    } catch (error) {
+      setAccountPasswordError(true);
+      setAccountPasswordMessage(error instanceof Error ? error.message : "Your password could not be updated.");
+    } finally {
+      setAccountPasswordBusy(false);
+    }
+  };
 
   const patch = (group: keyof SettingsType, values: Record<string, unknown>) => {
     updateSettings({ [group]: { ...settings[group], ...values } } as Partial<SettingsType>);
@@ -246,6 +293,30 @@ export default function Settings({ businessId, demo = false, onOpenProfile }: { 
           </div>
         </div>
       </div>
+
+      {!demo && <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-widest text-orange-500">Account security</p>
+            <h2 className="mt-1 text-xl font-semibold text-neutral-950">Change your TWIGA password</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">Set a new password for your signed-in account. It applies to your login across all your TWIGA business workspaces.</p>
+          </div>
+          <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-800">Supabase protected</span>
+        </div>
+        <form onSubmit={changeAccountPassword} className="mt-4 grid gap-3 sm:grid-cols-2">
+          <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-600">New password
+            <input type="password" value={accountPassword} onChange={(event) => setAccountPassword(event.target.value)} autoComplete="new-password" minLength={8} required placeholder="At least 8 characters" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-normal normal-case text-neutral-900 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" />
+          </label>
+          <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-600">Confirm new password
+            <input type="password" value={accountPasswordConfirm} onChange={(event) => setAccountPasswordConfirm(event.target.value)} autoComplete="new-password" minLength={8} required placeholder="Enter it again" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-normal normal-case text-neutral-900 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" />
+          </label>
+          <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
+            <button type="submit" disabled={accountPasswordBusy || !accountPassword || !accountPasswordConfirm} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{accountPasswordBusy ? "Updating password…" : "Update password"}</button>
+            <span className="text-xs text-neutral-500">Your password is sent securely to Supabase Auth and is not stored in TWIGA settings.</span>
+          </div>
+        </form>
+        {accountPasswordMessage && <p role="status" aria-live="polite" className={"mt-3 rounded-xl p-3 text-sm " + (accountPasswordError ? "bg-red-50 text-red-700" : "bg-orange-50 text-orange-900")}>{accountPasswordMessage}</p>}
+      </section>}
 
       <div className="grid gap-5 xl:grid-cols-2">
         <section className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm">
