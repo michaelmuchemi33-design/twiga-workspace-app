@@ -78,6 +78,8 @@ export default {
     if (path === '/internal/integrations' && req.method === 'POST') return internalIntegrationRoute(req, env, 'integrations');
     if (path === '/internal/google-connection' && req.method === 'POST') return internalIntegrationRoute(req, env, 'google');
     if (path === '/integrations' && req.method === 'POST') return businessIntegrationsRoute(req, env);
+    if (path === '/website-enquiry/health' && req.method === 'GET') return websiteEnquiryHealth(env);
+    if (path === '/website-enquiry' && req.method === 'POST') return websiteEnquiry(req, env);
     const aisensyActionMatch = path.match(/^\/aisensy\/([0-9a-f-]{36})\/action$/i);
     if (aisensyActionMatch && req.method === 'POST') return aisensyActionRoute(req, env, aisensyActionMatch[1]);
     const aisensyHandoffMatch = path.match(/^\/aisensy\/([0-9a-f-]{36})\/handoff$/i);
@@ -2144,6 +2146,124 @@ async function aisensyHandoffRoute(req,env,businessId) {
     await createWhatsAppOwnerTask(env,businessId,'whatsapp_handover','AiSensy handoff · '+(name||phone||'Customer'),['Customer: '+(name||'Not provided'),'Phone: '+(phone||'Not provided'),'Reason: '+reason,'Message: '+(message||'Customer requested a human agent.'),'Channel: AiSensy WhatsApp'].join('\n'),id);
     return json({ok:true,recorded:true});
   }catch(error){return json({ok:false,error:txt(error&&error.message||error,250)},400);}
+}
+
+function websiteEnquiryHealth(env) {
+  return json({
+    ok:true,
+    service:'twiga-website-enquiry',
+    databaseConfigured:Boolean(env.SUPABASE_URL&&env.SUPABASE_KEY),
+    resendConfigured:Boolean(env.RESEND_API_KEY),
+    sender:'TWIGA Website <leads@twiga.co.ke>'
+  });
+}
+function enquiryEscapeHtml(value) {
+  return String(value==null?'':value).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+async function websiteEnquiryRest(env,path,options) {
+  const base=String(env.SUPABASE_URL||'').replace(/\/+$/,'');
+  const key=String(env.SUPABASE_KEY||'');
+  if(!base||!key)throw new Error('TWIGA enquiry storage is not configured.');
+  const response=await fetch(base+'/rest/v1/'+path,{
+    method:options&&options.method||'GET',
+    headers:Object.assign({
+      apikey:key,
+      Authorization:'Bearer '+key,
+      Accept:'application/json'
+    },options&&options.headers||{}),
+    body:options&&options.body!==undefined?JSON.stringify(options.body):undefined,
+    signal:AbortSignal.timeout(12000)
+  });
+  const textBody=await response.text();
+  let data=null;try{data=textBody?JSON.parse(textBody):null;}catch(_){}
+  if(!response.ok)throw new Error('TWIGA enquiry storage returned HTTP '+response.status+': '+txt(data&&data.message||textBody,180));
+  return data;
+}
+async function websiteEnquiryFingerprint(ip,agent) {
+  if(!ip&&!agent)return null;
+  const input=String(ip||'no-ip')+'|'+String(agent||'').slice(0,240)+'|twiga-website-enquiry-v1';
+  const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(digest)).map(value=>value.toString(16).padStart(2,'0')).join('');
+}
+async function websiteEnquiry(req,env) {
+  try{
+    const origin=String(req.headers.get('Origin')||'');
+    const trustedOrigins=new Set(['https://twiga.co.ke','https://www.twiga.co.ke']);
+    if(origin&&!trustedOrigins.has(origin))return json({ok:false,error:'This enquiry form is available on the TWIGA website.'},403);
+    const raw=await req.text();
+    if(raw.length>12000)return json({ok:false,error:'Your message is too long. Shorten it and try again.'},413);
+    let body={};try{body=JSON.parse(raw||'{}');}catch(_){return json({ok:false,error:'Please check the form and try again.'},400);}
+    // Quietly accept bot honeypot submissions without storing or notifying anyone.
+    if(txt(body.website,160))return json({ok:true,message:'Thank you. Your interest has been received.'});
+    const name=txt(body.name||body.full_name,120);
+    const businessName=txt(body.business_name,160);
+    const email=txt(body.email,254).toLowerCase();
+    let phone='';
+    try{phone=normalizeWhatsAppPhone(body.phone);}catch(_){return json({ok:false,error:'Enter a valid Kenyan mobile number, such as +254 7XX XXX XXX.'},400);}
+    const preferredContact=['email','whatsapp'].includes(String(body.preferred_contact||'').toLowerCase())?String(body.preferred_contact).toLowerCase():'whatsapp';
+    const industry=txt(body.industry,100);
+    const message=txt(body.message,2000);
+    if(name.length<2||businessName.length<2||! /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||!industry){
+      return json({ok:false,error:'Please complete your name, business name, valid email and business type.'},400);
+    }
+    const fingerprint=await websiteEnquiryFingerprint(req.headers.get('CF-Connecting-IP')||'',req.headers.get('User-Agent')||'');
+    const cutoff=new Date(Date.now()-60*60*1000).toISOString();
+    if(fingerprint){
+      const recent=await websiteEnquiryRest('twiga_demo_interests?select=id&request_fingerprint=eq.'+encodeURIComponent(fingerprint)+'&created_at=gte.'+encodeURIComponent(cutoff)+'&limit=5');
+      if(Array.isArray(recent)&&recent.length>=4)return json({ok:false,error:'Too many requests from this connection. Please try again later.'},429);
+    }
+    const saved=await websiteEnquiryRest('twiga_demo_interests',{
+      method:'POST',
+      headers:{'Content-Type':'application/json',Prefer:'return=representation'},
+      body:{name,business_name:businessName,email,phone,preferred_contact:preferredContact,message,industry,source:'twiga.co.ke',request_fingerprint:fingerprint,notification_status:'pending'}
+    });
+    const lead=Array.isArray(saved)?saved[0]:saved;
+    if(!lead||!lead.id)throw new Error('The enquiry could not be saved. Please try again.');
+    const recipients=await websiteEnquiryRest('twiga_admin_members?select=email&is_active=eq.true&role=in.(owner,admin)&limit=20');
+    const to=Array.from(new Set((Array.isArray(recipients)?recipients:[]).map(item=>String(item.email||'').trim()).filter(value=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))));
+    const resendKey=String(env.RESEND_API_KEY||'');
+    if(!resendKey||!to.length){
+      await websiteEnquiryRest('twiga_demo_interests?id=eq.'+encodeURIComponent(lead.id),{
+        method:'PATCH',headers:{'Content-Type':'application/json',Prefer:'return=minimal'},
+        body:{notification_status:'failed',notification_error:!resendKey?'RESEND_API_KEY is not configured on the Worker.':'No active TWIGA owner/admin notification recipient is configured.'}
+      });
+      return json({ok:true,saved:true,emailNotified:false,message:'Your enquiry has been saved. The email alert could not be sent just now, so please also use the contact details on this page.'},202);
+    }
+    const recipientName=to.length===1?'TWIGA owner':'TWIGA team';
+    const rows=[
+      ['Name',name],['Business',businessName],['Business type',industry],['Email',email],['Phone',phone],
+      ['Preferred follow-up',preferredContact==='whatsapp'?'WhatsApp':'Email'],
+      ['What they need',message||'Not provided'],['Submitted',now()],['Lead reference',String(lead.id)]
+    ];
+    const htmlRows=rows.map(([label,value])=>'<tr><th align="left" style="padding:10px 12px;border-bottom:1px solid #eee;color:#666;width:155px;font-size:13px">'+enquiryEscapeHtml(label)+'</th><td style="padding:10px 12px;border-bottom:1px solid #eee;color:#171717;font-size:14px;white-space:pre-wrap">'+enquiryEscapeHtml(value)+'</td></tr>').join('');
+    const html='<div style="margin:0;background:#f6f5f1;padding:28px 14px;font-family:Arial,sans-serif;color:#171717"><div style="max-width:680px;margin:0 auto;background:#fff;border:1px solid #e9e4dc;border-radius:18px;overflow:hidden"><div style="background:#111;padding:24px 26px"><div style="font-size:12px;letter-spacing:2px;font-weight:bold;color:#f47721">TWIGA · WEBSITE ENQUIRY</div><h1 style="font-size:24px;line-height:1.2;color:#fff;margin:12px 0 0">A business wants to see if TWIGA fits</h1></div><div style="padding:24px 26px"><p style="font-size:15px;line-height:1.65;color:#555">A new enquiry has been saved on the TWIGA website. Reply directly to this email to contact '+enquiryEscapeHtml(name)+'.</p><table role="presentation" style="width:100%;border-collapse:collapse">'+htmlRows+'</table><p style="margin:22px 0 0"><a href="https://twiga.co.ke/pages/contact.html" style="display:inline-block;background:#f47721;color:#111;text-decoration:none;font-weight:bold;padding:13px 19px;border-radius:22px">Open TWIGA website</a></p></div></div></div>';
+    const textBody='A new business enquiry was submitted on twiga.co.ke\\n\\n'+rows.map(([label,value])=>label+': '+value).join('\\n')+'\\n\\nReply to this email to contact the lead.';
+    const sent=await fetch('https://api.resend.com/emails',{
+      method:'POST',
+      headers:{Authorization:'Bearer '+resendKey,'Content-Type':'application/json',Accept:'application/json'},
+      body:JSON.stringify({from:'TWIGA Website <leads@twiga.co.ke>',to,reply_to:email,subject:'New TWIGA enquiry: '+businessName,html,text:textBody}),
+      signal:AbortSignal.timeout(20000)
+    });
+    const providerResult=await sent.json().catch(()=>({}));
+    if(!sent.ok){
+      const detail=txt(providerResult&&((providerResult.message)||(providerResult.name))||'Resend rejected the notification (HTTP '+sent.status+').',240);
+      await websiteEnquiryRest('twiga_demo_interests?id=eq.'+encodeURIComponent(lead.id),{
+        method:'PATCH',headers:{'Content-Type':'application/json',Prefer:'return=minimal'},
+        body:{notification_status:'failed',notification_error:detail}
+      });
+      console.error('[TWIGA website enquiry] Resend delivery failed',sent.status,detail);
+      return json({ok:true,saved:true,emailNotified:false,message:'Your enquiry has been saved, but the email notification did not go through. Please use the contact details on the page as a backup.'},202);
+    }
+    await websiteEnquiryRest('twiga_demo_interests?id=eq.'+encodeURIComponent(lead.id),{
+      method:'PATCH',headers:{'Content-Type':'application/json',Prefer:'return=minimal'},
+      body:{notification_status:'sent',notification_error:null,notified_at:now()}
+    });
+    return json({ok:true,saved:true,emailNotified:true,message:'Thank you. Your enquiry is with the TWIGA team. We’ll follow up using your preferred contact method.'});
+  }catch(error){
+    const detail=txt(error&&error.message||error,220);
+    console.error('[TWIGA website enquiry] request failed',detail);
+    return json({ok:false,error:'We could not complete that enquiry just now. Please try again or use the contact details on this page.'},500);
+  }
 }
 async function businessIntegrationsRoute(req,env) {
   try {
