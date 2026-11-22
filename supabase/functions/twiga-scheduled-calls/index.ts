@@ -278,7 +278,10 @@ Deno.serve(async (req: Request) => {
             lastPurchaseAt: safe(item?.lastPurchaseAt || item?.last_purchase_at || "", 40),
             followUpAt: safe(item?.followUpAt || item?.follow_up_at || "", 40),
           },
+          marketingConsent: item?.marketingConsent === true || item?.marketing_consent === true || item?.consent === true,
+          optOut: item?.optOut === true || item?.opt_out === true || item?.unsubscribed === true,
         }));
+        if (contacts.some((contact: any) => contact.marketingConsent !== true || contact.optOut === true)) return json({ error: "Every recipient must have recorded permission for this call and must not have opted out. Re-import the contact list with valid consent records before scheduling." }, 400);
         if (contacts.some((contact: any) => !contact.phone)) return json({ error: "One or more phone numbers are invalid. Use Kenyan 07… / 01… or international +country format." }, 400);
         if (new Set(contacts.map((contact: any) => contact.phone)).size !== contacts.length) return json({ error: "The recipient list contains duplicate phone numbers. Remove duplicates before scheduling." }, 400);
         const requestedPhones = contacts.map((contact: any) => contact.phone);
