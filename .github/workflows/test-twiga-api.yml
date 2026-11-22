@@ -1,0 +1,58 @@
+name: Validate TWIGA API Worker
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "workers/twiga-api/**"
+      - ".github/workflows/test-twiga-api.yml"
+  push:
+    branches: [main]
+    paths:
+      - "workers/twiga-api/**"
+      - ".github/workflows/test-twiga-api.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.14.0
+      - name: Check Worker JavaScript syntax
+        working-directory: workers/twiga-api
+        run: node --check src/index.js
+      - name: Validate tenant identity and scheduler configuration
+        working-directory: workers/twiga-api
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const source = fs.readFileSync('src/index.js', 'utf8');
+          const config = fs.readFileSync('wrangler.toml', 'utf8');
+          const required = [
+            'business_worker_orchestrators',
+            'BUSINESS_AGENT.idFromName(tenantId)',
+            'normalizeBusinessOrchestratorId',
+            'businessOrchestratorBatchSize(env)',
+            'settleWithConcurrency',
+            "WHERE business_id = ? AND id = ?",
+            "task_type === 'daily_review'",
+            "task_type === 'whatsapp_reply'",
+            "task_type === 'whatsapp_call_event'"
+          ];
+          const missing = required.filter((fragment) => !source.includes(fragment));
+          if (missing.length) {
+            console.error('Missing required orchestrator safeguards:', missing);
+            process.exit(1);
+          }
+          if (!config.includes('BUSINESS_WORKER_DISPATCH_BATCH_SIZE = "100"') ||
+              !config.includes('BUSINESS_WORKER_DISPATCH_CONCURRENCY = "16"')) {
+            console.error('Expected shared tenant scheduler defaults are missing from wrangler.toml');
+            process.exit(1);
+          }
+          console.log('Worker syntax and multi-tenant orchestration invariants passed.');
+          NODE
