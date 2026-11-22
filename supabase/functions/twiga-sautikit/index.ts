@@ -1548,8 +1548,18 @@ Deno.serve(async (req: Request) => {
         sautikit_operational_tools_ready: true,
         last_published_at: new Date().toISOString(),
       };
+      // Publishing a new offer/agent revision must not silently turn off an
+      // outbound line that has already passed TWIGA's separate verification.
+      // Equally, it must never activate an unverified line on its own.
       const { error: updateLineError } = await admin.from("twiga_phone_lines")
-        .update({ settings: nextSettings, inbound_enabled: true, inbound_status: "testing", outbound_enabled: false, outbound_status: "testing", updated_at: new Date().toISOString() })
+        .update({
+          settings: nextSettings,
+          inbound_enabled: true,
+          inbound_status: "testing",
+          outbound_enabled: line.outbound_enabled === true,
+          outbound_status: String(line.outbound_status || "pending_verification"),
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", line.id);
       if (updateLineError) throw updateLineError;
       return json({
