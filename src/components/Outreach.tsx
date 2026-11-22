@@ -257,11 +257,11 @@ export default function Outreach({ businessId, demo = false }: { businessId: str
     if (!window.confirm("Queue " + optedIn.length + " consented contacts for promotional calls during " + start + "–" + end + " on your selected days? Calls will be scheduled, not placed all at once.")) return;
     setLaunching(true); setError(""); setMessage("Scheduling opted-in contacts…");
     try {
-      const scheduledContacts: { name: string; phone: string; scheduledAt: string; email?: string; itemsBought?: string; notes?: string; preferredLanguage?: string; lastPurchaseAt?: string }[] = [];
+      const scheduledContacts: { name: string; phone: string; scheduledAt: string; marketingConsent: true; email?: string; itemsBought?: string; notes?: string; preferredLanguage?: string; lastPurchaseAt?: string }[] = [];
       let cursor = new Date(Date.now() + 5 * 60_000);
       for (const contact of optedIn) {
         const slot = nextSlot(cursor, days, start, end);
-        scheduledContacts.push({ name: contact.name, phone: contact.phone, scheduledAt: slot.toISOString(), email: contact.email, itemsBought: contact.itemsBought, notes: contact.notes, preferredLanguage: contact.preferredLanguage, lastPurchaseAt: contact.lastPurchaseAt });
+        scheduledContacts.push({ name: contact.name, phone: contact.phone, scheduledAt: slot.toISOString(), marketingConsent: true, email: contact.email, itemsBought: contact.itemsBought, notes: contact.notes, preferredLanguage: contact.preferredLanguage, lastPurchaseAt: contact.lastPurchaseAt });
         cursor = new Date(slot.getTime() + 5 * 60_000);
       }
       const { data, error: scheduleError } = await supabase.functions.invoke("twiga-scheduled-calls", {

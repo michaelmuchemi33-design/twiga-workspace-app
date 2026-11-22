@@ -469,12 +469,12 @@ export default {
             "preferred_language=CASE WHEN excluded.preferred_language='' THEN contacts.preferred_language ELSE excluded.preferred_language END," +
             "marketing_consent=COALESCE(?,contacts.marketing_consent)," +
             "consent_recorded_at=COALESCE(excluded.consent_recorded_at,contacts.consent_recorded_at)," +
-            "opted_out_at=CASE WHEN excluded.opted_out_at IS NOT NULL THEN excluded.opted_out_at WHEN ?=1 THEN NULL ELSE contacts.opted_out_at END," +
+            "opted_out_at=COALESCE(excluded.opted_out_at,contacts.opted_out_at)," +
             "last_purchase_at=COALESCE(excluded.last_purchase_at,contacts.last_purchase_at)," +
             "follow_up_at=COALESCE(excluded.follow_up_at,contacts.follow_up_at)," +
             "last_contacted_at=COALESCE(excluded.last_contacted_at,contacts.last_contacted_at)," +
             "lifetime_value=CASE WHEN excluded.lifetime_value=0 THEN contacts.lifetime_value ELSE excluded.lifetime_value END"
-          ).bind(businessId,c.phone,c.name,c.email,source,createdAt,c.purchasesJson,c.notes,c.preferredLanguage,c.marketingConsent,c.consentRecordedAt,c.optedOutAt,c.lastPurchaseAt,c.followUpAt,c.lastContactedAt,c.lifetimeValue,c.marketingConsent,c.marketingConsent===1?1:0));
+          ).bind(businessId,c.phone,c.name,c.email,source,createdAt,c.purchasesJson,c.notes,c.preferredLanguage,c.marketingConsent,c.consentRecordedAt,c.optedOutAt,c.lastPurchaseAt,c.followUpAt,c.lastContactedAt,c.lifetimeValue,c.marketingConsent));
           await withD1Quota(env, businessId, estimateD1Bytes(body), () => env.DB.batch(statements));
           return json(req,{ok:true,saved:list.length,source,storage:"cloudflare_d1"});
         }
