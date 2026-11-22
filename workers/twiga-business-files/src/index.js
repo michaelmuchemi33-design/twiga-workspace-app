@@ -20,6 +20,35 @@ function cors(req) {
 function json(req, body, status) {
   return new Response(JSON.stringify(body), { status: status || 200, headers: { ...cors(req), "Content-Type": "application/json; charset=utf-8" } });
 }
+
+let contactProfileSchemaReady;
+async function ensureContactProfileSchema(env) {
+  if (!contactProfileSchemaReady) {
+    contactProfileSchemaReady = (async () => {
+      const info = await env.DB.prepare("PRAGMA table_info(contacts)").all();
+      const existing = new Set((info.results || []).map((column) => String(column.name || "")));
+      const columns = [
+        ["purchases_json", "TEXT NOT NULL DEFAULT '[]'"],
+        ["notes", "TEXT NOT NULL DEFAULT ''"],
+        ["preferred_language", "TEXT NOT NULL DEFAULT ''"],
+        ["marketing_consent", "INTEGER NOT NULL DEFAULT 0"],
+        ["consent_recorded_at", "TEXT"],
+        ["opted_out_at", "TEXT"],
+        ["last_purchase_at", "TEXT"],
+        ["follow_up_at", "TEXT"],
+        ["last_contacted_at", "TEXT"],
+        ["lifetime_value", "REAL NOT NULL DEFAULT 0"]
+      ];
+      for (const [name, definition] of columns) {
+        if (!existing.has(name)) {
+          await env.DB.prepare("ALTER TABLE contacts ADD COLUMN " + name + " " + definition).run();
+        }
+      }
+    })().catch((error) => { contactProfileSchemaReady = null; throw error; });
+  }
+  return contactProfileSchemaReady;
+}
+
 async function ensureSchema(env) {
   if (!schemaReady) {
     schemaReady = env.DB.batch([
@@ -391,16 +420,60 @@ export default {
       const member = await authorize(req, env, businessId);
       await ensureSchema(env);
       if (kind === "contacts") {
+        await ensureContactProfileSchema(env);
         if (req.method === "GET" && !fileId) {
           const q=String(url.searchParams.get("q")||"").trim().slice(0,60),like="%"+q+"%",limit=Math.min(500,Math.max(1,Number(url.searchParams.get("limit")||200)));
-          const result=await env.DB.prepare("SELECT phone AS Phone,name AS Name,email AS Email,source AS Source FROM contacts WHERE business_id=? AND (?='' OR name LIKE ? OR phone LIKE ? OR email LIKE ?) ORDER BY name LIMIT ?").bind(businessId,q,like,like,like,limit).all();
+          const result=await env.DB.prepare("SELECT phone AS Phone,name AS Name,email AS Email,source AS Source,purchases_json AS Purchases,notes AS Notes,preferred_language AS PreferredLanguage,marketing_consent AS MarketingConsent,consent_recorded_at AS ConsentRecordedAt,opted_out_at AS OptedOutAt,last_purchase_at AS LastPurchaseAt,follow_up_at AS FollowUpAt,last_contacted_at AS LastContactedAt,lifetime_value AS LifetimeValue FROM contacts WHERE business_id=? AND (?='' OR name LIKE ? OR phone LIKE ? OR email LIKE ?) ORDER BY name LIMIT ?").bind(businessId,q,like,like,like,limit).all();
           return json(req,{ok:true,contacts:result.results||[],count:(result.results||[]).length,storage:"cloudflare_d1"});
         }
         if (req.method === "POST" && !fileId) {
           const body=await req.json().catch(()=>({})),source=["google","csv","manual","phone","pos"].includes(String(body.source||"").toLowerCase())?String(body.source).toLowerCase():"manual";
-          const list=(Array.isArray(body.contacts)?body.contacts:[]).slice(0,500).map(c=>({name:String(c.name||"").trim().slice(0,120),phone:String(c.phone||"").replace(/[^0-9+]/g,"").slice(0,30),email:String(c.email||"").trim().slice(0,120)})).filter(c=>c.name&&c.phone.length>=7);
+          const list=(Array.isArray(body.contacts)?body.contacts:[]).slice(0,500).map(c=>{
+            let purchases=Array.isArray(c.purchases)?c.purchases:(Array.isArray(c.itemsBought)?c.itemsBought:(Array.isArray(c.items_bought)?c.items_bought:[]));
+            if(typeof c.purchases==="string"&&c.purchases.trim()){
+              try{const parsed=JSON.parse(c.purchases);purchases=Array.isArray(parsed)?parsed:[c.purchases];}catch{purchases=c.purchases.split(/[;,]/).map(x=>x.trim()).filter(Boolean);}
+            }
+            purchases=purchases.slice(0,30).map(item=>typeof item==="string"?item.slice(0,180):({name:String(item?.name||item?.item||"").slice(0,120),quantity:Math.max(0,Number(item?.quantity||1)),date:String(item?.date||"").slice(0,40)}));
+            const consentValue=typeof c.marketingConsent==="boolean"?c.marketingConsent:(typeof c.marketing_consent==="boolean"?c.marketing_consent:(typeof c.consent==="boolean"?c.consent:null));
+            const optOut=c.optOut===true||c.opt_out===true||c.unsubscribed===true;
+            const lifetime=Number(c.lifetimeValue??c.lifetime_value??0);
+            return {
+              name:String(c.name||"").trim().slice(0,120),
+              phone:String(c.phone||"").replace(/[^0-9+]/g,"").slice(0,30),
+              email:String(c.email||"").trim().slice(0,120),
+              purchasesJson:JSON.stringify(purchases),
+              notes:String(c.notes||"").trim().slice(0,2000),
+              preferredLanguage:String(c.preferredLanguage||c.preferred_language||c.language||"").trim().slice(0,80),
+              marketingConsent:consentValue===null?null:(consentValue?1:0),
+              consentRecordedAt:String(c.consentRecordedAt||c.consent_recorded_at||(consentValue===true?createdAt:null)||"").slice(0,50)||null,
+              optedOutAt:String(c.optedOutAt||c.opted_out_at||(optOut?createdAt:null)||"").slice(0,50)||null,
+              lastPurchaseAt:String(c.lastPurchaseAt||c.last_purchase_at||"").slice(0,50)||null,
+              followUpAt:String(c.followUpAt||c.follow_up_at||"").slice(0,50)||null,
+              lastContactedAt:String(c.lastContactedAt||c.last_contacted_at||"").slice(0,50)||null,
+              lifetimeValue:Number.isFinite(lifetime)&&lifetime>0?lifetime:0,
+              optOut
+            };
+          }).filter(c=>c.name&&c.phone.length>=7);
           if(!list.length)return json(req,{ok:true,saved:0,storage:"cloudflare_d1"});
-          const created=now(),statements=list.map(c=>env.DB.prepare("INSERT INTO contacts (business_id,phone,name,email,source,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(business_id,phone) DO UPDATE SET name=excluded.name,email=excluded.email,source=excluded.source,updated_at=excluded.updated_at").bind(businessId,c.phone,c.name,c.email,source,created));
+          const createdAt=now();
+          const statements=list.map(c=>env.DB.prepare(
+            "INSERT INTO contacts (business_id,phone,name,email,source,updated_at,purchases_json,notes,preferred_language,marketing_consent,consent_recorded_at,opted_out_at,last_purchase_at,follow_up_at,last_contacted_at,lifetime_value) " +
+            "VALUES (?,?,?,?,?,?,?,?,?,COALESCE(?,0),?,?,?,?,?,?) " +
+            "ON CONFLICT(business_id,phone) DO UPDATE SET " +
+            "name=CASE WHEN excluded.name='' THEN contacts.name ELSE excluded.name END," +
+            "email=CASE WHEN excluded.email='' THEN contacts.email ELSE excluded.email END," +
+            "source=excluded.source,updated_at=excluded.updated_at," +
+            "purchases_json=CASE WHEN excluded.purchases_json='[]' THEN contacts.purchases_json ELSE excluded.purchases_json END," +
+            "notes=CASE WHEN excluded.notes='' THEN contacts.notes ELSE excluded.notes END," +
+            "preferred_language=CASE WHEN excluded.preferred_language='' THEN contacts.preferred_language ELSE excluded.preferred_language END," +
+            "marketing_consent=COALESCE(?,contacts.marketing_consent)," +
+            "consent_recorded_at=COALESCE(excluded.consent_recorded_at,contacts.consent_recorded_at)," +
+            "opted_out_at=CASE WHEN excluded.opted_out_at IS NOT NULL THEN excluded.opted_out_at WHEN ?=1 THEN NULL ELSE contacts.opted_out_at END," +
+            "last_purchase_at=COALESCE(excluded.last_purchase_at,contacts.last_purchase_at)," +
+            "follow_up_at=COALESCE(excluded.follow_up_at,contacts.follow_up_at)," +
+            "last_contacted_at=COALESCE(excluded.last_contacted_at,contacts.last_contacted_at)," +
+            "lifetime_value=CASE WHEN excluded.lifetime_value=0 THEN contacts.lifetime_value ELSE excluded.lifetime_value END"
+          ).bind(businessId,c.phone,c.name,c.email,source,createdAt,c.purchasesJson,c.notes,c.preferredLanguage,c.marketingConsent,c.consentRecordedAt,c.optedOutAt,c.lastPurchaseAt,c.followUpAt,c.lastContactedAt,c.lifetimeValue,c.marketingConsent,c.marketingConsent===1?1:0));
           await withD1Quota(env, businessId, estimateD1Bytes(body), () => env.DB.batch(statements));
           return json(req,{ok:true,saved:list.length,source,storage:"cloudflare_d1"});
         }
