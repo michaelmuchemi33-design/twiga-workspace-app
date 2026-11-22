@@ -31,6 +31,46 @@ Deno.serve(async(req:Request)=>{
    if(updateError)throw updateError;
    return json({saved:true,ownerName,ownerEmail});
   }
+  if(body.action==="update_operational_settings"){
+   const businessId=String(body.businessId||"");
+   const settings=body.settings&&typeof body.settings==="object"?body.settings:{};
+   if(!/^[0-9a-f-]{36}$/i.test(businessId))return json({error:"Select a valid business workspace."},400);
+   const {data:member,error:memberError}=await db.from("business_members").select("role").eq("business_id",businessId).eq("user_id",user.id).maybeSingle();
+   if(memberError)throw memberError;
+   if(!member||!["owner","admin"].includes(String(member.role)))return json({error:"Only a business owner or administrator can configure owner reports and receptionist prompts."},403);
+   const normalizeOwnerPhone=(value:any)=>{
+    let phone=String(value||"").trim().replace(/[\\s().-]/g,"");
+    if(/^0[17]\\d{8}$/.test(phone))phone="+254"+phone.slice(1);
+    else if(/^254[17]\\d{8}$/.test(phone))phone="+"+phone;
+    return /^\\+[1-9]\\d{7,14}$/.test(phone)?phone:"";
+   };
+   const incomingReport=settings.ownerReportCall&&typeof settings.ownerReportCall==="object"?settings.ownerReportCall:{};
+   const enabled=incomingReport.enabled===true;
+   const ownerName=String(incomingReport.ownerName||"").trim().slice(0,120);
+   const ownerPhone=normalizeOwnerPhone(incomingReport.ownerPhone);
+   const nextOwnerName=String(incomingReport.nextOwnerName||"").trim().slice(0,120);
+   const nextOwnerPhone=normalizeOwnerPhone(incomingReport.nextOwnerPhone);
+   const callTime=String(incomingReport.callTime||"16:30").trim();
+   if(!/^([01]\\d|2[0-3]):[0-5]\\d$/.test(callTime))return json({error:"Set a valid report call time."},400);
+   if(enabled&&(!ownerName||!ownerPhone||!nextOwnerName||!nextOwnerPhone))return json({error:"Enter the primary owner and next owner names and phone numbers before enabling daily report calls."},400);
+   if(enabled&&ownerPhone===nextOwnerPhone)return json({error:"The primary owner and next owner must have different phone numbers."},400);
+   const reportSettings={enabled,ownerName,ownerPhone,nextOwnerName,nextOwnerPhone,callTime,timezone:"Africa/Nairobi"};
+   const incomingScripts=settings.sautikitScripts&&typeof settings.sautikitScripts==="object"?settings.sautikitScripts:{};
+   const scripts={
+    greeting:String(incomingScripts.greeting||"Hello, karibu! Thank you for calling {{business_name}}. How can I help you today?").trim().slice(0,1200),
+    inbound:String(incomingScripts.inbound||"Answer in the caller's preferred language. Use this business's verified profile, understand the reason for the call, and capture booking or order requests for the team to confirm. Never claim an action is complete unless TWIGA confirms it was saved.").trim().slice(0,5000),
+    outbound:String(incomingScripts.outbound||"Only call people when this business has authorised a callback. Identify the business and reason for calling, ask whether it is convenient, keep it brief, and respect requests not to be called again.").trim().slice(0,5000)
+   };
+   const corePrompt=String(settings.sautikitCorePrompt||"").trim().slice(0,12000);
+   const {data:existing,error:existingError}=await db.from("twiga_business_profiles").select("setup_details").eq("business_id",businessId).maybeSingle();
+   if(existingError)throw existingError;
+   const oldDetails=existing?.setup_details&&typeof existing.setup_details==="object"&&!Array.isArray(existing.setup_details)?existing.setup_details:{};
+   const setupDetails={...oldDetails,owner_report_call:reportSettings,sautikit_scripts:scripts,sautikit_core_prompt:corePrompt};
+   const {error:saveError}=await db.from("twiga_business_profiles").upsert({business_id:businessId,setup_details:setupDetails,updated_by:user.id,updated_at:new Date().toISOString()},{onConflict:"business_id"});
+   if(saveError)throw saveError;
+   return json({saved:true,ownerReportCall:reportSettings,sautikitScripts:scripts,corePromptSaved:!!corePrompt});
+  }
+
   if(body.action==="create"){
    const name=String(body.name||"").trim().slice(0,120),businessType=String(body.businessType||"general").trim().slice(0,80)||"general",p=body.profile&&typeof body.profile==="object"?body.profile:{};
    if(name.length<2)return json({error:"Add your business name first."},400);
@@ -71,7 +111,11 @@ Deno.serve(async(req:Request)=>{
     if(name.length<2)return json({error:"Add a business name before saving the receptionist profile."},400);
     const {error:businessError}=await db.from("businesses").update({name,business_type:businessType}).eq("id",businessId);
     if(businessError)throw businessError;
-    const setupDetails=p.setup_details&&typeof p.setup_details==="object"&&!Array.isArray(p.setup_details)?p.setup_details:{};
+    const incomingSetupDetails=p.setup_details&&typeof p.setup_details==="object"&&!Array.isArray(p.setup_details)?p.setup_details:{};
+    const {data:existingProfile,error:existingProfileError}=await db.from("twiga_business_profiles").select("setup_details").eq("business_id",businessId).maybeSingle();
+    if(existingProfileError)throw existingProfileError;
+    const existingSetupDetails=existingProfile?.setup_details&&typeof existingProfile.setup_details==="object"&&!Array.isArray(existingProfile.setup_details)?existingProfile.setup_details:{};
+    const setupDetails={...existingSetupDetails,...incomingSetupDetails};
     const profileRow={
       business_id:businessId,
       owner_name:String(p.owner_name||user.user_metadata?.full_name||user.user_metadata?.name||"").trim().slice(0,160),
