@@ -65,21 +65,37 @@ function localToUtc(year: number, month: number, day: number, hour: number, minu
   }
   return guess;
 }
-function nextWindow(date: Date, timezone: string, start: string, end: string) {
+function nextWindow(date: Date, timezone: string, start: string, end: string, allowedDays?: number[]) {
   const p = partsInZone(date, timezone);
+  const days = Array.isArray(allowedDays)
+    ? Array.from(new Set(allowedDays.map(Number).filter(day => Number.isInteger(day) && day >= 0 && day <= 6)))
+    : [0, 1, 2, 3, 4, 5, 6];
+  if (!days.length) throw new Error("This call has no permitted calling days.");
   const hm = (v: string) => {
     const [h, m] = String(v || "08:00").split(":").map(Number);
     return h * 60 + m;
   };
-  const nowMin = p.hour * 60 + p.minute, startMin = hm(start), endMin = hm(end);
-  if (nowMin >= startMin && nowMin < endMin) return null;
-  let y = p.year, mo = p.month, d = p.day;
-  if (nowMin >= endMin) {
-    const next = new Date(Date.UTC(y, mo - 1, d + 1));
-    y = next.getUTCFullYear(); mo = next.getUTCMonth() + 1; d = next.getUTCDate();
+  const startMin = hm(start), endMin = hm(end);
+  if (startMin < 0 || startMin >= 1440 || endMin <= startMin || endMin > 1440) {
+    throw new Error("The saved calling window is invalid.");
   }
   const sh = Math.floor(startMin / 60), sm = startMin % 60;
-  return localToUtc(y, mo, d, sh, sm, timezone);
+  const base = new Date(Date.UTC(p.year, p.month - 1, p.day));
+  for (let offset = 0; offset < 15; offset++) {
+    const day = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate() + offset));
+    if (!days.includes(day.getUTCDay())) continue;
+    const y = day.getUTCFullYear(), mo = day.getUTCMonth() + 1, d = day.getUTCDate();
+    const windowStart = localToUtc(y, mo, d, sh, sm, timezone);
+    const eh = Math.floor(endMin / 60), em = endMin % 60;
+    const windowEnd = localToUtc(y, mo, d, eh, em, timezone);
+    if (offset === 0) {
+      if (date >= windowStart && date < windowEnd) return null;
+      if (date < windowStart) return windowStart;
+      continue;
+    }
+    return windowStart;
+  }
+  throw new Error("No permitted calling day was found in the next 14 days.");
 }
 async function setJob(admin: any, id: string, values: Record<string, unknown>) {
   const { error } = await admin.from("twiga_scheduled_calls").update({ ...values, updated_at: new Date().toISOString() }).eq("id", id);
@@ -122,16 +138,26 @@ Deno.serve(async (req: Request) => {
       if (action === "schedule") {
         if (body.authorised !== true) return json({ error: "Explicit recipient consent is required before scheduling calls." }, 400);
         const rawContacts = Array.isArray(body.contacts) ? body.contacts : [];
-        if (!rawContacts.length || rawContacts.length > 100) return json({ error: "Schedule between 1 and 100 recipients per batch." }, 400);
-        const contacts = Array.from(new Map(rawContacts.map((item: any) => {
-          const phone = normalizePhone(typeof item === "string" ? item : item?.phone);
-          return [phone, { phone, name: safe(item?.name, 120) }];
-        }).filter(([phone]) => !!phone)).values());
-        if (!contacts.length || contacts.length !== rawContacts.length) return json({ error: "One or more phone numbers are invalid. Use Kenyan 07… / 01… or international +country format." }, 400);
+        if (!rawContacts.length || rawContacts.length > 200) return json({ error: "Schedule between 1 and 200 recipients per batch." }, 400);
+        const defaultScheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : null;
+        const contacts = rawContacts.map((item: any) => ({
+          phone: normalizePhone(typeof item === "string" ? item : item?.phone),
+          name: safe(item?.name, 120),
+          scheduledAt: item && typeof item === "object" && item.scheduledAt
+            ? new Date(item.scheduledAt)
+            : defaultScheduledAt,
+        }));
+        if (contacts.some((contact: any) => !contact.phone)) return json({ error: "One or more phone numbers are invalid. Use Kenyan 07… / 01… or international +country format." }, 400);
+        if (new Set(contacts.map((contact: any) => contact.phone)).size !== contacts.length) return json({ error: "The recipient list contains duplicate phone numbers. Remove duplicates before scheduling." }, 400);
+        const invalidSchedule = contacts.find((contact: any) => !contact.scheduledAt || !Number.isFinite(contact.scheduledAt.getTime()) || contact.scheduledAt.getTime() < Date.now() + 30000);
+        if (invalidSchedule) return json({ error: "Every recipient needs a future calling time at least 30 seconds from now." }, 400);
         const reason = safe(body.reason, 500);
-        const scheduledAt = new Date(body.scheduledAt);
         if (!reason) return json({ error: "Enter the reason for calling." }, 400);
-        if (!Number.isFinite(scheduledAt.getTime()) || scheduledAt.getTime() < Date.now() + 30000) return json({ error: "Choose a future call time at least 30 seconds from now." }, 400);
+        const allowedDays = Array.isArray(body.allowedDays)
+          ? Array.from(new Set(body.allowedDays.map(Number).filter((day: number) => Number.isInteger(day) && day >= 0 && day <= 6)))
+          : [0, 1, 2, 3, 4, 5, 6];
+        if (!allowedDays.length) return json({ error: "Select at least one permitted calling day." }, 400);
+        if (Array.isArray(body.allowedDays) && allowedDays.length !== body.allowedDays.length) return json({ error: "Calling days must be weekday numbers from 0 (Sunday) to 6 (Saturday)." }, 400);
         const repeat = ["daily", "weekly"].includes(String(body.repeat)) ? String(body.repeat) : "none";
         const repeatCount = repeat === "none" ? 1 : Math.max(2, Math.min(30, Number(body.repeatCount) || 4));
         const retryOnNoAnswer = body.retryOnNoAnswer !== false;
@@ -161,8 +187,8 @@ Deno.serve(async (req: Request) => {
         const timezone = safe(body.timezone || "Africa/Nairobi", 80);
         const rows = contacts.map((contact: any) => ({
           business_id: businessId, customer_name: contact.name, phone_number: contact.phone, reason,
-          scheduled_at: scheduledAt.toISOString(), timezone, consent_status: "opted_in", trigger_type: triggerType,
-          trigger_conditions: { only_if_missed_call: onlyIfMissed, only_if_unpaid: onlyIfUnpaid, order_id: orderId || null },
+          scheduled_at: contact.scheduledAt.toISOString(), timezone, consent_status: "opted_in", trigger_type: triggerType,
+          trigger_conditions: { only_if_missed_call: onlyIfMissed, only_if_unpaid: onlyIfUnpaid, order_id: orderId || null, allowed_calling_days: allowedDays },
           source_call_id: sourceCallId || null, calling_window_start: windowStart, calling_window_end: windowEnd,
           status: "scheduled", attempt_count: 0, max_attempts: 3, retry_interval_minutes: 30, created_by: user.id,
           metadata: {
@@ -309,8 +335,28 @@ Deno.serve(async (req: Request) => {
         polledCalls++;
       } catch (pollError) { console.error("Could not refresh SautiKit call status:", pollError instanceof Error ? pollError.message : "unknown error"); }
     }
-    await admin.from("twiga_scheduled_calls").update({ status: "scheduled", last_error: null, updated_at: new Date().toISOString() })
-      .eq("status", "waiting_for_provider");
+    // Requeue provider-waiting jobs only after this business has a verified,
+    // explicitly enabled outbound line and a usable SautiKit credential.
+    const { data: waitingJobs, error: waitingError } = await admin.from("twiga_scheduled_calls")
+      .select("id,business_id").eq("status", "waiting_for_provider").order("updated_at", { ascending: true }).limit(50);
+    if (waitingError) throw waitingError;
+    for (const waiting of waitingJobs || []) {
+      try {
+        const { data: line } = await admin.from("twiga_phone_lines").select("provider,outbound_enabled,outbound_status,settings")
+          .eq("business_id", waiting.business_id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+        const settings = line?.settings && typeof line.settings === "object" ? line.settings : {};
+        const ready = line?.provider === "sautikit" && line.outbound_enabled === true && line.outbound_status === "active" && !!safe(settings.inbound_agent_id, 100);
+        if (!ready) continue;
+        const apiKey = await getSautiKitKey(String(waiting.business_id || ""));
+        if (!apiKey) continue;
+        await setJob(admin, waiting.id, {
+          status: "scheduled", scheduled_at: new Date().toISOString(), last_error: null,
+          metadata: { ...(waiting.metadata || {}), dispatch_status: "provider_ready_requeued" },
+        });
+      } catch (requeueError) {
+        console.error("Could not requeue provider-waiting outreach call:", requeueError instanceof Error ? requeueError.message : "unknown error");
+      }
+    }
 
     const { data: jobs, error: claimError } = await admin.rpc("twiga_claim_scheduled_calls", { p_limit: 10 });
     if (claimError) throw claimError;
@@ -345,7 +391,7 @@ Deno.serve(async (req: Request) => {
         }
 
         const timezone = safe(job.timezone || "Africa/Nairobi", 80);
-        const deferredUntil = nextWindow(new Date(), timezone, String(job.calling_window_start || "08:00"), String(job.calling_window_end || "20:00"));
+        const deferredUntil = nextWindow(new Date(), timezone, String(job.calling_window_start || "08:00"), String(job.calling_window_end || "20:00"), Array.isArray(conditions.allowed_calling_days) ? conditions.allowed_calling_days : undefined);
         if (deferredUntil) {
           await setJob(admin, job.id, { status: "scheduled", scheduled_at: deferredUntil.toISOString(), last_error: "Deferred to the next permitted calling window." });
           summary.deferred++; continue;
