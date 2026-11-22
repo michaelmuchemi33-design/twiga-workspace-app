@@ -364,7 +364,7 @@ Deno.serve(async (req: Request) => {
     if (platformKeyError) throw platformKeyError;
     const platformApiKey = String(platformKeyData || "");
     let ownerReportQueue = { queued: 0, date: reportDateKey(new Date(), "Africa/Nairobi"), error: "" };
-    try { ownerReportQueue = await enqueueOwnerReportCalls(admin); }
+    try { ownerReportQueue = { ...await enqueueOwnerReportCalls(admin), error: "" }; }
     catch (ownerReportError) {
       ownerReportQueue.error = ownerReportError instanceof Error ? ownerReportError.message.slice(0, 500) : "Owner report jobs could not be queued.";
       console.error("Owner report scheduling failed:", ownerReportQueue.error);
@@ -606,7 +606,7 @@ Deno.serve(async (req: Request) => {
         const reportSummary = safe(metadata.owner_report_summary, 5000);
         const customerLanguage = safe(contactProfile.preferredLanguage || "", 80);
         const promptTemplate = reportCall
-          ? "You are TWIGA's AI business reporting assistant calling the configured owner of {{business_name}}. Address the recipient as {{customer_name}}. This is daily report number {{attempt_number}} for {{report_date}}. Read the following verified business summary clearly and naturally: {{report_summary}}. Do not disclose customer names, phone numbers, private notes, payment credentials or individual customer records. Ask whether the owner wants a follow-up task created. " + outbound
+          ? "You are TWIGA's AI business reporting assistant calling the configured owner of {{business_name}}. Address the recipient as {{customer_name}}. This is daily report number {{attempt_number}} for {{report_date}}. Read the following verified business summary clearly and naturally: {{report_summary}}. Do not disclose customer names, phone numbers, private notes, payment credentials or individual customer records. Ask whether the owner wants a follow-up task created. Speak in the business's normal Kenyan English or Kiswahili style."
           : "You are calling on behalf of {{business_name}}. The customer's name is {{customer_name}}. Reason for calling: {{call_reason}}. Customer language preference: {{customer_language}}. Customer context supplied from this business's own records: {{customer_context}}. Use this context carefully to make the conversation relevant. Do not assume that a purchase is current, promise availability or reveal private notes; confirm details with the customer. " + outbound;
         const call: any = await skRequest(apiKey, "/v1/agents/" + encodeURIComponent(agentId) + "/send", "POST", {
           to,
