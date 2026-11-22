@@ -25,7 +25,14 @@ type Task = {
   created_at: string;
 };
 type WorkerTask = { id: string; task_type: string; title: string; detail: string; status: string; priority: string; due_at: string; created_at: string };
-type WorkerStatus = { enabled: boolean; schedule: string; nextReviewAt: string | null; lastRunAt: string | null; lastReviewAt: string | null };
+type WorkerNotification = { id: string; notification_type: string; title: string; body: string; priority: string; created_at: string };
+type WorkerStatus = {
+  enabled: boolean; schedule: string; nextReviewAt: string | null; lastRunAt: string | null; lastReviewAt: string | null;
+  lastTickAt?: string | null; lastSuccessAt?: string | null; lastErrorAt?: string | null; lastError?: string | null;
+  lastProcessedCount?: number; lastFailedCount?: number; schedulerLastStartedAt?: string | null; schedulerLastFinishedAt?: string | null;
+  schedulerLastDispatchedBusinesses?: number; schedulerLastFailedBusinesses?: number; schedulerLastPendingBusinesses?: number; schedulerLastError?: string | null;
+  counts?: { needsReview: number; pending: number; processing: number; failed: number };
+};
 
 async function readFunctionError(error: any, fallback: string) {
   const response = error?.context;
@@ -58,6 +65,7 @@ export default function Organizer() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [workerTasks, setWorkerTasks] = useState<WorkerTask[]>([]);
+  const [workerNotifications, setWorkerNotifications] = useState<WorkerNotification[]>([]);
   const [workerStatus, setWorkerStatus] = useState<WorkerStatus | null>(null);
   const [workerActionBusy, setWorkerActionBusy] = useState(false);
 
@@ -83,11 +91,12 @@ export default function Organizer() {
       };
       setItems([approval, ...taskItems]);
       setWorkerTasks([]);
+      setWorkerNotifications([]);
       setWorkerStatus(null);
       setLoading(false);
       return;
     }
-    if (!businessId || !supabase) { setItems([]); setWorkerTasks([]); setWorkerStatus(null); setLoading(false); return; }
+    if (!businessId || !supabase) { setItems([]); setWorkerTasks([]); setWorkerNotifications([]); setWorkerStatus(null); setLoading(false); return; }
     setLoading(true);
     const { data, error } = await supabase.from("twiga_tasks")
       .select("id,title,description,status,kind,category,priority,due_at,approval_required,approval_status,action_type,action_payload,source,created_at")
@@ -105,11 +114,13 @@ export default function Organizer() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload?.ok === false) throw new Error(String(payload?.error || "The AI Worker status could not be loaded."));
-      setWorkerStatus(payload.worker || null);
-      setWorkerTasks(Array.isArray(payload.tasks) ? payload.tasks.filter((task: WorkerTask) => task.status === "needs_review" || task.status === "failed") : []);
+      setWorkerStatus(payload.worker ? { ...payload.worker, counts: payload.counts || { needsReview: 0, pending: 0, processing: 0, failed: 0 } } : null);
+      setWorkerTasks(Array.isArray(payload.tasks) ? payload.tasks : []);
+      setWorkerNotifications(Array.isArray(payload.notifications) ? payload.notifications : []);
     } catch (workerError) {
       setWorkerStatus(null);
       setWorkerTasks([]);
+      setWorkerNotifications([]);
       setMessage(workerError instanceof Error ? "AI Orchestrator: " + workerError.message : "AI Orchestrator status could not be loaded.");
     }
     setLoading(false);
@@ -246,14 +257,45 @@ export default function Organizer() {
 
   const runWorkerReview = async () => {
     setWorkerActionBusy(true);
-    setMessage("Starting a fresh business review…");
+    setMessage("Starting a fresh evidence-based business review…");
     try {
       const payload = await runWorkerCommand("run_review");
       const processed = Number(payload?.result?.processed || 0);
-      setMessage(processed > 0 ? "Business review finished. Refreshing the owner action queue…" : "The review request reached the Worker. Refreshing its current status…");
+      const failed = Number(payload?.result?.failed || 0);
+      const pending = Number(payload?.result?.remainingPending || 0);
+      setMessage("Review request reached the Worker · " + processed + " queued job(s) processed · " + failed + " failed · " + pending + " still pending.");
       await load();
     } catch (error) {
       setMessage(error instanceof Error ? "AI Orchestrator: " + error.message : "The business review could not be started.");
+    } finally {
+      setWorkerActionBusy(false);
+    }
+  };
+
+  const processWorkerQueue = async () => {
+    setWorkerActionBusy(true);
+    setMessage("Processing up to 50 due jobs for this business…");
+    try {
+      const payload = await runWorkerCommand("process_queue");
+      const result = payload?.result || {};
+      setMessage("Worker queue checked · " + Number(result.processed || 0) + " processed · " + Number(result.failed || 0) + " failed · " + Number(result.remainingPending || 0) + " still pending.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? "AI Orchestrator: " + error.message : "The Worker queue could not be processed.");
+    } finally {
+      setWorkerActionBusy(false);
+    }
+  };
+
+  const provisionWorker = async () => {
+    setWorkerActionBusy(true);
+    setMessage("Provisioning this business's isolated Worker and daily review schedule…");
+    try {
+      const payload = await runWorkerCommand("provision");
+      setMessage(payload?.message || "Business Worker provisioned.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? "AI Orchestrator: " + error.message : "The business Worker could not be provisioned.");
     } finally {
       setWorkerActionBusy(false);
     }
