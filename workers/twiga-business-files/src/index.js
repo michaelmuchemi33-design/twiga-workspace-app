@@ -431,8 +431,9 @@ export default {
           const createdAt=now();
           const list=(Array.isArray(body.contacts)?body.contacts:[]).slice(0,500).map(c=>{
             let purchases=Array.isArray(c.purchases)?c.purchases:(Array.isArray(c.itemsBought)?c.itemsBought:(Array.isArray(c.items_bought)?c.items_bought:[]));
-            if(typeof c.purchases==="string"&&c.purchases.trim()){
-              try{const parsed=JSON.parse(c.purchases);purchases=Array.isArray(parsed)?parsed:[c.purchases];}catch{purchases=c.purchases.split(/[;,]/).map(x=>x.trim()).filter(Boolean);}
+            const purchaseText=typeof c.purchases==="string"?c.purchases:(typeof c.itemsBought==="string"?c.itemsBought:"");
+            if(purchaseText.trim()){
+              try{const parsed=JSON.parse(purchaseText);purchases=Array.isArray(parsed)?parsed:[purchaseText];}catch{purchases=purchaseText.split(/[;,]/).map(x=>x.trim()).filter(Boolean);}
             }
             purchases=purchases.slice(0,30).map(item=>typeof item==="string"?item.slice(0,180):({name:String(item?.name||item?.item||"").slice(0,120),quantity:Math.max(0,Number(item?.quantity||1)),date:String(item?.date||"").slice(0,40)}));
             const consentValue=typeof c.marketingConsent==="boolean"?c.marketingConsent:(typeof c.marketing_consent==="boolean"?c.marketing_consent:(typeof c.consent==="boolean"?c.consent:null));
