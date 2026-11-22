@@ -32,6 +32,7 @@ type WorkerStatus = {
   lastProcessedCount?: number; lastFailedCount?: number; schedulerLastStartedAt?: string | null; schedulerLastFinishedAt?: string | null;
   schedulerLastDispatchedBusinesses?: number; schedulerLastFailedBusinesses?: number; schedulerLastPendingBusinesses?: number; schedulerLastError?: string | null;
   counts?: { needsReview: number; pending: number; processing: number; failed: number };
+  profileSynced?: boolean; profileSyncError?: string | null;
 };
 
 async function readFunctionError(error: any, fallback: string) {
