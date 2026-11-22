@@ -284,6 +284,30 @@ Deno.serve(async (req: Request) => {
         if (contacts.some((contact: any) => contact.marketingConsent !== true || contact.optOut === true)) return json({ error: "Every recipient must have recorded permission for this call and must not have opted out. Re-import the contact list with valid consent records before scheduling." }, 400);
         if (contacts.some((contact: any) => !contact.phone)) return json({ error: "One or more phone numbers are invalid. Use Kenyan 07… / 01… or international +country format." }, 400);
         if (new Set(contacts.map((contact: any) => contact.phone)).size !== contacts.length) return json({ error: "The recipient list contains duplicate phone numbers. Remove duplicates before scheduling." }, 400);
+        // Verify consent and suppression against the saved, business-scoped D1 contact
+        // record. Do not rely on client-supplied flags alone.
+        const authorization = req.headers.get("authorization") || "";
+        if (!/^Bearer\s+\S+$/i.test(authorization)) return json({ error: "Sign in again before scheduling an outreach campaign." }, 401);
+        const savedContactsResponse = await fetch(
+          "https://twiga-business-files.twiga-ke.workers.dev/v1/contacts/" + encodeURIComponent(businessId) + "?limit=500",
+          { headers: { Authorization: authorization } },
+        );
+        const savedContactsPayload = await savedContactsResponse.json().catch(() => ({}));
+        if (!savedContactsResponse.ok || savedContactsPayload?.ok !== true) {
+          return json({ error: "TWIGA could not verify the saved consent records for this business. Refresh the customer list and try again." }, 403);
+        }
+        const consentByPhone = new Map<string, any>();
+        for (const savedContact of Array.isArray(savedContactsPayload.contacts) ? savedContactsPayload.contacts : []) {
+          const savedPhone = normalizePhone(savedContact.Phone || savedContact.phone);
+          if (savedPhone) consentByPhone.set(savedPhone, savedContact);
+        }
+        const deniedPhones = contacts.filter((contact: any) => {
+          const savedContact = consentByPhone.get(contact.phone);
+          return !savedContact
+            || Number(savedContact.MarketingConsent ?? savedContact.marketing_consent ?? 0) !== 1
+            || !!(savedContact.OptedOutAt || savedContact.opted_out_at);
+        });
+        if (deniedPhones.length) return json({ error: deniedPhones.length + " contact(s) do not have a saved marketing-consent record or have opted out. Remove them or update the consent record before scheduling." }, 403);
         const requestedPhones = contacts.map((contact: any) => contact.phone);
         const [savedCustomersResult, paidOrdersResult] = await Promise.all([
           admin.from("twiga_customers").select("name,phone,email,notes").eq("business_id", businessId).in("phone", requestedPhones).limit(500),
