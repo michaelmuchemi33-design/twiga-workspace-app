@@ -11,11 +11,25 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { IconSparkle, IconSend, IconCheck, IconFile, IconClose } from "@/components/Icons";
 import { Chat33QuickPublisher } from "@/components/Chat33Gateway";
+import BringYourOwnAPI from "@/components/BringYourOwnAPI";
 import { cn } from "@/lib/utils";
 
 type ChatMessage = { role: "assistant" | "user"; content: string };
 type ProfileDraft = Record<string, any>;
 type SetupDocument = { id: string; name: string; contentType: string; fileId: string; extractedText: string; extractionStatus: string; sizeBytes: number };
+type SetupConnectionTarget = "openai" | "openrouter" | "xai" | "groq" | "deepseek" | "resend" | "palpluss" | "custom" | "special";
+function getSetupConnectionTarget(request: string): SetupConnectionTarget {
+  const value = String(request || "").toLowerCase();
+  if (/google|calendar|contacts|sheets|drive|chat33|sautikit|whatsapp|meta|phone|voice/.test(value)) return "special";
+  if (/openrouter/.test(value)) return "openrouter";
+  if (/openai|gpt/.test(value)) return "openai";
+  if (/xai|grok/.test(value)) return "xai";
+  if (/groq/.test(value)) return "groq";
+  if (/deepseek/.test(value)) return "deepseek";
+  if (/resend|email/.test(value)) return "resend";
+  if (/palpluss|payment/.test(value)) return "palpluss";
+  return "custom";
+}
 const API = "https://twiga-api.twiga-ke.workers.dev";
 
 const firstMessage = "Hi! Let’s set up your receptionist. I already have your business name. What do you sell or do, and what do customers usually come to you for? We’ll build this together one step at a time.";
@@ -71,12 +85,24 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections }: {
   const [documents, setDocuments] = useState<SetupDocument[]>([]);
   const [uploading, setUploading] = useState(false);
   const [publisherOpen, setPublisherOpen] = useState(false);
+  const [connectionOpen, setConnectionOpen] = useState(false);
+  const [connectionTarget, setConnectionTarget] = useState<SetupConnectionTarget>("openai");
+  const [connectionRequests, setConnectionRequests] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({behavior:"smooth",block:"end"});
   }, [messages, draft]);
+
+  const openConnectionOverlay = (request = "") => {
+    setConnectionTarget(getSetupConnectionTarget(request));
+    setConnectionOpen(true);
+  };
+  const openFullConnectionSettings = () => {
+    setConnectionOpen(false);
+    onOpenConnections();
+  };
 
   const askTwiga = async (action: "chat" | "build_profile", history: ChatMessage[]) => {
     if (!supabase || !businessId) throw new Error("Choose your business workspace and sign in again.");
@@ -191,6 +217,8 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections }: {
     setMessages(next); setSending(true);
     try {
       const result = await askTwiga("chat",next);
+      const requests = Array.isArray(result.integrationRequests) ? result.integrationRequests.map((item: unknown) => readableText(item, "", 0)).filter(Boolean).slice(0, 12) : [];
+      if (requests.length) setConnectionRequests((current) => Array.from(new Set([...current, ...requests])).slice(0, 12));
       setMessages([...next,{role:"assistant",content:readableText(result.reply ?? result.message, "I received an unexpected response format. Please send that message again.")}]);
     } catch (cause) {
       setMessages(next);
@@ -205,6 +233,8 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections }: {
     try {
       const result = await askTwiga("build_profile",messages);
       if (!result.profileDraft || typeof result.profileDraft !== "object") throw new Error("TWIGA did not return a complete profile draft. Add a little more detail and try again.");
+      const requests = Array.isArray(result.profileDraft.setup_details?.integration_requests) ? result.profileDraft.setup_details.integration_requests.map((item: unknown) => readableText(item, "", 0)).filter(Boolean).slice(0, 12) : [];
+      if (requests.length) setConnectionRequests((current) => Array.from(new Set([...current, ...requests])).slice(0, 12));
       setDraft(result.profileDraft);
       setMessages((current) => [...current,{role:"assistant",content:readableText(result.reply ?? result.message, "I’ve prepared your receptionist profile. Review the summary below and save it when you’re ready.")}]);
     } catch (cause) {
@@ -298,6 +328,12 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections }: {
         </div>
       </section>
 
+      {connectionRequests.length > 0 && <section className="rounded-2xl border border-orange-200 bg-orange-50/70 p-4 dark:border-orange-900 dark:bg-orange-950/20">
+        <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-xs font-semibold uppercase tracking-wider text-orange-700 dark:text-orange-300">Services TWIGA identified</p><h2 className="mt-1 text-sm font-semibold text-neutral-950 dark:text-neutral-100">Connect the tools this workflow needs</h2></div><span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-orange-800 dark:bg-neutral-900 dark:text-orange-200">{connectionRequests.length} requested</span></div>
+        <div className="mt-3 space-y-2">{connectionRequests.map((request, index) => <div key={request + index} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-orange-200/80 bg-white p-3 dark:border-orange-900 dark:bg-neutral-900"><p className="min-w-0 flex-1 text-sm leading-5 text-neutral-800 dark:text-neutral-200">{request}</p><button type="button" onClick={() => openConnectionOverlay(request)} className="shrink-0 rounded-lg bg-neutral-950 px-3 py-2 text-xs font-semibold text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-950">Connect securely</button></div>)}</div>
+        <p className="mt-3 text-[11px] leading-5 text-orange-900/80 dark:text-orange-200/80">API keys and tokens are entered only in the secure form, never in the AI conversation. A saved key is not treated as a working connector until its provider-specific test succeeds.</p>
+      </section>}
+
       <div className="flex justify-center">
         <Button
           type="button"
@@ -348,10 +384,23 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections }: {
         </div>
       </div>
 
+      <div className={connectionOpen ? "fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-5" : "hidden"} role="dialog" aria-modal="true" aria-label="Connect external services" aria-hidden={!connectionOpen}>
+        <button type="button" aria-label="Close service connections" onClick={() => setConnectionOpen(false)} className="absolute inset-0 bg-neutral-950/70 backdrop-blur-sm" />
+        <div className="relative z-10 flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-2xl dark:border-neutral-700 dark:bg-neutral-950">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
+            <div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-wider text-orange-600">TWIGA · secure connection</p><h2 className="mt-0.5 text-base font-semibold text-neutral-950 dark:text-neutral-100">Connect an external service</h2><p className="mt-0.5 text-xs text-neutral-500">Credentials go directly to the protected Cloudflare service, not the chat.</p></div>
+            <button type="button" onClick={() => setConnectionOpen(false)} className="shrink-0 rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">Close</button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+            {connectionTarget === "special" ? <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 dark:border-orange-900 dark:bg-orange-950/30"><h3 className="text-sm font-semibold text-orange-950 dark:text-orange-100">This service uses its own connection flow</h3><p className="mt-2 text-sm leading-6 text-orange-950/90 dark:text-orange-100/90">Google Workspace, official WhatsApp, SautiKit and Chat33 use provider-specific OAuth or account setup. They should not be connected by pasting their tokens into a generic API field.</p><button type="button" onClick={openFullConnectionSettings} className="mt-3 rounded-lg bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-950">Open dedicated connection settings</button></div> : <BringYourOwnAPI key={connectionTarget} businessId={businessId || ""} defaultProvider={connectionTarget} compact onSaved={() => { setConnectionOpen(false); setNotice("The service connection was saved. Check its verified status before using it in a workflow."); }} />}
+          </div>
+        </div>
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-xl text-xs leading-5 text-neutral-500 dark:text-neutral-400">TWIGA will identify the apps and API keys required for the workflows you describe, then prompt you to connect each missing provider through secure forms. Never send keys or PINs in the chat.</p>
         <div className="flex flex-wrap gap-2">
-        <Button type="button" onClick={onOpenConnections} disabled={demo} variant="outline" className="rounded-xl border-orange-300 bg-orange-50 text-orange-900 hover:bg-orange-100">Connect services & API keys</Button>
+        <Button type="button" onClick={() => openConnectionOverlay()} disabled={demo || !businessId} variant="outline" className="rounded-xl border-orange-300 bg-orange-50 text-orange-900 hover:bg-orange-100">Connect services & API keys</Button>
         <Button onClick={() => void buildProfile()} disabled={demo || building || sending || uploading || (messages.every((item) => item.role !== "user") && documents.length === 0)} variant="outline" className="rounded-xl border-neutral-300 bg-white text-neutral-900 hover:bg-neutral-50">
           <IconSparkle className="mr-2 h-4 w-4 text-orange-500" /> {building ? "Preparing…" : "Build my receptionist"}
         </Button>
@@ -375,7 +424,7 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections }: {
               ["Receptionist tone",draft.brand_voice]
             ].filter((item) => String(item[1] || "").trim()).map(([label,value]) => <div key={String(label)} className="rounded-xl bg-neutral-50 p-3 dark:bg-neutral-800"><p className="text-xs font-semibold text-neutral-500">{label}</p><p className="mt-1 whitespace-pre-wrap text-sm text-neutral-800 dark:text-neutral-200">{readableText(value)}</p></div>)}
           </div>
-          {Array.isArray(draft.setup_details?.integration_requests) && draft.setup_details.integration_requests.length > 0 && <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 dark:border-orange-900 dark:bg-orange-950/30"><p className="text-sm font-semibold text-orange-950 dark:text-orange-100">Connections TWIGA identified</p><ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-orange-950 dark:text-orange-100">{draft.setup_details.integration_requests.map((value: unknown, index: number) => <li key={index}>{readableText(value)}</li>)}</ul><Button type="button" onClick={onOpenConnections} disabled={demo} className="mt-3 rounded-xl bg-neutral-950 text-white hover:bg-neutral-800">Add the requested keys & connections</Button></div>}
+          {Array.isArray(draft.setup_details?.integration_requests) && draft.setup_details.integration_requests.length > 0 && <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 dark:border-orange-900 dark:bg-orange-950/30"><p className="text-sm font-semibold text-orange-950 dark:text-orange-100">Connections TWIGA identified</p><ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-orange-950 dark:text-orange-100">{draft.setup_details.integration_requests.map((value: unknown, index: number) => <li key={index}>{readableText(value)}</li>)}</ul><Button type="button" onClick={() => openConnectionOverlay(readableText(draft.setup_details.integration_requests[0], ""))} disabled={demo || !businessId} className="mt-3 rounded-xl bg-neutral-950 text-white hover:bg-neutral-800">Connect the requested service</Button></div>}
           {Array.isArray(draft.setup_details?.workflow_requests) && draft.setup_details.workflow_requests.length > 0 && <div className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-700"><p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">{draft.setup_details.workflow_requests.length} workflows mapped for this business</p><ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-neutral-600 dark:text-neutral-300">{draft.setup_details.workflow_requests.slice(0,12).map((value: unknown, index: number) => <li key={index}>{readableText(value)}</li>)}</ul><p className="mt-2 text-[11px] text-neutral-500">These are planned workflows, not a claim that every provider action is already deployed.</p></div>}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-neutral-100 pt-3 dark:border-neutral-800">
             <p className="text-xs text-neutral-500 dark:text-neutral-400">Unknown prices or policies are left blank — TWIGA will not make them up.</p>
