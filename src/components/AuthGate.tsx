@@ -131,7 +131,7 @@ export default function AuthGate({ children }: {
     try {
       const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
         // Keep the same origin so the PKCE verifier created by Supabase remains available.
-        redirectTo: window.location.origin + "/",
+        redirectTo: window.location.origin + "/auth/callback",
       });
       if (resetError) throw resetError;
       setNotice("If an account exists for this email, a reset link has been sent. Open it in this same browser to set your new password.");
