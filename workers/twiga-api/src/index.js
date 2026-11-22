@@ -1,5 +1,9 @@
 
 const QUOTA = 524288000;
+const ORCHESTRATOR_DEFAULT_BATCH_SIZE = 100;
+const ORCHESTRATOR_MAX_BATCH_SIZE = 250;
+const ORCHESTRATOR_DEFAULT_CONCURRENCY = 16;
+const ORCHESTRATOR_MAX_CONCURRENCY = 24;
 const AI_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const cors = {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info, x-business-id, x-twiga-worker-secret', 'Access-Control-Max-Age': '86400'};
 const json = (o, s) => new Response(JSON.stringify(o), {status: s || 200, headers: Object.assign({'Content-Type': 'application/json'}, cors)});
@@ -34,6 +38,24 @@ const aiReplyText = (value, fallback, limit, depth) => {
 const num = (v, label, min) => { const n = Number(v); if (!isFinite(n) || n < (min == null ? 0 : min)) throw new Error('Invalid ' + label); return Math.round(n * 100) / 100; };
 const rid = p => p + '-' + today().slice(2).replace(/-/g, '') + '-' + Math.random().toString(16).slice(2, 7).toUpperCase();
 const size = (...s) => 120 + s.reduce((a, x) => a + String(x == null ? '' : x).length, 0);
+
+function positiveInteger(value, fallback, maximum) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.min(maximum, Math.floor(n)) : fallback;
+}
+function normalizeBusinessOrchestratorId(value) {
+  const id = String(value || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) {
+    throw new Error('Invalid business worker identity.');
+  }
+  return id;
+}
+function businessOrchestratorBatchSize(env) {
+  return positiveInteger(env.BUSINESS_WORKER_DISPATCH_BATCH_SIZE, ORCHESTRATOR_DEFAULT_BATCH_SIZE, ORCHESTRATOR_MAX_BATCH_SIZE);
+}
+function businessOrchestratorConcurrency(env) {
+  return positiveInteger(env.BUSINESS_WORKER_DISPATCH_CONCURRENCY, ORCHESTRATOR_DEFAULT_CONCURRENCY, ORCHESTRATOR_MAX_CONCURRENCY);
+}
 
 let usageSchemaReady;
 async function ensureUsageSchema(env) {
@@ -597,6 +619,8 @@ async function ensureBusinessWorkerSchema(env) {
       env.DB.prepare("CREATE TABLE IF NOT EXISTS business_worker_scheduler (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), last_started_at TEXT, last_finished_at TEXT, last_dispatched_businesses INTEGER NOT NULL DEFAULT 0, last_failed_businesses INTEGER NOT NULL DEFAULT 0, last_pending_businesses INTEGER NOT NULL DEFAULT 0, last_error TEXT, updated_at TEXT NOT NULL)"),
       env.DB.prepare("CREATE TABLE IF NOT EXISTS business_worker_dispatch_state (business_id TEXT PRIMARY KEY, last_dispatched_at TEXT, updated_at TEXT NOT NULL)"),
       env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_business_worker_dispatch_fairness ON business_worker_dispatch_state(last_dispatched_at, business_id)"),
+      env.DB.prepare("CREATE TABLE IF NOT EXISTS business_worker_orchestrators (business_id TEXT PRIMARY KEY, durable_object_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'registered', registered_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, last_dispatch_at TEXT, last_success_at TEXT, last_error_at TEXT, last_error TEXT, last_processed_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"),
+      env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_business_worker_orchestrators_status ON business_worker_orchestrators(status, last_dispatch_at, business_id)"),
       env.DB.prepare("CREATE TABLE IF NOT EXISTS whatsapp_accounts (business_id TEXT PRIMARY KEY, waba_id TEXT NOT NULL, phone_number_id TEXT NOT NULL UNIQUE, display_phone_number TEXT NOT NULL DEFAULT '', verified_name TEXT NOT NULL DEFAULT '', token_cipher TEXT NOT NULL, token_iv TEXT NOT NULL, token_expires_at TEXT, status TEXT NOT NULL DEFAULT 'connected', last_webhook_at TEXT, updated_at TEXT NOT NULL)"),
       env.DB.prepare("CREATE TABLE IF NOT EXISTS whatsapp_messages (message_id TEXT PRIMARY KEY, business_id TEXT NOT NULL, phone_number_id TEXT NOT NULL, wa_id TEXT NOT NULL, direction TEXT NOT NULL, message_type TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, created_at TEXT NOT NULL)"),
       env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_conversation ON whatsapp_messages(business_id, wa_id, created_at)"),
@@ -649,36 +673,88 @@ async function recordBusinessWorkerRuntime(env, businessId, metrics) {
 }
 
 function businessAgentStub(env, businessId) {
-  const tenantId = String(businessId || '');
-  if (!/^[0-9a-f-]{36}$/i.test(tenantId)) throw new Error('Invalid business worker identity.');
+  const tenantId = normalizeBusinessOrchestratorId(businessId);
   if (!env.BUSINESS_AGENT) throw new Error('The TWIGA Business Worker is not provisioned yet.');
-  // idFromName creates one stable Durable Object instance for each business UUID.
+  // The canonical business UUID is the Durable Object name: one stable,
+  // permanently tenant-bound orchestrator instance per business workspace.
   return env.BUSINESS_AGENT.get(env.BUSINESS_AGENT.idFromName(tenantId));
 }
 
 async function registerBusinessAgent(env,businessId) {
-  const stub = businessAgentStub(env,businessId);
-  const response = await stub.fetch('https://business-agent.internal/register', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({businessId:String(businessId)})
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || data.ok === false) throw new Error(data.error || 'The business orchestrator could not be registered.');
-  return data;
+  const tenantId = normalizeBusinessOrchestratorId(businessId);
+  await ensureBusinessWorkerSchema(env);
+  const stamp = now();
+  await env.DB.prepare("INSERT INTO business_worker_orchestrators (business_id,durable_object_name,status,registered_at,last_seen_at,created_at,updated_at) VALUES (?,?,'registering',?,?,?,?) ON CONFLICT(business_id) DO UPDATE SET durable_object_name=excluded.durable_object_name,status='registering',last_seen_at=excluded.last_seen_at,last_error=NULL,updated_at=excluded.updated_at")
+    .bind(tenantId,tenantId,stamp,stamp,stamp,stamp).run();
+  try {
+    const stub = businessAgentStub(env,tenantId);
+    const response = await stub.fetch('https://business-agent.internal/register', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({businessId:tenantId})
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false || data.registered !== true || data.isolated !== true || String(data.businessId || '').toLowerCase() !== tenantId) {
+      throw new Error(data.error || 'The business orchestrator identity could not be confirmed.');
+    }
+    await env.DB.prepare("UPDATE business_worker_orchestrators SET status='ready',registered_at=COALESCE(registered_at,?),last_seen_at=?,last_error=NULL,last_error_at=NULL,updated_at=? WHERE business_id=?")
+      .bind(data.registeredAt || stamp,stamp,stamp,tenantId).run();
+    return Object.assign({},data,{ready:true,isolated:true,scope:'one_business',businessId:tenantId,lastSeenAt:stamp});
+  } catch (error) {
+    const detail = txt(error && error.message || error,400);
+    await env.DB.prepare("UPDATE business_worker_orchestrators SET status='error',last_seen_at=?,last_error_at=?,last_error=?,updated_at=? WHERE business_id=?")
+      .bind(stamp,stamp,detail,stamp,tenantId).run().catch(() => {});
+    throw error;
+  }
 }
 
 async function dispatchBusinessAgent(env, businessId) {
-  const stub = businessAgentStub(env, businessId);
-  const response = await stub.fetch('https://business-agent.internal/tick', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({businessId: businessId})
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || data.ok === false) throw new Error(data.error || 'The business worker did not finish its task.');
-  await dispatchOwnerWhatsAppOutbox(env,businessId,10).catch((error) => console.error('[TWIGA owner WhatsApp] delivery dispatch failed',txt(error && error.message || error,240)));
-  return data;
+  const tenantId = normalizeBusinessOrchestratorId(businessId);
+  await ensureBusinessWorkerSchema(env);
+  const startedAt = now();
+  await env.DB.prepare("INSERT INTO business_worker_orchestrators (business_id,durable_object_name,status,registered_at,last_seen_at,last_dispatch_at,created_at,updated_at) VALUES (?,?,'running',?,?, ?,?,?) ON CONFLICT(business_id) DO UPDATE SET durable_object_name=excluded.durable_object_name,status='running',last_seen_at=excluded.last_seen_at,last_dispatch_at=excluded.last_dispatch_at,last_error=NULL,updated_at=excluded.updated_at")
+    .bind(tenantId,tenantId,startedAt,startedAt,startedAt,startedAt,startedAt).run();
+  try {
+    const stub = businessAgentStub(env,tenantId);
+    const response = await stub.fetch('https://business-agent.internal/tick', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({businessId: tenantId})
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false || String(data.businessId || '').toLowerCase() !== tenantId) {
+      throw new Error(data.error || 'The business orchestrator did not confirm its own tenant identity.');
+    }
+    const finishedAt = now();
+    await env.DB.prepare("UPDATE business_worker_orchestrators SET status='ready',last_seen_at=?,last_success_at=CASE WHEN ?=1 THEN ? ELSE last_success_at END,last_error=NULL,last_error_at=NULL,last_processed_count=?,updated_at=? WHERE business_id=?")
+      .bind(finishedAt,data.skipped ? 0 : 1,finishedAt,Number(data.processed || 0),finishedAt,tenantId).run();
+    await dispatchOwnerWhatsAppOutbox(env,tenantId,10).catch((error) => console.error('[TWIGA owner WhatsApp] delivery dispatch failed',txt(error && error.message || error,240)));
+    return data;
+  } catch (error) {
+    const detail = txt(error && error.message || error,400);
+    const failedAt = now();
+    await env.DB.prepare("UPDATE business_worker_orchestrators SET status='error',last_seen_at=?,last_error_at=?,last_error=?,updated_at=? WHERE business_id=?")
+      .bind(failedAt,failedAt,detail,failedAt,tenantId).run().catch(() => {});
+    throw error;
+  }
+}
+
+async function settleWithConcurrency(items, concurrency, handler) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const workerCount = Math.min(items.length, Math.max(1, Number(concurrency) || 1));
+  await Promise.all(Array.from({length:workerCount}, async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      try {
+        results[index] = {status:'fulfilled',value:await handler(items[index],index)};
+      } catch (reason) {
+        results[index] = {status:'rejected',reason};
+      }
+    }
+  }));
+  return results;
 }
 
 async function dispatchDueBusinessWorkers(env) {
@@ -688,7 +764,8 @@ async function dispatchDueBusinessWorkers(env) {
     .bind(startedAt,startedAt).run();
   try {
     const staleBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-    const batchSize = Math.min(50, Math.max(1, Number(env.BUSINESS_WORKER_DISPATCH_BATCH_SIZE || 50) || 50));
+    const batchSize = businessOrchestratorBatchSize(env);
+    const dispatchConcurrency = businessOrchestratorConcurrency(env);
 
     // One shared scheduler serves the whole Cloudflare account, but it selects
     // the least-recently-dispatched eligible tenants first. New tenants are
@@ -713,7 +790,9 @@ async function dispatchDueBusinessWorkers(env) {
         eligible.business_id ASC
       LIMIT ?
     `).bind(startedAt,startedAt,staleBefore,batchSize).all();
-    const businessIds = (candidates.results || []).map((row) => String(row.business_id)).filter(Boolean);
+    const businessIds = Array.from(new Set((candidates.results || []).map((row) => {
+      try { return normalizeBusinessOrchestratorId(row.business_id); } catch (_) { return ''; }
+    }).filter(Boolean)));
 
     if (businessIds.length) {
       // Persist each tenant's service position before dispatch. If a provider
@@ -743,7 +822,9 @@ async function dispatchDueBusinessWorkers(env) {
       if (reviewStatements.length) await env.DB.batch(reviewStatements);
     }
 
-    const outcomes = await Promise.allSettled(businessIds.map((businessId) => dispatchBusinessAgent(env,businessId)));
+    // Bound concurrent tenant executions to protect the shared account from a
+    // provider/API burst while keeping the round-robin queue moving each minute.
+    const outcomes = await settleWithConcurrency(businessIds,dispatchConcurrency,(businessId) => dispatchBusinessAgent(env,businessId));
     const failed = outcomes.filter((item) => item.status === 'rejected').length;
     const processed = outcomes.filter((item) => item.status === 'fulfilled').length;
     const stillPending = await env.DB.prepare("SELECT COUNT(DISTINCT business_id) AS total FROM business_worker_tasks WHERE status IN ('pending','processing') AND due_at <= ?").bind(now()).first();
@@ -977,7 +1058,7 @@ async function aiWorker(req, env) {
       const ownerContact = await env.DB.prepare('SELECT phone_e164,enabled FROM business_worker_owner_contacts WHERE business_id=?').bind(ctx.biz.id).first();
       const waAccount = await env.DB.prepare("SELECT display_phone_number,status FROM whatsapp_accounts WHERE business_id=?").bind(ctx.biz.id).first();
       return json({ok:true,provisioned:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,
-        orchestrator:{ready:orchestratorRegistration.registered===true,isolated:orchestratorRegistration.isolated===true,scope:'one_business'},
+        orchestrator:{ready:orchestratorRegistration.registered===true,isolated:orchestratorRegistration.isolated===true,scope:'one_business',businessId:orchestratorRegistration.businessId,registeredAt:orchestratorRegistration.registeredAt,lastSeenAt:orchestratorRegistration.lastSeenAt},
         worker:{enabled:Number(settings && settings.enabled !== undefined ? settings.enabled : 1)===1,nextReviewAt:settings && settings.next_review_at || null,ownerWhatsAppConfigured:!!(ownerContact&&ownerContact.phone_e164),ownerWhatsAppEnabled:!!(ownerContact&&Number(ownerContact.enabled)===1),ownerWhatsAppLast4:maskWhatsAppPhone(ownerContact&&ownerContact.phone_e164),ownerWhatsAppBusinessNumber:waAccount&&waAccount.status==='connected'?waAccount.display_phone_number||'Connected WhatsApp number':'Not connected'},
         message:'This business now has its own isolated TWIGA orchestrator. The shared Cloudflare scheduler will fairly dispatch this business alongside every other client workspace.'});
     }
@@ -998,8 +1079,8 @@ async function aiWorker(req, env) {
         env.DB.prepare("SELECT COUNT(*) AS pending FROM business_worker_whatsapp_outbox WHERE business_id=? AND status IN ('pending','retry','processing','blocked')").bind(ctx.biz.id).first()
       ]);
       const ownerContact=ownerState[0]||{},ownerDelivery=ownerState[1]||{},waAccount=ownerState[2]||{},ownerPending=ownerState[3]||{};
-      return json({ok:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,orchestrator:{ready:orchestratorRegistration.registered===true,isolated:orchestratorRegistration.isolated===true,scope:'one_business'},
-        worker:{enabled:Number(settings.enabled===undefined?1:settings.enabled)===1,schedule:'Queue check every minute · fair dispatch of up to 50 business orchestrators per tick · up to 50 due tasks per business run · daily owner review 08:00 Africa/Nairobi',nextReviewAt:settings.next_review_at || null,lastRunAt:settings.last_run_at || null,lastReviewAt:settings.last_review_at || null,
+      return json({ok:true,profileSynced:profileSynced,profileSyncError:profileSyncError || null,orchestrator:{ready:orchestratorRegistration.registered===true,isolated:orchestratorRegistration.isolated===true,scope:'one_business',businessId:orchestratorRegistration.businessId,registeredAt:orchestratorRegistration.registeredAt,lastSeenAt:orchestratorRegistration.lastSeenAt},
+        worker:{enabled:Number(settings.enabled===undefined?1:settings.enabled)===1,schedule:'Queue check every minute · fair dispatch of up to '+businessOrchestratorBatchSize(env)+' business orchestrators per tick across all clients · up to 50 due tasks per business run · daily owner review 08:00 Africa/Nairobi',nextReviewAt:settings.next_review_at || null,lastRunAt:settings.last_run_at || null,lastReviewAt:settings.last_review_at || null,
           lastTickAt:runtime.last_tick_at || null,lastSuccessAt:runtime.last_success_at || null,lastErrorAt:runtime.last_error_at || null,lastError:runtime.last_error || null,lastProcessedCount:Number(runtime.last_processed_count || 0),lastFailedCount:Number(runtime.last_failed_count || 0),
           schedulerLastStartedAt:scheduler.last_started_at || null,schedulerLastFinishedAt:scheduler.last_finished_at || null,schedulerLastDispatchedBusinesses:Number(scheduler.last_dispatched_businesses || 0),schedulerLastFailedBusinesses:Number(scheduler.last_failed_businesses || 0),schedulerLastPendingBusinesses:Number(scheduler.last_pending_businesses || 0),schedulerLastError:scheduler.last_error || null,
           ownerWhatsAppConfigured:!!ownerContact.phone_e164,ownerWhatsAppEnabled:Number(ownerContact.enabled)===1,ownerWhatsAppLast4:maskWhatsAppPhone(ownerContact.phone_e164),ownerWhatsAppBusinessNumber:waAccount.status==='connected'?waAccount.display_phone_number||'Connected':'Not connected',
@@ -1094,38 +1175,66 @@ export class BusinessAgent {
   }
   async fetch(request) {
     const url = new URL(request.url);
-    if (request.method !== 'POST' || !['/register','/tick'].includes(url.pathname)) return json({ok: false, error: 'Not found.'}, 404);
+    if (request.method !== 'POST' || !['/register','/tick'].includes(url.pathname)) return json({ok:false,error:'Not found.'},404);
     const body = await request.json().catch(() => ({}));
-    const businessId = String(body.businessId || '');
-    if (!/^[0-9a-f-]{36}$/i.test(businessId)) return json({ok: false, error: 'Invalid business worker identity.'}, 400);
+    let businessId;
+    try { businessId = normalizeBusinessOrchestratorId(body.businessId); }
+    catch (_) { return json({ok:false,error:'Invalid business worker identity.'},400); }
 
     const lockKey = 'tick-lock';
     const identityKey = 'business-id';
-    // Pin this Durable Object permanently to its first business identity. The
-    // transaction also makes first registration and tick locking race-safe.
+    const registeredAtKey = 'registered-at';
+    // The Durable Object is permanently bound to one canonical business UUID.
+    // Its own storage holds only that business's registration and run heartbeat.
     const claim = await this.state.storage.transaction(async (transaction) => {
       const savedBusinessId = await transaction.get(identityKey);
       if (savedBusinessId && savedBusinessId !== businessId) return {ok:false,identityMismatch:true};
       if (!savedBusinessId) await transaction.put(identityKey,businessId);
-      if (url.pathname === '/register') return {ok:true,registered:true};
+      if (url.pathname === '/register') {
+        let registeredAt = await transaction.get(registeredAtKey);
+        if (!registeredAt) {
+          registeredAt = now();
+          await transaction.put(registeredAtKey,registeredAt);
+        }
+        await transaction.put('orchestrator-version',2);
+        return {ok:true,registered:true,registeredAt};
+      }
       const existing = await transaction.get(lockKey);
       if (Number(existing || 0) > Date.now()) return {ok:true,skipped:true};
-      await transaction.put(lockKey,Date.now() + 4 * 60 * 1000);
+      // A longer lease covers slow but valid integrations without allowing
+      // a second request to process the same business queue in parallel.
+      await transaction.put(lockKey,Date.now() + 15 * 60 * 1000);
       return {ok:true,locked:true};
     });
     if (!claim.ok) return json({ok:false,error:'This orchestrator is permanently assigned to a different business.'},409);
     if (url.pathname === '/register') {
-      return json({ok:true,registered:true,isolated:true,scope:'one_business'});
+      return json({ok:true,registered:true,isolated:true,scope:'one_business',businessId:businessId,registeredAt:claim.registeredAt});
     }
-    if (claim.skipped) return json({ok: true, skipped: true, reason: 'already-running'});
+    if (claim.skipped) return json({ok:true,skipped:true,reason:'already-running',businessId:businessId});
+    await this.state.storage.put('last-tick-at',now());
     try {
-      return json(await runBusinessAgentTasks(this.env, businessId));
+      const result = await runBusinessAgentTasks(this.env,businessId);
+      const completedAt = now();
+      await this.state.storage.put('last-run',{
+        completedAt:completedAt,
+        processed:Number(result.processed || 0),
+        remainingPending:Number(result.remainingPending || 0),
+        failed:Number(result.failed || 0)
+      });
+      await this.state.storage.delete('last-error');
+      return json(Object.assign({},result,{
+        businessId:businessId,
+        orchestrator:{isolated:true,scope:'one_business',registeredAt:claim.registeredAt || await this.state.storage.get(registeredAtKey),lastTickAt:completedAt}
+      }));
+    } catch (error) {
+      const detail = txt(error && error.message || error,400);
+      await this.state.storage.put('last-error',{at:now(),message:detail});
+      return json({ok:false,error:detail,businessId:businessId},500);
     } finally {
       await this.state.storage.delete(lockKey);
     }
   }
 }
-
 
 function metaGraphVersion(env) {
   return txt(env.META_GRAPH_VERSION || 'v27.0', 12);
