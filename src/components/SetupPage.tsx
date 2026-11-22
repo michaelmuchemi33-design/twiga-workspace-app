@@ -92,12 +92,45 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections, onO
   const [connectionOpen, setConnectionOpen] = useState(false);
   const [connectionTarget, setConnectionTarget] = useState<SetupConnectionTarget>("openai");
   const [connectionRequests, setConnectionRequests] = useState<string[]>([]);
+  const [ownerReportEnabled, setOwnerReportEnabled] = useState(false);
+  const [ownerName, setOwnerName] = useState("");
+  const [ownerPhone, setOwnerPhone] = useState("");
+  const [nextOwnerName, setNextOwnerName] = useState("");
+  const [nextOwnerPhone, setNextOwnerPhone] = useState("");
+  const [reportTime, setReportTime] = useState("16:30");
+  const [assistantGreeting, setAssistantGreeting] = useState("Hello, karibu! Thank you for calling {{business_name}}. How can I help you today?");
+  const [assistantInboundPrompt, setAssistantInboundPrompt] = useState("Answer in the caller's preferred language. Use this business's verified profile, understand the reason for the call, and capture appointment or order requests for the team to confirm. Never claim an action is complete unless TWIGA confirms it was saved.");
+  const [assistantOutboundPrompt, setAssistantOutboundPrompt] = useState("Only call people when this business has authorised the callback. Identify the business and reason for calling, ask whether it is convenient, keep it brief, and respect requests not to be called again.");
+  const [assistantCorePrompt, setAssistantCorePrompt] = useState("You are the dedicated AI receptionist for this business. Use only its verified business profile, catalogue and connected business tools. Never invent prices, stock, bookings or payment status. Capture requests only with the customer's permission, respect opt-outs, and do not expose another customer's private records.");
+  const [operationalSettingsLoading, setOperationalSettingsLoading] = useState(false);
+  const [operationalSettingsSaving, setOperationalSettingsSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({behavior:"smooth",block:"end"});
   }, [messages, draft]);
+
+  useEffect(() => {
+    if (!supabase || !businessId || demo) return;
+    let active = true;
+    setOperationalSettingsLoading(true);
+    void supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } }).then(({ data, error: loadError }) => {
+      if (!active || loadError || !data) return;
+      const report = data.ownerReportCall && typeof data.ownerReportCall === "object" ? data.ownerReportCall : {};
+      setOwnerReportEnabled(report.enabled === true);
+      setOwnerName(String(report.ownerName || ""));
+      setOwnerPhone(String(report.ownerPhone || ""));
+      setNextOwnerName(String(report.nextOwnerName || ""));
+      setNextOwnerPhone(String(report.nextOwnerPhone || ""));
+      setReportTime(String(report.callTime || "16:30"));
+      if (data.scripts?.greeting) setAssistantGreeting(String(data.scripts.greeting));
+      if (data.scripts?.inbound) setAssistantInboundPrompt(String(data.scripts.inbound));
+      if (data.scripts?.outbound) setAssistantOutboundPrompt(String(data.scripts.outbound));
+      if (data.corePrompt) setAssistantCorePrompt(String(data.corePrompt));
+    }).finally(() => { if (active) setOperationalSettingsLoading(false); });
+    return () => { active = false; };
+  }, [businessId, demo]);
 
   const openConnectionOverlay = (request = "") => {
     setConnectionTarget(getSetupConnectionTarget(request));
@@ -297,6 +330,71 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections, onO
     } finally { setSaving(false); }
   };
 
+
+  const saveOperationalSettings = async () => {
+    if (!businessId || !supabase || operationalSettingsSaving || demo) return;
+    if (ownerReportEnabled && (!ownerName.trim() || !ownerPhone.trim() || !nextOwnerName.trim() || !nextOwnerPhone.trim())) {
+      setError("Enter the primary and backup owner names and phone numbers before enabling daily report calls.");
+      return;
+    }
+    setOperationalSettingsSaving(true); setError(""); setNotice("");
+    try {
+      const { data, error: saveError } = await supabase.functions.invoke("twiga-business-workspaces", {
+        body: {
+          action: "update_operational_settings",
+          businessId,
+          settings: {
+            ownerReportCall: {
+              enabled: ownerReportEnabled,
+              ownerName,
+              ownerPhone,
+              nextOwnerName,
+              nextOwnerPhone,
+              callTime: reportTime,
+            },
+            sautikitScripts: {
+              greeting: assistantGreeting,
+              inbound: assistantInboundPrompt,
+              outbound: assistantOutboundPrompt,
+            },
+            sautikitCorePrompt: assistantCorePrompt,
+          },
+        },
+      });
+      if (saveError) throw new Error(saveError.message);
+      if (data?.error) throw new Error(String(data.error));
+      let savedNotice = "Owner report schedule and editable SautiKit instructions were saved for this business.";
+      try {
+        const { data: config, error: configError } = await supabase.functions.invoke("twiga-sautikit", { body: { action: "get_config", businessId } });
+        if (configError) throw new Error(configError.message);
+        if (config?.phoneLine && config?.agent?.id && config?.inboundBound) {
+          const { data: published, error: publishError } = await supabase.functions.invoke("twiga-sautikit", {
+            body: {
+              action: "publish_agent",
+              businessId,
+              greeting: assistantGreeting,
+              inboundPrompt: assistantInboundPrompt,
+              outboundPrompt: assistantOutboundPrompt,
+              corePrompt: assistantCorePrompt,
+            },
+          });
+          if (publishError) throw new Error(publishError.message);
+          if (published?.error) throw new Error(String(published.error));
+          savedNotice += " The updated instructions were published to this business's linked SautiKit agent.";
+        } else {
+          savedNotice += " The prompt is saved and will be published when this business has a linked, correctly routed SautiKit agent. Owner report calls will wait for a verified, active outbound line.";
+        }
+      } catch (publishIssue) {
+        savedNotice += " Settings are saved; SautiKit publishing needs attention: " + (publishIssue instanceof Error ? publishIssue.message : "refresh phone setup and publish again.");
+      }
+      setNotice(savedNotice);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save owner and SautiKit settings.");
+    } finally {
+      setOperationalSettingsSaving(false);
+    }
+  };
+
   const prompts = [
     "We take bookings and appointments",
     "We sell products and take orders",
@@ -358,6 +456,44 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections, onO
         <div className="mt-3 space-y-2">{connectionRequests.map((request, index) => <div key={request + index} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-orange-200/80 bg-white p-3 dark:border-orange-900 dark:bg-neutral-900"><p className="min-w-0 flex-1 text-sm leading-5 text-neutral-800 dark:text-neutral-200">{request}</p><button type="button" onClick={() => openConnectionOverlay(request)} className="shrink-0 rounded-lg bg-neutral-950 px-3 py-2 text-xs font-semibold text-white hover:bg-neutral-800 dark:bg-white dark:text-neutral-950">Connect securely</button></div>)}</div>
         <p className="mt-3 text-[11px] leading-5 text-orange-900/80 dark:text-orange-200/80">API keys and tokens are entered only in the secure form, never in the AI conversation. A saved key is not treated as a working connector until its provider-specific test succeeds.</p>
       </section>}
+
+
+      <section className="space-y-5 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm sm:p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-orange-600">Background operations · owner reporting</p>
+          <h2 className="mt-1 text-xl font-bold text-neutral-950 dark:text-neutral-100">Daily owner report call</h2>
+          <p className="mt-1 text-sm leading-6 text-neutral-600 dark:text-neutral-300">TWIGA prepares a short business report from this workspace and calls the primary owner at the saved Kenya time. The retry sequence only continues after SautiKit reports that the previous call was not answered.</p>
+        </div>
+        <label className="flex items-start gap-3 rounded-xl border border-neutral-200 p-3 dark:border-neutral-700">
+          <input type="checkbox" checked={ownerReportEnabled} onChange={(event) => setOwnerReportEnabled(event.target.checked)} disabled={demo || operationalSettingsLoading} className="mt-1 h-4 w-4 accent-orange-500" />
+          <span><span className="block text-sm font-semibold text-neutral-900 dark:text-neutral-100">Enable daily report calls</span><span className="mt-0.5 block text-xs leading-5 text-neutral-500">Calls are not activated until you save this setting and your business has a verified, active SautiKit outbound line.</span></span>
+        </label>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-sm font-semibold text-neutral-800 dark:text-neutral-200">Primary owner name<input value={ownerName} onChange={(event) => setOwnerName(event.target.value)} placeholder="Owner or manager" className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100" /></label>
+          <label className="block text-sm font-semibold text-neutral-800 dark:text-neutral-200">Primary owner phone<input value={ownerPhone} onChange={(event) => setOwnerPhone(event.target.value)} placeholder="+2547XXXXXXXX" autoComplete="tel" className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100" /></label>
+          <label className="block text-sm font-semibold text-neutral-800 dark:text-neutral-200">Next owner / backup name<input value={nextOwnerName} onChange={(event) => setNextOwnerName(event.target.value)} placeholder="Backup owner or trusted manager" className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100" /></label>
+          <label className="block text-sm font-semibold text-neutral-800 dark:text-neutral-200">Next owner / backup phone<input value={nextOwnerPhone} onChange={(event) => setNextOwnerPhone(event.target.value)} placeholder="+2547XXXXXXXX" autoComplete="tel" className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100" /></label>
+          <label className="block text-sm font-semibold text-neutral-800 dark:text-neutral-200 sm:max-w-xs">Daily report time · Kenya<input type="time" value={reportTime} onChange={(event) => setReportTime(event.target.value)} className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100" /></label>
+        </div>
+        <div className="rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
+          <strong>Call sequence:</strong> {reportTime} · primary owner; {(() => { const [h,m]=reportTime.split(":").map(Number); const t=h*60+m+30; return String(Math.floor(t/60)%24).padStart(2,"0")+":"+String(t%60).padStart(2,"0"); })()} · primary owner retry; {(() => { const [h,m]=reportTime.split(":").map(Number); const t=h*60+m+60; return String(Math.floor(t/60)%24).padStart(2,"0")+":"+String(t%60).padStart(2,"0"); })()} · backup owner final attempt. Any earlier answered call cancels the remaining attempts.
+        </div>
+        <div className="border-t border-neutral-100 pt-4 dark:border-neutral-800">
+          <p className="text-xs font-semibold uppercase tracking-wider text-orange-600">SautiKit · editable assistant instructions</p>
+          <h3 className="mt-1 text-lg font-semibold text-neutral-950 dark:text-neutral-100">Voice-agent prompts</h3>
+          <p className="mt-1 text-xs leading-5 text-neutral-500">These instructions are saved separately for this business. When the SautiKit agent is linked and its number route is verified, saving publishes the new prompt to that agent.</p>
+          <div className="mt-3 space-y-3">
+            <label className="block text-sm font-semibold text-neutral-800 dark:text-neutral-200">Core receptionist prompt<Textarea value={assistantCorePrompt} onChange={(event) => setAssistantCorePrompt(event.target.value)} rows={5} className="mt-1 w-full rounded-xl border-neutral-200 text-sm dark:border-neutral-700 dark:bg-neutral-950" placeholder="What the AI must know and how it should behave…" /></label>
+            <label className="block text-sm font-semibold text-neutral-800 dark:text-neutral-200">Greeting prompt<Textarea value={assistantGreeting} onChange={(event) => setAssistantGreeting(event.target.value)} rows={2} className="mt-1 w-full rounded-xl border-neutral-200 text-sm dark:border-neutral-700 dark:bg-neutral-950" /></label>
+            <label className="block text-sm font-semibold text-neutral-800 dark:text-neutral-200">Inbound call instructions<Textarea value={assistantInboundPrompt} onChange={(event) => setAssistantInboundPrompt(event.target.value)} rows={4} className="mt-1 w-full rounded-xl border-neutral-200 text-sm dark:border-neutral-700 dark:bg-neutral-950" /></label>
+            <label className="block text-sm font-semibold text-neutral-800 dark:text-neutral-200">Outbound call & follow-up instructions<Textarea value={assistantOutboundPrompt} onChange={(event) => setAssistantOutboundPrompt(event.target.value)} rows={4} className="mt-1 w-full rounded-xl border-neutral-200 text-sm dark:border-neutral-700 dark:bg-neutral-950" /></label>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="max-w-xl text-xs leading-5 text-neutral-500">{operationalSettingsLoading ? "Loading saved settings…" : "Each business has its own report recipients, calling schedule and SautiKit prompt. Phone numbers are stored in the protected business profile."}</p>
+          <Button type="button" onClick={() => void saveOperationalSettings()} disabled={demo || !businessId || operationalSettingsLoading || operationalSettingsSaving} className="rounded-xl bg-orange-500 text-white hover:bg-orange-600"><IconCheck className="mr-2 h-4 w-4" />{operationalSettingsSaving ? "Saving settings…" : "Save owner & AI settings"}</Button>
+        </div>
+      </section>
 
       <div className="flex justify-center">
         <Button
