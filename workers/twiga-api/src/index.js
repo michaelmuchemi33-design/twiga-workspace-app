@@ -748,10 +748,10 @@ async function runBusinessReview(env, businessId, taskId) {
     'For every order task, include its real order ID and customer when available. For stock tasks, include the exact catalogue item name. For appointment tasks, include the recorded service/date/time only when supplied.',
     'Prioritise high for urgent customer commitments or blocked orders, medium for outstanding fulfilment, bookings or payment checks, and low for routine stock and follow-up planning. Do not invent due dates.',
     'Tasks are recommendations for the business owner or staff to review. Do not send messages, place calls, charge customers, change prices, cancel bookings, purchase stock, dispatch a delivery or claim work was completed.',
-    'Return one JSON object only: {"headline":"short status","summary":"2-4 concise sentences","actions":[{"title":"short, specific owner task","detail":"what the owner/staff should check and the evidence behind it","priority":"high|medium|low"}]}. Maximum 10 actions. Return fewer rather than inventing work.',
+    'Return one JSON object only: {"headline":"short status","summary":"2-4 concise sentences","actions":[{"title":"short, specific owner task","detail":"what the owner/staff should check and the evidence behind it","priority":"high|medium|low"}]}. You may return up to 50 distinct actions when the records support them. Group duplicate issues and return fewer rather than inventing work.',
     'Business facts (JSON): ' + JSON.stringify(data)
   ].join('\n\n');
-  const raw = await runBusinessAI(env, businessId, [{role: 'system', content: system}, {role: 'user', content: 'Review the real business records and prepare the owner action list.'}], {max_tokens: 1600});
+  const raw = await runBusinessAI(env, businessId, [{role: 'system', content: system}, {role: 'user', content: 'Review the real business records and prepare the owner action list.'}], {max_tokens: 4096});
   let parsed = null;
   try {
     let candidate = String(raw).trim();
@@ -762,7 +762,7 @@ async function runBusinessReview(env, businessId, taskId) {
   } catch (_) {}
   const headline = txt(parsed && parsed.headline ? parsed.headline : 'Daily review completed', 120);
   const reviewSummary = txt(parsed && parsed.summary ? parsed.summary : 'TWIGA checked the latest business records. Review the pending items below before taking action.', 1000);
-  const actions = Array.isArray(parsed && parsed.actions) ? parsed.actions.slice(0, 10) : [];
+  const actions = Array.isArray(parsed && parsed.actions) ? parsed.actions.slice(0, 50) : [];
   const stamp = now();
   const newTasks = actions.map((action, index) => {
     const title = txt(action && action.title, 140);
@@ -793,7 +793,7 @@ async function runBusinessAgentTasks(env, businessId) {
   const staleBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   await env.DB.prepare("UPDATE business_worker_tasks SET status = 'pending', updated_at = ? WHERE business_id = ? AND status = 'processing' AND updated_at <= ?")
     .bind(now(), businessId, staleBefore).run();
-  const tasks = await env.DB.prepare("SELECT id, task_type, detail FROM business_worker_tasks WHERE business_id = ? AND status = 'pending' AND due_at <= ? ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'normal' THEN 1 ELSE 2 END, due_at LIMIT 10")
+  const tasks = await env.DB.prepare("SELECT id, task_type, detail FROM business_worker_tasks WHERE business_id = ? AND status = 'pending' AND due_at <= ? ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END, due_at LIMIT 50")
     .bind(businessId, now()).all();
   const outcomes = [];
   for (const task of tasks.results || []) {
@@ -818,7 +818,17 @@ async function runBusinessAgentTasks(env, businessId) {
       outcomes.push({id: task.id, ok: false, error: detail});
     }
   }
-  return {ok: true, businessId: businessId, processed: outcomes.length, outcomes: outcomes};
+  const counts = await env.DB.prepare("SELECT SUM(CASE WHEN status='pending' AND due_at<=? THEN 1 ELSE 0 END) AS pending,SUM(CASE WHEN status='needs_review' THEN 1 ELSE 0 END) AS needs_review,SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed FROM business_worker_tasks WHERE business_id=?")
+    .bind(now(),businessId).first();
+  const firstError = outcomes.find((item) => !item.ok);
+  await recordBusinessWorkerRuntime(env,businessId,{
+    processed:outcomes.length,
+    failed:Number(counts && counts.failed || 0),
+    pending:Number(counts && counts.pending || 0),
+    needsReview:Number(counts && counts.needs_review || 0),
+    error:firstError ? firstError.error : null
+  });
+  return {ok: true, businessId: businessId, processed: outcomes.length, remainingPending:Number(counts && counts.pending || 0), failed:Number(counts && counts.failed || 0), needsReview:Number(counts && counts.needs_review || 0), outcomes: outcomes};
 }
 
 async function aiWorker(req, env) {
