@@ -35,7 +35,7 @@ function getSetupConnectionTarget(request: string): SetupConnectionTarget {
 }
 const API = "https://twiga-api.twiga-ke.workers.dev";
 
-const firstMessage = "Hi! Let’s set up your receptionist. I already have your business name. What do you sell or do, and what do customers usually come to you for? We’ll build this together one step at a time.";
+const firstMessage = "Hi! Let’s set up your receptionist and business workflows. I’ll learn how you operate, identify any external apps or APIs you need, and show a secure connect button here when a service is missing. Never paste API keys or passwords into this chat. What do you sell or do, and what do customers usually come to you for?";
 
 // Worker/model responses are not guaranteed to be plain strings. Never render
 // JavaScript's default "[object Object]" representation in the conversation.
@@ -285,6 +285,7 @@ export default function SetupPage({ demo = false, onDone, onOpenConnections, onO
     "We take bookings and appointments",
     "We sell products and take orders",
     "We deliver and accept M-Pesa",
+    "Help me connect the external apps and APIs we need",
     "I want SautiKit calls and WhatsApp connected"
   ];
 
