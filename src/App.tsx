@@ -121,6 +121,8 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
   const [googleSetupMessage, setGoogleSetupMessage] = useState("");
   const [autoProvisioning, setAutoProvisioning] = useState(false);
   const autoProvisioned = useRef<string | null>(null);
+  const autoOrchestratorRegistered = useRef(new Set<string>());
+  const autoOrchestratorPending = useRef(new Set<string>());
   const [isCompactPwaLayout, setIsCompactPwaLayout] = useState(() => window.matchMedia("(max-width: 767px)").matches);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
@@ -142,6 +144,37 @@ export default function App({ demo = false, userId, googleAuth, onSignOut }: { d
   }, [demo, userId]);
 
   useEffect(() => { void refreshBusinesses(); }, [refreshBusinesses]);
+  useEffect(() => {
+    if (demo || !userId || !businessId || !supabase) return;
+    if (autoOrchestratorRegistered.current.has(businessId) || autoOrchestratorPending.current.has(businessId)) return;
+    const tenantId = businessId;
+    autoOrchestratorPending.current.add(tenantId);
+    const ensureBusinessOrchestrator = async () => {
+      try {
+        const { data: authData, error: authError } = await supabase.auth.getSession();
+        if (authError) throw authError;
+        const accessToken = authData.session?.access_token;
+        if (!accessToken) throw new Error("Sign in again to initialize this business workspace.");
+        const response = await fetch("https://twiga-api.twiga-ke.workers.dev/ai/worker", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+          body: JSON.stringify({ action: "ensure_orchestrator", business_id: tenantId }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload?.ok === false) throw new Error(String(payload?.error || "The business orchestrator could not be initialized."));
+        if (payload?.orchestrator?.ready !== true || payload?.orchestrator?.isolated !== true) {
+          throw new Error("The business-specific orchestrator registration was not confirmed.");
+        }
+        autoOrchestratorRegistered.current.add(tenantId);
+      } catch (error) {
+        console.warn("[TWIGA orchestrator] automatic workspace registration will retry on the next dashboard session", error);
+      } finally {
+        autoOrchestratorPending.current.delete(tenantId);
+      }
+    };
+    void ensureBusinessOrchestrator();
+  }, [demo, userId, businessId]);
+
   useEffect(() => {
     if (demo || !userId || !businessesLoaded || businesses.length > 0) return;
     if (businessesError) {
