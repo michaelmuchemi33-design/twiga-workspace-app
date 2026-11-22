@@ -440,6 +440,15 @@ Deno.serve(async (req: Request) => {
             },
           });
         }
+        if (finalStatus === "completed" && item.metadata?.owner_report_series_id) {
+          const seriesId = safe(item.metadata.owner_report_series_id, 80);
+          const { error: cancelError } = await admin.from("twiga_scheduled_calls")
+            .update({ status: "cancelled", last_error: "The owner answered an earlier daily report call.", updated_at: new Date().toISOString() })
+            .eq("business_id", item.business_id)
+            .filter("metadata->>owner_report_series_id", "eq", seriesId)
+            .in("status", ["scheduled", "waiting_for_provider"]);
+          if (cancelError) console.error("Could not stop remaining owner report attempts:", cancelError.message);
+        }
         const repeatMode = safe(item.metadata?.repeat || "none", 20);
         const repeatRemaining = Number(item.metadata?.repeat_remaining || 1);
         if (finalStatus === "completed" && ["daily", "weekly"].includes(repeatMode) && repeatRemaining > 1) {
@@ -499,6 +508,35 @@ Deno.serve(async (req: Request) => {
 
     for (const job of claimed) {
       try {
+        const ownerReportSeriesId = safe(job.metadata?.owner_report_series_id, 80);
+        const ownerReportAttempt = Number(job.metadata?.owner_report_attempt || 0);
+        if (ownerReportSeriesId && ownerReportAttempt > 1) {
+          const { data: previous, error: previousError } = await admin.from("twiga_scheduled_calls")
+            .select("id,status,metadata")
+            .eq("business_id", job.business_id)
+            .filter("metadata->>owner_report_series_id", "eq", ownerReportSeriesId)
+            .filter("metadata->>owner_report_attempt", "eq", String(ownerReportAttempt - 1))
+            .maybeSingle();
+          if (previousError) throw previousError;
+          const previousStatus = String(previous?.status || "").toLowerCase();
+          const previousOutcome = String(previous?.metadata?.last_provider_outcome || "").toLowerCase();
+          if (previousStatus === "completed") {
+            await setJob(admin, job.id, { status: "skipped", last_error: "The owner already received the report on an earlier attempt." });
+            summary.skipped++; continue;
+          }
+          if (previousStatus === "failed" && previousOutcome !== "no_answer") {
+            await setJob(admin, job.id, { status: "skipped", last_error: "The previous report call failed for a reason other than no answer; no further automatic call was placed." });
+            summary.skipped++; continue;
+          }
+          if (!(previousStatus === "failed" && previousOutcome === "no_answer")) {
+            await setJob(admin, job.id, {
+              status: "scheduled",
+              scheduled_at: new Date(Date.now() + 60000).toISOString(),
+              last_error: "Waiting for the previous report call outcome before trying another recipient.",
+            });
+            summary.deferred++; continue;
+          }
+        }
         const conditions = job.trigger_conditions && typeof job.trigger_conditions === "object" ? job.trigger_conditions : {};
         if (job.trigger_type === "missed_call" || conditions.only_if_missed_call === true) {
           if (!job.source_call_id) {
@@ -551,10 +589,32 @@ Deno.serve(async (req: Request) => {
         }
         const to = safe(job.phone_number, 24);
         if (!/^\+[1-9]\d{7,14}$/.test(to)) throw new Error("The destination number is not in international format.");
+        const metadata = job.metadata && typeof job.metadata === "object" ? job.metadata : {};
+        const contactProfile = metadata.contact_profile && typeof metadata.contact_profile === "object" ? metadata.contact_profile : {};
+        const customerContext = [
+          contactProfile.itemsBought ? "Previous purchases/interests: " + safe(contactProfile.itemsBought, 1500) : "",
+          contactProfile.notes ? "Customer notes: " + safe(contactProfile.notes, 1000) : "",
+          contactProfile.lastPurchaseAt ? "Last purchase date: " + safe(contactProfile.lastPurchaseAt, 40) : "",
+        ].filter(Boolean).join(". ");
+        const reportCall = !!metadata.owner_report_series_id;
+        const reportSummary = safe(metadata.owner_report_summary, 5000);
+        const customerLanguage = safe(contactProfile.preferredLanguage || "", 80);
+        const promptTemplate = reportCall
+          ? "You are TWIGA's AI business reporting assistant calling the configured owner of {{business_name}}. Address the recipient as {{customer_name}}. This is daily report number {{attempt_number}} for {{report_date}}. Read the following verified business summary clearly and naturally: {{report_summary}}. Do not disclose customer names, phone numbers, private notes, payment credentials or individual customer records. Ask whether the owner wants a follow-up task created. " + outbound
+          : "You are calling on behalf of {{business_name}}. The customer's name is {{customer_name}}. Reason for calling: {{call_reason}}. Customer language preference: {{customer_language}}. Customer context supplied from this business's own records: {{customer_context}}. Use this context carefully to make the conversation relevant. Do not assume that a purchase is current, promise availability or reveal private notes; confirm details with the customer. " + outbound;
         const call: any = await skRequest(apiKey, "/v1/agents/" + encodeURIComponent(agentId) + "/send", "POST", {
           to,
-          prompt_template: "You are calling on behalf of {{business_name}}. Reason for calling: {{call_reason}}. " + outbound,
-          variables: { business_name: String(business?.name || "the business"), call_reason: safe(job.reason, 500) },
+          prompt_template: promptTemplate,
+          variables: {
+            business_name: String(business?.name || metadata.owner_report_business_name || "the business"),
+            call_reason: safe(job.reason, 500),
+            customer_name: safe(job.customer_name || "", 120),
+            customer_context: customerContext,
+            customer_language: customerLanguage,
+            report_summary: reportSummary,
+            report_date: safe(metadata.owner_report_date || "", 20),
+            attempt_number: String(ownerReportAttempt || 0),
+          },
         }, 20000);
         const providerCallId = safe(call.call_id || call.id || call.data?.call_id || call.data?.id, 120);
         await setJob(admin, job.id, {
