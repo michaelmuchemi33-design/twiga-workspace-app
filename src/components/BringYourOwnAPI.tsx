@@ -33,18 +33,18 @@ const providerNames: Record<Provider, string> = {
 };
 const aiProviders: Provider[] = ["openai", "openrouter", "xai", "groq", "deepseek"];
 const modelDefaults: Record<string, string> = {
-  openai: "gpt-6.2-sol",
-  openrouter: "openai/gpt-6.2-sol",
-  xai: "grok-4.7",
-  groq: "openai/gpt-oss-120b",
-  deepseek: "deepseek-flash",
+  openai: "",
+  openrouter: "",
+  xai: "",
+  groq: "",
+  deepseek: "",
 };
 const promptCopy: Record<Provider, string> = {
-  openai: "Paste your OpenAI API key. TWIGA will test access to the model list, then store it in encrypted Vault. Choose the model you want this business to use.",
-  openrouter: "Paste your OpenRouter API key and preferred model ID. TWIGA will validate the key before saving it.",
-  xai: "Paste your xAI API key and preferred Grok model. The key is tested server-side and never added to the AI chat.",
-  groq: "Paste your Groq API key and model ID. TWIGA checks the key before enabling it for this business.",
-  deepseek: "Paste your DeepSeek API key and model ID. TWIGA validates access before saving.",
+  openai: "Paste your OpenAI API key. TWIGA checks the models available to this account and selects an available model when the model field is left blank.",
+  openrouter: "Paste your OpenRouter API key. TWIGA checks the models available to this account and selects an available model when the model field is left blank.",
+  xai: "Paste your xAI API key. TWIGA checks the models available to this account and selects an available model when the model field is left blank.",
+  groq: "Paste your Groq API key. TWIGA checks the models available to this account and selects an available model when the model field is left blank.",
+  deepseek: "Paste your DeepSeek API key. TWIGA checks the models available to this account and selects an available model when the model field is left blank.",
   resend: "Paste the Resend API key for this business. TWIGA tests access to your Resend domains before storing the key.",
   palpluss: "Choose one format: the raw PalPluss API key or its Base64 Basic Authorization value. This is not a Safaricom Daraja OAuth token.",
   custom: "Add between one and five labelled secret fields from the same external service. TWIGA encrypts them, but a provider-specific connector is needed before the AI can execute that service's actions.",
@@ -303,7 +303,8 @@ export default function BringYourOwnAPI({ businessId, demo = false, adminMode = 
           {isAI && (
             <div className="space-y-3">
               <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-200">Model ID
-                <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="Model name from your provider" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-normal text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100" />
+                <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="Optional · leave blank to auto-select an available model" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-normal text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100" />
+                <p className="mt-1 text-[11px] leading-5 text-neutral-500 dark:text-neutral-400">Leave blank and TWIGA will select the first model returned by this provider. Enter an exact model ID only when you want to use a specific model.</p>
               </label>
               <label className="block text-xs font-semibold text-neutral-700 dark:text-neutral-200">API key
                 <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="new-password" spellCheck={false} placeholder="Paste the private API key" className="mt-1.5 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm font-normal text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100" />
