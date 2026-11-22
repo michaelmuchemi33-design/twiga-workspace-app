@@ -1485,8 +1485,13 @@ async function handleWhatsAppWebhook(env, body) {
           .bind(messageId,account.business_id,phoneNumberId,from,txt(message.type,30),text,stamp).run();
         if (result.meta && Number(result.meta.changes || 0) === 1) {
           const taskId = 'wa-' + messageId;
-          await env.DB.prepare("INSERT OR IGNORE INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'whatsapp_reply', 'Reply to WhatsApp message', ?, 'pending', 'normal', ?, ?, ?)")
-            .bind(taskId,account.business_id,JSON.stringify({phoneNumberId:phoneNumberId,from:from,message:message}),now(),now(),now()).run();
+          const ownerContact = await env.DB.prepare('SELECT phone_e164,enabled FROM business_worker_owner_contacts WHERE business_id=?').bind(account.business_id).first();
+          let ownerSender = false;
+          if (ownerContact && Number(ownerContact.enabled)===1) {
+            try { ownerSender = normalizeWhatsAppPhone(ownerContact.phone_e164) === normalizeWhatsAppPhone(from); } catch (_) {}
+          }
+          await env.DB.prepare("INSERT OR IGNORE INTO business_worker_tasks (id, business_id, task_type, title, detail, status, priority, due_at, created_at, updated_at) VALUES (?,?, 'whatsapp_reply', ?, ?, 'pending', ?, ?, ?, ?)")
+            .bind(taskId,account.business_id,ownerSender?'Process owner WhatsApp command':'Reply to WhatsApp message',JSON.stringify({phoneNumberId:phoneNumberId,from:from,message:message}),ownerSender?'urgent':'normal',now(),now(),now()).run();
           dispatch.add(account.business_id);
         }
       }
